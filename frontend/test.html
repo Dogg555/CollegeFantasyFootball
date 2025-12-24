@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Backend Security Check</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .status { margin-top: 12px; font-weight: 600; }
+    .ok { color: #45d19f; }
+    .fail { color: #ff7b7b; }
+  </style>
+</head>
+<body>
+  <main class="layout" style="max-width:720px">
+    <section class="card">
+      <h2>Secure Endpoint Test</h2>
+      <p class="subtitle">Calls <code>/api/secure/ping</code> using the supplied bearer token.</p>
+      <form id="ping-form" class="search">
+        <input id="token" type="text" placeholder="Enter JWT secret or bearer token" required />
+        <button class="button button--primary" type="submit">Send Ping</button>
+      </form>
+      <div id="result" class="status muted">Awaiting request...</div>
+    </section>
+  </main>
+  <script>
+    const form = document.getElementById('ping-form');
+    const tokenInput = document.getElementById('token');
+    const result = document.getElementById('result');
+    const backend = window.location.origin.replace('3000', '8080');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const token = tokenInput.value.trim();
+      if (!token) return;
+      result.textContent = 'Requesting secure ping...';
+      result.className = 'status muted';
+      try {
+        const resp = await fetch(`${backend}/api/secure/ping`, {
+          headers: { 'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}` }
+        });
+        const text = await resp.text();
+        if (resp.ok) {
+          result.textContent = `Success: ${text}`;
+          result.className = 'status ok';
+        } else {
+          result.textContent = `Unauthorized: ${text}`;
+          result.className = 'status fail';
+        }
+      } catch (err) {
+        result.textContent = 'Request failed. Is the backend running on 8080?';
+        result.className = 'status fail';
+      }
+    });
+  </script>
+</body>
+</html>
