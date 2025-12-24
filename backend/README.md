@@ -16,6 +16,15 @@ cmake --build build
 ./build/college_ff_server
 ```
 
+## Dependencies
+- C++17 toolchain, CMake
+- Drogon (libdrogon-dev) + OpenSSL (libssl-dev) + JsonCpp (libjsoncpp-dev) + UUID (uuid-dev) + zlib
+- Install on Debian/Ubuntu with the helper script at the repo root:
+  ```bash
+  ./scripts/install_dependencies.sh
+  ```
+- Windows 11 setup (vcpkg or WSL) is documented in `../docs/windows-setup.md`.
+
 ### Docker (local testing)
 ```bash
 docker build -t college-ff-backend .

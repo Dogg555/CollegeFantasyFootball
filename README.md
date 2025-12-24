@@ -9,15 +9,22 @@ A full-stack concept for a college fantasy football platform covering Division I
 
 ## Quickstart
 1. Review `docs/architecture.md` for the proposed system design.
-2. Build the backend (requires Drogon and CMake):
+2. Install dependencies:
+   - Debian/Ubuntu: `./scripts/install_dependencies.sh`
+   - Windows 11: see `docs/windows-setup.md` (vcpkg or WSL options)
+   ```bash
+   # Debian/Ubuntu example
+   ./scripts/install_dependencies.sh
+   ```
+3. Build the backend (requires Drogon and CMake):
    ```bash
    cmake -S backend -B backend/build -DDROGON_FOUND=ON
    cmake --build backend/build
    ./backend/build/college_ff_server
    ```
    - Environment variables: `PORT` (default `8080`), `JWT_SECRET` (required for secure endpoints), optional `SSL_CERT_FILE`/`SSL_KEY_FILE` for HTTPS, and `ALLOWED_ORIGINS` (comma-separated) for CORS.
-3. Serve the frontend locally (any static server, e.g., `python -m http.server` from `frontend/`).
-4. Optional: run everything via Docker for local testing:
+4. Serve the frontend locally (any static server, e.g., `python -m http.server` from `frontend/`).
+5. Optional: run everything via Docker for local testing:
    ```bash
    docker compose up --build
    ```
