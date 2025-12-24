@@ -20,29 +20,28 @@ This guide outlines how to build the backend and serve the frontend on Windows 1
    ```
 
 ## Native Windows (vcpkg)
-1. Option A: run the automated installer (PowerShell, may prompt for elevation):
+1. Install prerequisites via winget (or download manually):
    ```powershell
-   ./scripts/install_windows.ps1
+   winget install Kitware.CMake Git.Git Microsoft.VisualStudio.2022.BuildTools
    ```
-   - Default triplet: `x64-windows`. Use `-Triplet x64-windows-static` to change.
-   - vcpkg location defaults to `%USERPROFILE%\vcpkg`; override with `-VcpkgDir "C:\\path\\to\\vcpkg"`.
-2. Option B: manual steps
+   - Include the "Desktop development with C++" workload in Visual Studio Build Tools.
+2. Install vcpkg and integrate (if not already):
    ```powershell
-   winget install Microsoft.VisualStudio.2022.BuildTools --accept-package-agreements --accept-source-agreements
-   winget install Kitware.CMake --accept-package-agreements --accept-source-agreements
-   winget install Git.Git --accept-package-agreements --accept-source-agreements
    git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
    C:\vcpkg\bootstrap-vcpkg.bat
-   C:\vcpkg\vcpkg install drogon jsoncpp openssl zlib libuuid
    C:\vcpkg\vcpkg integrate install
    ```
-3. Configure and build the backend (vcpkg toolchain):
+3. Install Drogon and dependencies:
    ```powershell
-   cmake -S backend -B backend\build -DDROGON_FOUND=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -A x64
+   C:\vcpkg\vcpkg install drogon jsoncpp openssl zlib
+   ```
+4. Configure and build the backend:
+   ```powershell
+   cmake -S backend -B backend\build -DDROGON_FOUND=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
    cmake --build backend\build --config Release
    backend\build\Release\college_ff_server.exe
    ```
-4. Serve the frontend (one option using Python):
+5. Serve the frontend (one option using Python):
    ```powershell
    cd frontend
    python -m http.server 3000
