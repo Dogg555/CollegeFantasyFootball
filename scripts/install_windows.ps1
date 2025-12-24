@@ -1,139 +1,290 @@
 <#
 .SYNOPSIS
-  Installs build tools and project dependencies on Windows for the College Fantasy Football backend.
+  Cross-platform dependency bootstrapper for the College Fantasy Football backend.
 
 .DESCRIPTION
-  - Ensures script is running elevated (re-launches with elevation if needed).
-  - Installs Visual Studio Build Tools (MSVC), CMake and Git using winget or Chocolatey if available.
-  - Installs vcpkg (if missing), bootstraps it, and uses it to install Drogon, OpenSSL, jsoncpp, zlib and libuuid for the specified triplet.
-  - Runs `vcpkg integrate install` so CMake can find vcpkg-installed libraries.
-  - Prints the CMake command to use the vcpkg toolchain.
+  - Works on Windows, macOS, and Linux (PowerShell 7 recommended on non-Windows).
+  - Ensures vcpkg is present and bootstrapped.
+  - Installs common backend deps via vcpkg (drogon, openssl, jsoncpp, zlib)
+  - Adds libuuid automatically ONLY on platforms where vcpkg supports it (typically Linux).
+  - On Windows only: can (optionally) ensure CMake / Git exist (via PATH, winget, choco).
+  - Logs output/errors and pauses at the end on Windows so the window doesn’t instantly close.
+  - Fixes Git "detected dubious ownership" by adding vcpkg dir to git safe.directory when needed.
+  - Runs vcpkg install with LIVE output so you can see download/build progress.
 
 .NOTES
-  Tested for typical Windows 10/11 environments. If you prefer to install tools manually (Visual Studio, CMake, Git), you can skip the automated installer portion.
+  - On macOS/Linux you’ll generally install compilers/CMake/Git via your system package manager.
+  - This script does not assume you have any particular package manager on macOS/Linux.
 #>
 
 param(
-  [string]$Triplet = "x64-windows",
-  [string]$VcpkgDir = "$env:USERPROFILE\\vcpkg"
+  [string]$Triplet = "",
+  [string]$VcpkgDir = "",
+  [string]$LogDir = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Is-Administrator {
-  $current = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-  return $current.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
-}
+# ----------------- Platform detection (safe on all OSes) -----------------
+$IsWin = $env:OS -eq "Windows_NT"
 
-if (-not (Is-Administrator)) {
-  Write-Host "Elevating to administrator..." -ForegroundColor Yellow
-  $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath)
-  foreach ($kv in $MyInvocation.BoundParameters.GetEnumerator()) {
-    $argList += ("-$($kv.Key)")
-    $argList += ("$($kv.Value)")
+$osDesc = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+$arch   = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()  # X64/Arm64/etc
+
+$IsMac   = (-not $IsWin) -and ($osDesc -match "Darwin|macOS")
+$IsLinux = (-not $IsWin) -and (-not $IsMac)
+
+# Defaults
+if (-not $VcpkgDir) {
+  $VcpkgDir = if ($IsWin) { Join-Path $env:USERPROFILE "vcpkg" } else { Join-Path $HOME "vcpkg" }
+}
+if (-not $LogDir) {
+  $LogDir = Join-Path $PSScriptRoot "logs"
+}
+if (-not $Triplet) {
+  if ($IsWin) {
+    $Triplet = "x64-windows"
+  } elseif ($IsMac) {
+    $Triplet = if ($arch -eq "Arm64") { "arm64-osx" } else { "x64-osx" }
+  } else {
+    $Triplet = if ($arch -eq "Arm64") { "arm64-linux" } else { "x64-linux" }
   }
-
-  # prefer pwsh (PowerShell Core), fall back to Windows PowerShell (powershell.exe)
-  $elevExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Path
-  if (-not $elevExe) { $elevExe = (Get-Command powershell -ErrorAction SilentlyContinue).Path }
-
-  if (-not $elevExe) {
-    Write-Host "Error: neither 'pwsh' nor 'powershell' was found to re-launch the script elevated. Run this script from an elevated session or install PowerShell Core." -ForegroundColor Red
-    exit 1
-  }
-
-  Start-Process -FilePath $elevExe -ArgumentList $argList -Verb RunAs -Wait
-  exit
 }
 
-Write-Host "Running as administrator. Beginning dependency installation..." -ForegroundColor Green
+# ----------------- Logging / Pause helpers -----------------
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
+$TimeStamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$LogFile   = Join-Path $LogDir "bootstrap_$TimeStamp.log"
 
-function Run-Command($cmd, $args) {
-  Write-Host "> $cmd $args"
-  Start-Process -FilePath $cmd -ArgumentList $args -NoNewWindow -Wait
-}
+Start-Transcript -Path $LogFile -Append | Out-Null
 
-$hasWinget = (Get-Command winget -ErrorAction SilentlyContinue) -ne $null
-$hasChoco  = (Get-Command choco  -ErrorAction SilentlyContinue) -ne $null
-
-if (-not $hasWinget -and -not $hasChoco) {
+function Pause-ForUser([string]$Message = "Press Enter to exit...") {
+  if (-not $IsWin) { return }
   Write-Host ""
-  Write-Host "Warning: neither 'winget' nor 'choco' was found. The script will still install vcpkg, but you'll need to install Visual Studio Build Tools, CMake, and Git manually." -ForegroundColor Yellow
-  Write-Host "Manual install links:"
-  Write-Host " - Visual Studio Build Tools: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022"
-  Write-Host " - CMake: https://cmake.org/download/"
-  Write-Host " - Git: https://git-scm.com/download/win"
-} else {
-  if ($hasWinget) {
-    Write-Host "Using winget to install Visual Studio Build Tools, CMake, and Git..."
-    Run-Command winget "install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements"
-    Run-Command winget "install --id Kitware.CMake -e --accept-package-agreements --accept-source-agreements"
-    Run-Command winget "install --id Git.Git -e --accept-package-agreements --accept-source-agreements"
-  } elseif ($hasChoco) {
-    Write-Host "Using Chocolatey to install Visual Studio Build Tools, CMake, and Git..."
-    Run-Command choco "install visualstudio2019buildtools -y --ignore-checksums"
-    Run-Command choco "install cmake -y --installargs 'ADD_CMAKE_TO_PATH=System'"
-    Run-Command choco "install git -y"
+  Write-Host $Message -ForegroundColor Yellow
+  try { [void](Read-Host) } catch {}
+}
+
+trap {
+  Write-Host ""
+  Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
+  if ($_.InvocationInfo) {
+    Write-Host "Location: $($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
+    Write-Host "Line: $($_.InvocationInfo.Line)" -ForegroundColor Red
   }
-}
-
-if (-not (Get-Command msbuild -ErrorAction SilentlyContinue) -and -not (Get-Command cl -ErrorAction SilentlyContinue)) {
-  Write-Host "Warning: MSVC build tools don't appear to be on PATH. Make sure Visual Studio Build Tools are installed and Developer Command Prompt or Build Tools paths are available." -ForegroundColor Yellow
-}
-
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-  Write-Host "Error: 'git' was not found on PATH. Install Git or ensure it is available before continuing." -ForegroundColor Red
+  Write-Host ""
+  Write-Host "Full log: $LogFile" -ForegroundColor Cyan
+  try { Stop-Transcript | Out-Null } catch {}
+  Pause-ForUser "Press Enter to close this window..."
   exit 1
 }
 
+Write-Host "Platform: $osDesc" -ForegroundColor Cyan
+Write-Host "Arch    : $arch" -ForegroundColor Cyan
+Write-Host "vcpkg dir: $VcpkgDir" -ForegroundColor Cyan
+Write-Host "Triplet : $Triplet" -ForegroundColor Cyan
+Write-Host "Log     : $LogFile" -ForegroundColor Cyan
+
+# ----------------- Command runner (captures output) -----------------
+function Run-Command {
+  param(
+    [Parameter(Mandatory=$true)][string]$Cmd,
+    [Parameter(Mandatory=$true)][string[]]$Args,
+    [switch]$AllowNonZeroExit
+  )
+
+  $argsOneLine = ($Args -join " ")
+  Write-Host ""
+  Write-Host "> $Cmd $argsOneLine" -ForegroundColor Gray
+
+  $tmpOut = Join-Path ([System.IO.Path]::GetTempPath()) ("bootstrap_out_{0}.txt" -f ([guid]::NewGuid().ToString("N")))
+  $tmpErr = Join-Path ([System.IO.Path]::GetTempPath()) ("bootstrap_err_{0}.txt" -f ([guid]::NewGuid().ToString("N")))
+
+  $p = Start-Process -FilePath $Cmd -ArgumentList $Args -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr
+
+  $outText = ""
+  $errText = ""
+  if (Test-Path $tmpOut) { $outText = Get-Content $tmpOut -Raw -ErrorAction SilentlyContinue }
+  if (Test-Path $tmpErr) { $errText = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue }
+
+  if ($outText) { Write-Host $outText }
+  if ($errText) { Write-Host $errText -ForegroundColor DarkRed }
+
+  Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+
+  if ($p.ExitCode -ne 0 -and -not $AllowNonZeroExit) {
+    throw "Command failed with exit code $($p.ExitCode): $Cmd $argsOneLine"
+  }
+
+  return @{
+    ExitCode = $p.ExitCode
+    StdOut   = $outText
+    StdErr   = $errText
+  }
+}
+
+# ----------------- LIVE command runner (no output redirection) -----------------
+function Run-CommandLive {
+  param(
+    [Parameter(Mandatory=$true)][string]$Cmd,
+    [Parameter(Mandatory=$true)][string[]]$Args
+  )
+  $argsOneLine = ($Args -join " ")
+  Write-Host ""
+  Write-Host "> $Cmd $argsOneLine" -ForegroundColor Gray
+
+  $p = Start-Process -FilePath $Cmd -ArgumentList $Args -NoNewWindow -Wait -PassThru
+  if ($p.ExitCode -ne 0) {
+    throw "Command failed with exit code $($p.ExitCode): $Cmd $argsOneLine"
+  }
+}
+
+# ----------------- Git safe.directory helper -----------------
+function Ensure-GitSafeDirectory {
+  param([Parameter(Mandatory=$true)][string]$RepoPath)
+
+  if (-not (Test-Path (Join-Path $RepoPath ".git"))) { return }
+
+  $p = $RepoPath -replace '\\','/'
+
+  $res = Run-Command -Cmd "git" -Args @("config","--global","--get-all","safe.directory") -AllowNonZeroExit
+  $existing = ($res.StdOut + "`n" + $res.StdErr)
+
+  if ($existing -match [regex]::Escape($p)) { return }
+
+  Write-Host "Git safety: adding safe.directory for $p" -ForegroundColor Yellow
+  Run-Command -Cmd "git" -Args @("config","--global","--add","safe.directory",$p)
+}
+
+# ----------------- Windows-only: optional tooling checks -----------------
+function Ensure-ToolOnPath {
+  param(
+    [Parameter(Mandatory=$true)][string]$Tool,
+    [string]$WingetId = "",
+    [string]$ChocoId  = ""
+  )
+
+  if (Get-Command $Tool -ErrorAction SilentlyContinue) {
+    Write-Host "$Tool already available on PATH. Skipping." -ForegroundColor Yellow
+    return
+  }
+
+  if (-not $IsWin) {
+    Write-Host "Warning: '$Tool' not found. Install it via your package manager then re-run." -ForegroundColor Yellow
+    return
+  }
+
+  $hasWinget = (Get-Command winget -ErrorAction SilentlyContinue) -ne $null
+  $hasChoco  = (Get-Command choco  -ErrorAction SilentlyContinue) -ne $null
+
+  if ($hasWinget -and $WingetId) {
+    $list = Run-Command -Cmd "winget" -Args @("list","--id",$WingetId,"-e") -AllowNonZeroExit
+    if (($list.StdOut + "`n" + $list.StdErr) -match [regex]::Escape($WingetId)) {
+      Write-Host "$Tool appears installed (winget list). You may need a new terminal for PATH." -ForegroundColor Yellow
+      return
+    }
+    $install = Run-Command -Cmd "winget" -Args @("install","--id",$WingetId,"-e","--accept-package-agreements","--accept-source-agreements") -AllowNonZeroExit
+    if ($install.ExitCode -ne 0) {
+      Write-Host "winget install for $Tool failed. You can install it manually and re-run." -ForegroundColor Yellow
+    }
+  } elseif ($hasChoco -and $ChocoId) {
+    Run-Command -Cmd "choco" -Args @("install",$ChocoId,"-y")
+  } else {
+    Write-Host "Warning: '$Tool' not found and no installer tool available. Install manually and re-run." -ForegroundColor Yellow
+  }
+}
+
+if ($IsWin) {
+  Ensure-ToolOnPath -Tool "git"   -WingetId "Git.Git"       -ChocoId "git"
+  Ensure-ToolOnPath -Tool "cmake" -WingetId "Kitware.CMake" -ChocoId "cmake"
+
+  if (-not (Get-Command cl -ErrorAction SilentlyContinue) -and -not (Get-Command msbuild -ErrorAction SilentlyContinue)) {
+    Write-Host "Note: MSVC tools not detected on PATH. vcpkg may still work if Build Tools are installed (Developer Command Prompt helps)." -ForegroundColor Yellow
+  }
+} else {
+  Write-Host "Non-Windows: Ensure compiler toolchain + CMake + Git are installed (e.g., build-essential/clang, cmake, git)." -ForegroundColor Yellow
+}
+
+# ----------------- Ensure git exists before cloning vcpkg -----------------
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+  throw "git not found on PATH. Install Git and re-run."
+}
+
+# ----------------- vcpkg: clone/update -----------------
 if (-not (Test-Path -Path $VcpkgDir)) {
   Write-Host "Cloning vcpkg into $VcpkgDir..."
-  git clone https://github.com/microsoft/vcpkg.git $VcpkgDir
+  Run-CommandLive -Cmd "git" -Args @("clone","https://github.com/microsoft/vcpkg.git",$VcpkgDir)
+  Ensure-GitSafeDirectory -RepoPath $VcpkgDir
 } else {
+  Ensure-GitSafeDirectory -RepoPath $VcpkgDir
   Write-Host "vcpkg already exists at $VcpkgDir. Pulling latest changes..."
   Push-Location $VcpkgDir
-  git pull
+  Run-CommandLive -Cmd "git" -Args @("pull")
   Pop-Location
 }
 
-$VcpkgExe = Join-Path $VcpkgDir "vcpkg.exe"
-if (-not (Test-Path $VcpkgExe)) {
-  Write-Host "Bootstrapping vcpkg..."
-  Push-Location $VcpkgDir
-  if (Test-Path ".\\bootstrap-vcpkg.bat") {
-    & .\bootstrap-vcpkg.bat
+# ----------------- vcpkg: bootstrap -----------------
+Push-Location $VcpkgDir
+
+if ($IsWin) {
+  $VcpkgExe = Join-Path $VcpkgDir "vcpkg.exe"
+  if (-not (Test-Path $VcpkgExe)) {
+    Write-Host "Bootstrapping vcpkg (Windows)..."
+    if (Test-Path ".\bootstrap-vcpkg.bat") {
+      Run-CommandLive -Cmd ".\bootstrap-vcpkg.bat" -Args @()
+    } else {
+      throw "bootstrap-vcpkg.bat not found. Make sure vcpkg clone succeeded."
+    }
   } else {
-    Write-Host "bootstrap-vcpkg.bat not found. Make sure Git clone succeeded." -ForegroundColor Red
-    exit 1
+    Write-Host "vcpkg executable found."
   }
-  Pop-Location
 } else {
-  Write-Host "vcpkg executable found."
+  $VcpkgExe = Join-Path $VcpkgDir "vcpkg"
+  if (-not (Test-Path $VcpkgExe)) {
+    Write-Host "Bootstrapping vcpkg (macOS/Linux)..."
+    if (Test-Path "./bootstrap-vcpkg.sh") {
+      Run-CommandLive -Cmd "bash" -Args @("./bootstrap-vcpkg.sh")
+    } else {
+      throw "bootstrap-vcpkg.sh not found. Make sure vcpkg clone succeeded."
+    }
+  } else {
+    Write-Host "vcpkg executable found."
+  }
 }
 
-$packages = @("drogon", "openssl", "jsoncpp", "zlib", "libuuid")
+Pop-Location
+
+# ----------------- vcpkg packages (cross-platform) -----------------
+$packages = @("drogon", "openssl", "jsoncpp", "zlib")
+if ($IsLinux) { $packages += "libuuid" }
+
 Write-Host "Installing packages via vcpkg for triplet '$Triplet': $($packages -join ', ')"
 Push-Location $VcpkgDir
 
-# build proper argument list for vcpkg install (avoid "$_:$Triplet" interpolation issue)
-$pkgArgs = $packages | ForEach-Object { "{0}:{1}" -f $_, $Triplet }
+# LIVE output here so you see progress
+$pkgArgs = @("install") + ($packages | ForEach-Object { "{0}:{1}" -f $_, $Triplet })
+Run-CommandLive -Cmd $VcpkgExe -Args $pkgArgs
 
-# invoke vcpkg
-& $VcpkgExe install @pkgArgs
+Write-Host "Running 'vcpkg integrate install'..."
+# integrate is useful on Windows; on mac/linux it's optional but harmless
+Run-CommandLive -Cmd $VcpkgExe -Args @("integrate","install")
 
-Write-Host "Running 'vcpkg integrate install' to make vcpkg available to CMake projects..."
-& $VcpkgExe integrate install
 Pop-Location
 
 Write-Host ""
 Write-Host "All done." -ForegroundColor Green
-Write-Host "Next steps:"
-Write-Host " 1) Configure CMake using the vcpkg toolchain (example):"
-Write-Host "      cmake -S backend -B backend\\build -DDROGON_FOUND=ON -DCMAKE_TOOLCHAIN_FILE=`"$VcpkgDir\\scripts\\buildsystems\\vcpkg.cmake`" -A x64"
-Write-Host " 2) Build the project (example):"
-Write-Host "      cmake --build backend\\build --config Release"
+Write-Host "Log saved to: $LogFile" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Next steps (CMake example):"
+Write-Host "  cmake -S backend -B backend/build -DCMAKE_TOOLCHAIN_FILE=`"$VcpkgDir/scripts/buildsystems/vcpkg.cmake`""
+Write-Host "  cmake --build backend/build"
 Write-Host ""
 Write-Host "Notes:"
-Write-Host " - If you prefer using another triplet (e.g. x64-windows-static), re-run this script with -Triplet 'x64-windows-static'."
-Write-Host " - If any vcpkg ports fail to build (especially drogon), check the vcpkg repo issues or try a different Visual Studio workload (Desktop development with C++)."
+Write-Host " - If you're on Apple Silicon, default triplet will be arm64-osx automatically."
+Write-Host " - If a port fails, check vcpkg output in the log."
+
+try { Stop-Transcript | Out-Null } catch {}
+Pause-ForUser "Press Enter to exit..."
+exit 0
