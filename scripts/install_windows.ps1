@@ -35,11 +35,8 @@ if (-not (Is-Administrator)) {
   }
 
   # prefer pwsh (PowerShell Core), fall back to Windows PowerShell (powershell.exe)
-  $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
-  $powershellCmd = Get-Command powershell -ErrorAction SilentlyContinue
-  $elevExe = $null
-  if ($pwshCmd) { $elevExe = $pwshCmd.Path }
-  elseif ($powershellCmd) { $elevExe = $powershellCmd.Path }
+  $elevExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Path
+  if (-not $elevExe) { $elevExe = (Get-Command powershell -ErrorAction SilentlyContinue).Path }
 
   if (-not $elevExe) {
     Write-Host "Error: neither 'pwsh' nor 'powershell' was found to re-launch the script elevated. Run this script from an elevated session or install PowerShell Core." -ForegroundColor Red
@@ -105,7 +102,7 @@ if (-not (Test-Path $VcpkgExe)) {
   Write-Host "Bootstrapping vcpkg..."
   Push-Location $VcpkgDir
   if (Test-Path ".\\bootstrap-vcpkg.bat") {
-    & .\\bootstrap-vcpkg.bat
+    & .\bootstrap-vcpkg.bat
   } else {
     Write-Host "bootstrap-vcpkg.bat not found. Make sure Git clone succeeded." -ForegroundColor Red
     exit 1
@@ -119,7 +116,7 @@ $packages = @("drogon", "openssl", "jsoncpp", "zlib", "libuuid")
 Write-Host "Installing packages via vcpkg for triplet '$Triplet': $($packages -join ', ')"
 Push-Location $VcpkgDir
 
-# build proper argument list for vcpkg install (avoid \"$:_:$Triplet\" interpolation issue)
+# build proper argument list for vcpkg install (avoid "$_:$Triplet" interpolation issue)
 $pkgArgs = $packages | ForEach-Object { "{0}:{1}" -f $_, $Triplet }
 
 # invoke vcpkg
