@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>College Fantasy Football</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="hero">
+    <div class="hero__content">
+      <h1>College Fantasy Football</h1>
+      <p class="subtitle">FBS &amp; FCS coverage with a modern fantasy experience.</p>
+      <button id="cta" class="button button--primary">Create a League</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="card">
+      <h2>Live Scores</h2>
+      <div id="live-scores" class="list">Loading live scores...</div>
+    </section>
+
+    <section class="card">
+      <h2>Player Search</h2>
+      <form id="search-form" class="search">
+        <input id="search-input" type="search" placeholder="Search players (name, team, position)" />
+        <button class="button" type="submit">Search</button>
+      </form>
+      <div id="search-results" class="list">Try searching for a player.</div>
+    </section>
+
+    <section class="card">
+      <h2>Your League</h2>
+      <div id="league-summary" class="list">Sign in to see your league.</div>
+    </section>
+  </main>
+
+  <footer class="footer">Built for college fantasy managers.</footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
