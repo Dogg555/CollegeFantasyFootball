@@ -1,0 +1,20 @@
+version: "3.9"
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      - PORT=8080
+      - JWT_SECRET=dev-secret-token
+      # - SSL_CERT_FILE=/certs/local.crt
+      # - SSL_KEY_FILE=/certs/local.key
+      # - ALLOWED_ORIGINS=http://localhost:8080,http://localhost:3000
+    ports:
+      - "8080:8080"
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
