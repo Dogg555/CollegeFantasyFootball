@@ -28,7 +28,22 @@ function Is-Administrator {
 
 if (-not (Is-Administrator)) {
   Write-Host "Elevating to administrator..." -ForegroundColor Yellow
-  Start-Process -FilePath pwsh -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" $($MyInvocation.BoundParameters.GetEnumerator() | ForEach-Object { '-'+$_.Key + ' `' + $_.Value + '`' } )" -Verb RunAs
+  $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath)
+  foreach ($kv in $MyInvocation.BoundParameters.GetEnumerator()) {
+    $argList += ("-$($kv.Key)")
+    $argList += ("$($kv.Value)")
+  }
+
+  # prefer pwsh (PowerShell Core), fall back to Windows PowerShell (powershell.exe)
+  $elevExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Path
+  if (-not $elevExe) { $elevExe = (Get-Command powershell -ErrorAction SilentlyContinue).Path }
+
+  if (-not $elevExe) {
+    Write-Host "Error: neither 'pwsh' nor 'powershell' was found to re-launch the script elevated. Run this script from an elevated session or install PowerShell Core." -ForegroundColor Red
+    exit 1
+  }
+
+  Start-Process -FilePath $elevExe -ArgumentList $argList -Verb RunAs -Wait
   exit
 }
 
@@ -36,7 +51,7 @@ Write-Host "Running as administrator. Beginning dependency installation..." -For
 
 function Run-Command($cmd, $args) {
   Write-Host "> $cmd $args"
-  & $cmd $args
+  Start-Process -FilePath $cmd -ArgumentList $args -NoNewWindow -Wait
 }
 
 $hasWinget = (Get-Command winget -ErrorAction SilentlyContinue) -ne $null
@@ -67,6 +82,11 @@ if (-not (Get-Command msbuild -ErrorAction SilentlyContinue) -and -not (Get-Comm
   Write-Host "Warning: MSVC build tools don't appear to be on PATH. Make sure Visual Studio Build Tools are installed and Developer Command Prompt or Build Tools paths are available." -ForegroundColor Yellow
 }
 
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+  Write-Host "Error: 'git' was not found on PATH. Install Git or ensure it is available before continuing." -ForegroundColor Red
+  exit 1
+}
+
 if (-not (Test-Path -Path $VcpkgDir)) {
   Write-Host "Cloning vcpkg into $VcpkgDir..."
   git clone https://github.com/microsoft/vcpkg.git $VcpkgDir
@@ -82,7 +102,7 @@ if (-not (Test-Path $VcpkgExe)) {
   Write-Host "Bootstrapping vcpkg..."
   Push-Location $VcpkgDir
   if (Test-Path ".\\bootstrap-vcpkg.bat") {
-    & .\\bootstrap-vcpkg.bat
+    & .\bootstrap-vcpkg.bat
   } else {
     Write-Host "bootstrap-vcpkg.bat not found. Make sure Git clone succeeded." -ForegroundColor Red
     exit 1
@@ -95,7 +115,13 @@ if (-not (Test-Path $VcpkgExe)) {
 $packages = @("drogon", "openssl", "jsoncpp", "zlib", "libuuid")
 Write-Host "Installing packages via vcpkg for triplet '$Triplet': $($packages -join ', ')"
 Push-Location $VcpkgDir
-& $VcpkgExe install ($packages | ForEach-Object { "$_:$Triplet" })
+
+# build proper argument list for vcpkg install (avoid "$_:$Triplet" interpolation issue)
+$pkgArgs = $packages | ForEach-Object { "{0}:{1}" -f $_, $Triplet }
+
+# invoke vcpkg
+& $VcpkgExe install @pkgArgs
+
 Write-Host "Running 'vcpkg integrate install' to make vcpkg available to CMake projects..."
 & $VcpkgExe integrate install
 Pop-Location
