@@ -23,7 +23,7 @@ cmake --build build
   ```bash
   ./scripts/install_dependencies.sh
   ```
-- Windows 11 setup (vcpkg or WSL) is documented in `../docs/windows-setup.md`.
+- Windows 11 setup (vcpkg or WSL) is documented in `../docs/windows-setup.md`; automated install script: `../scripts/install_windows.ps1`.
 
 ### Docker (local testing)
 ```bash
