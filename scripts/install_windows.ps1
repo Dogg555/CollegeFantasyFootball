@@ -35,8 +35,13 @@ if (-not (Is-Administrator)) {
   }
 
   # prefer pwsh (PowerShell Core), fall back to Windows PowerShell (powershell.exe)
-  $elevExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Path
-  if (-not $elevExe) { $elevExe = (Get-Command powershell -ErrorAction SilentlyContinue).Path }
+  $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
+  if ($pwshCmd) { $elevExe = $pwshCmd.Path }
+
+  if (-not $elevExe) {
+    $psCmd = Get-Command powershell -ErrorAction SilentlyContinue
+    if ($psCmd) { $elevExe = $psCmd.Path }
+  }
 
   if (-not $elevExe) {
     Write-Host "Error: neither 'pwsh' nor 'powershell' was found to re-launch the script elevated. Run this script from an elevated session or install PowerShell Core." -ForegroundColor Red
