@@ -11,7 +11,7 @@ A full-stack concept for a college fantasy football platform covering Division I
 1. Review `docs/architecture.md` for the proposed system design.
 2. Install dependencies:
    - Debian/Ubuntu: `./scripts/install_dependencies.sh`
-   - Windows 11: see `docs/windows-setup.md` (vcpkg or WSL options)
+   - Windows 11: run `./scripts/install_windows.ps1` (PowerShell) or see `docs/windows-setup.md` (vcpkg/WSL options)
    ```bash
    # Debian/Ubuntu example
    ./scripts/install_dependencies.sh
