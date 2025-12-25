@@ -22,7 +22,7 @@
       <a class="nav__link" href="#">Players</a>
     </nav>
     <div class="nav__actions">
-      <button class="button button--ghost">Sign in</button>
+      <a class="button button--ghost" id="nav-sign-in" href="signin.html">Sign in</a>
       <button class="button button--primary js-open-league">Create League</button>
     </div>
   </div>
@@ -123,7 +123,12 @@
 
     <section class="card">
       <h2>Your League</h2>
+      <div class="muted small" id="account-hint">Sign in to create and view leagues.</div>
       <div id="league-summary" class="list">Sign in to see your league.</div>
+      <div class="cta-row">
+        <a class="button button--ghost" href="signin.html">Go to sign in</a>
+        <button class="button button--primary js-open-league">Create a League</button>
+      </div>
     </section>
   </main>
 
