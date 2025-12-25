@@ -51,7 +51,7 @@ int main(int argc, char* argv[]) {
 
     // SSL enablement when certs are available
     if (sslCert && sslKey) {
-        app.enableSSL(sslCert.value(), sslKey.value());
+        app.setSSLFiles(sslCert.value(), sslKey.value());
         std::cout << "[security] SSL enabled with provided certificate and key." << std::endl;
     } else {
         std::cout << "[security] SSL not configured. For testing only. Provide SSL_CERT_FILE and SSL_KEY_FILE to enable HTTPS." << std::endl;
