@@ -23,6 +23,7 @@ const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
 const searchResultsEl = document.getElementById('search-results');
 const leagueSummaryEl = document.getElementById('league-summary');
+const accountHint = document.getElementById('account-hint');
 let authState = null;
 let leagueState = null;
 
@@ -85,59 +86,12 @@ function setFormStatus(message, isError = false) {
   formStatus.style.color = isError ? '#ffb3b3' : 'var(--muted)';
 }
 
-function setSignInStatus(message, isError = false) {
-  signInStatus.textContent = message;
-  signInStatus.style.color = isError ? '#ffb3b3' : 'var(--muted)';
-}
-
 function authHeaders() {
   if (authState && authState.token) {
     return { Authorization: `Bearer ${authState.token}` };
   }
   return {};
 }
-
-navSignInBtn?.addEventListener('click', () => {
-  signInForm.scrollIntoView({ behavior: 'smooth' });
-  signInEmailInput.focus();
-});
-
-prefillTokenBtn?.addEventListener('click', () => {
-  signInTokenInput.value = 'dev-secret-token';
-  signInTokenInput.focus();
-});
-
-signInForm?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const email = signInEmailInput.value.trim();
-  const token = signInTokenInput.value.trim();
-  if (!token) {
-    setSignInStatus('Provide a token to sign in (dev-secret-token by default).', true);
-    return;
-  }
-  setSignInStatus('Signing in...');
-  try {
-    const resp = await fetch(`${apiBase}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, token }),
-    });
-    if (!resp.ok) {
-      const errorText = await resp.text();
-      throw new Error(errorText || 'Invalid token');
-    }
-    const data = await resp.json();
-    authState = {
-      email: data.email || email || 'manager',
-      token: data.token || token,
-    };
-    persistAuth();
-    setSignInStatus(`Signed in as ${authState.email}.`);
-    renderLeagueSummary();
-  } catch (err) {
-    setSignInStatus('Sign-in failed. Check your token and try again.', true);
-  }
-});
 
 async function fetchLiveScores() {
   liveScoresEl.textContent = 'Loading live scores...';
@@ -217,6 +171,9 @@ form.addEventListener('submit', async (e) => {
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
+      if (resp.status === 401) {
+        throw new Error('You must sign in before creating a league.');
+      }
       throw new Error('Unable to create league');
     }
     const data = await resp.json();
@@ -236,7 +193,12 @@ function loadLeagueSummary() {
   }
   const message = authState
     ? `Signed in as ${authState.email || 'manager'}. Create a league to see it here.`
-    : 'Sign in above to see your league.';
+    : 'Sign in to create and view leagues.';
+  if (accountHint) {
+    accountHint.textContent = authState
+      ? `Signed in as ${authState.email || 'manager'}.`
+      : 'Go to the sign-in page to create an account or log in.';
+  }
   leagueSummaryEl.innerHTML = `
     <div class="row">
       <div>
