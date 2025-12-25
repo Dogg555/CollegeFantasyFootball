@@ -37,6 +37,7 @@ docker run --rm -p 8080:8080 -e JWT_SECRET=dev-secret-token college-ff-backend
 - `src/models/`: Data models and mappers (if using ORM).
 - `src/services/`: Business logic (scoring rules, draft engine, waiver processing).
 - `src/utils/`: Helpers (validation, logging, time, ID generation).
+- `db/schema.sql`: Postgres schema for teams, players, games, stats, depth charts, and fantasy overlays.
 
 ## Environment variables (planned)
 - `DB_URL` (PostgreSQL connection string)
@@ -50,3 +51,4 @@ docker run --rm -p 8080:8080 -e JWT_SECRET=dev-secret-token college-ff-backend
 1. Add package/dependency setup for Drogon (FetchContent or system packages).
 2. Flesh out route handlers for auth, leagues, players, drafts, and lineups.
 3. Add integration tests for API endpoints and scoring logic.
+4. Wire ingestion jobs to the Postgres schema in `db/schema.sql` and cache hot lookups in Redis.
