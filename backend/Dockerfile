@@ -7,7 +7,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     git \
     pkg-config \
-    ca-certificates \
     libjsoncpp-dev \
     uuid-dev \
     zlib1g-dev \
@@ -42,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY --from=build /app/build/college_ff_server /srv/college_ff_server
-EXPOSE 8080
 
+EXPOSE 8080
 ENV PORT=8080
 CMD ["/srv/college_ff_server"]
