@@ -5,9 +5,11 @@ services:
     environment:
       - PORT=8080
       - JWT_SECRET=dev-secret-token
-      # - SSL_CERT_FILE=/certs/local.crt
-      # - SSL_KEY_FILE=/certs/local.key
+      - SSL_CERT_FILE=/certs/dev.crt
+      - SSL_KEY_FILE=/certs/dev.key
       # - ALLOWED_ORIGINS=http://localhost:8080,http://localhost:3000
+    volumes:
+      - ./certs:/certs:ro
     ports:
       - "8080:8080"
   frontend:

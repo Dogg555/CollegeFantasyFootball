@@ -6,6 +6,7 @@ const closeModalBtn = document.getElementById('close-modal');
 const cancelModalBtn = document.getElementById('cancel-modal');
 const form = document.getElementById('create-league-form');
 const navSignInBtn = document.getElementById('nav-sign-in');
+const navLogoutBtn = document.getElementById('nav-logout');
 const signInForm = document.getElementById('sign-in-form');
 const signInEmailInput = document.getElementById('sign-in-email');
 const signInTokenInput = document.getElementById('sign-in-token');
@@ -23,6 +24,7 @@ const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
 const searchResultsEl = document.getElementById('search-results');
 const leagueSummaryEl = document.getElementById('league-summary');
+const viewLeagueLink = document.getElementById('view-league');
 const accountHint = document.getElementById('account-hint');
 let authState = null;
 let leagueState = null;
@@ -42,11 +44,60 @@ function loadStoredAuth() {
   }
 }
 
+function loadStoredLeague() {
+  try {
+    const raw = localStorage.getItem('cff_league');
+    if (raw) {
+      leagueState = JSON.parse(raw);
+    }
+  } catch {
+    leagueState = null;
+  }
+}
+
 function persistAuth() {
   if (!authState) return;
   localStorage.setItem('cff_auth', JSON.stringify(authState));
 }
 
+function persistLeague() {
+  if (!leagueState) return;
+  localStorage.setItem('cff_league', JSON.stringify(leagueState));
+}
+
+function clearAuth() {
+  authState = null;
+  leagueState = null;
+  localStorage.removeItem('cff_auth');
+  localStorage.removeItem('cff_league');
+  updateAuthUi();
+  loadLeagueSummary();
+}
+
+function updateAuthUi() {
+  if (navSignInBtn) {
+    if (authState) {
+      navSignInBtn.textContent = authState.email || 'Account';
+      navSignInBtn.href = 'league.html';
+    } else {
+      navSignInBtn.textContent = 'Sign in';
+      navSignInBtn.href = 'signin.html';
+    }
+  }
+  if (navLogoutBtn) {
+    navLogoutBtn.hidden = !authState;
+  }
+  if (viewLeagueLink) {
+    viewLeagueLink.hidden = !leagueState;
+  }
+}
+
+function refreshAuthState() {
+  loadStoredAuth();
+  loadStoredLeague();
+  updateAuthUi();
+  loadLeagueSummary();
+}
 function openModal() {
   modal.classList.add('is-open');
   modal.setAttribute('aria-hidden', 'false');
@@ -66,6 +117,10 @@ function closeModal() {
 modalBackdrop.addEventListener('click', closeModal);
 closeModalBtn.addEventListener('click', closeModal);
 cancelModalBtn.addEventListener('click', closeModal);
+
+navLogoutBtn?.addEventListener('click', () => {
+  clearAuth();
+});
 
 document.querySelectorAll('.segment').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -176,8 +231,9 @@ form.addEventListener('submit', async (e) => {
       }
       throw new Error('Unable to create league');
     }
-    const data = await resp.json();
-    leagueState = data;
+    const data = await resp.json();    leagueState = data;
+    persistLeague();
+    updateAuthUi();
     renderLeagueSummary();
     setFormStatus('League saved. Draft date and invites are up next.');
     setTimeout(closeModal, 500);
@@ -230,12 +286,27 @@ function renderLeagueSummary() {
         <div class="muted">Next step: send invites and schedule the draft.</div>
         <div class="muted small">${leagueState.notes || 'We’ll remind managers 1 hour before the draft.'}</div>
       </div>
-      <button class="button">Manage league</button>
+      <a class="button" href="league.html">View league</a>
     </div>
   `;
 }
 
 // Initial bootstrap
 loadStoredAuth();
+loadStoredLeague();
+updateAuthUi();
 fetchLiveScores();
 loadLeagueSummary();
+
+window.addEventListener('storage', (event) => {
+  if (event.key === 'cff_auth' || event.key === 'cff_league') {
+    refreshAuthState();
+  }
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    refreshAuthState();
+  }
+});
+

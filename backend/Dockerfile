@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     pkg-config \
     libjsoncpp-dev \
+    libcrypt-dev \
     uuid-dev \
     zlib1g-dev \
     libssl-dev \
@@ -39,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
     libjsoncpp25 \
+    libcrypt1 \
     libuuid1 \
     zlib1g \
     libbrotli1 \

@@ -10,6 +10,10 @@ const loginEmail = document.getElementById('login-email');
 const loginPassword = document.getElementById('login-password');
 const loginStatus = document.getElementById('login-status');
 
+const signOutBtn = document.getElementById('signout-btn');
+const authNote = document.getElementById('auth-note');
+let storedAuth = null;
+
 function setStatus(el, message, isError = false) {
   if (!el) return;
   el.textContent = message;
@@ -17,10 +21,42 @@ function setStatus(el, message, isError = false) {
 }
 
 function saveAuth(email, token) {
-  localStorage.setItem('cff_auth', JSON.stringify({ email, token }));
+  storedAuth = { email, token };
+  localStorage.setItem('cff_auth', JSON.stringify(storedAuth));
+  updateAuthUi();
 }
 
-async function submitAuthForm(path, email, password, statusEl) {
+function loadStoredAuth() {
+  try {
+    const raw = localStorage.getItem('cff_auth');
+    if (raw) {
+      storedAuth = JSON.parse(raw);
+    }
+  } catch {
+    storedAuth = null;
+  }
+}
+
+function clearAuth() {
+  storedAuth = null;
+  localStorage.removeItem('cff_auth');
+  localStorage.removeItem('cff_league');
+  updateAuthUi();
+}
+
+function updateAuthUi() {
+  if (authNote) {
+    if (storedAuth && storedAuth.email) {
+      authNote.textContent = `Signed in as ${storedAuth.email}.`;
+    } else {
+      authNote.textContent = 'Not signed in yet.';
+    }
+  }
+  if (signOutBtn) {
+    signOutBtn.hidden = !storedAuth;
+  }
+}
+async function submitAuthForm(path, email, password, statusEl, redirectTo) {
   setStatus(statusEl, 'Working...');
   try {
     const resp = await fetch(`${apiBase}${path}`, {
@@ -36,8 +72,17 @@ async function submitAuthForm(path, email, password, statusEl) {
     }
     saveAuth(data.email || email, data.token);
     setStatus(statusEl, data.message || 'Success');
+    if (redirectTo) {
+      window.location.href = redirectTo;
+    }
   } catch (err) {
     setStatus(statusEl, 'Unable to reach the server. Is it running?', true);
+  }
+}
+
+function stripUrlParams() {
+  if (window.location.search) {
+    window.history.replaceState({}, document.title, window.location.pathname);
   }
 }
 
@@ -46,7 +91,22 @@ signupForm?.addEventListener('submit', async (e) => {
   await submitAuthForm('/auth/signup', signupEmail.value.trim(), signupPassword.value, signupStatus);
 });
 
+signOutBtn?.addEventListener('click', () => {
+  clearAuth();
+  setStatus(loginStatus, 'Signed out');
+});
+
 loginForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  await submitAuthForm('/auth/login', loginEmail.value.trim(), loginPassword.value, loginStatus);
+  await submitAuthForm('/auth/login', loginEmail.value.trim(), loginPassword.value, loginStatus, 'league.html');
 });
+
+
+loadStoredAuth();
+updateAuthUi();
+
+stripUrlParams();
+if (storedAuth && storedAuth.token) {
+  window.location.href = 'league.html';
+}
+
