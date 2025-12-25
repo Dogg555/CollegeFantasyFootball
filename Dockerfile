@@ -38,7 +38,7 @@ WORKDIR /app/backend
 COPY backend/ /app/backend
 
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local \
-    -DDROGON_FOUND=ON \
+    -DENABLE_DROGON=ON \
  && cmake --build build --target college_ff_server -- -j"$(nproc)"
 
 FROM debian:bookworm-slim AS backend
