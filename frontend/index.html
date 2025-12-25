@@ -17,12 +17,13 @@
     </div>
     <nav class="nav">
       <a class="nav__link is-active" href="#">Home</a>
-      <a class="nav__link" href="#">Leagues</a>
+      <a class="nav__link" href="league.html">Leagues</a>
       <a class="nav__link" href="#">Draft Room</a>
       <a class="nav__link" href="#">Players</a>
     </nav>
     <div class="nav__actions">
       <a class="button button--ghost" id="nav-sign-in" href="signin.html">Sign in</a>
+      <button class="button button--ghost" id="nav-logout" type="button" hidden>Sign out</button>
       <button class="button button--primary js-open-league">Create League</button>
     </div>
   </div>
@@ -127,6 +128,7 @@
       <div id="league-summary" class="list">Sign in to see your league.</div>
       <div class="cta-row">
         <a class="button button--ghost" href="signin.html">Go to sign in</a>
+        <a class="button" id="view-league" href="league.html" hidden>View league</a>
         <button class="button button--primary js-open-league">Create a League</button>
       </div>
     </section>
@@ -199,3 +201,4 @@
   <script src="app.js"></script>
 </body>
 </html>
+

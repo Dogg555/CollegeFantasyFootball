@@ -1,3 +1,4 @@
+#include <array>
 #include <cstdlib>
 #include <chrono>
 #include <iostream>
@@ -10,6 +11,7 @@
 #include <unordered_set>
 
 #ifdef DROGON_FOUND
+#include <crypt.h>
 #include <drogon/drogon.h>
 #include <json/json.h>
 #include "league_models.h"
@@ -27,8 +29,42 @@ std::optional<std::string> readEnv(const std::string &key) {
 }
 
 std::mutex userMutex;
-std::unordered_map<std::string, std::string> userPasswords;
+std::unordered_map<std::string, std::string> userPasswordHashes;
 std::unordered_map<std::string, std::string> activeTokens; // token -> email
+
+std::optional<std::string> hashPassword(const std::string &password) {
+    constexpr int kCost = 12;
+    constexpr std::size_t kSaltLen = 16;
+    std::array<unsigned char, kSaltLen> saltBytes{};
+    std::random_device rd;
+    for (auto &byte : saltBytes) {
+        byte = static_cast<unsigned char>(rd());
+    }
+    char saltBuf[128];
+    if (!crypt_gensalt_rn("$2b$", kCost,
+                          reinterpret_cast<const char *>(saltBytes.data()),
+                          saltBytes.size(),
+                          saltBuf, sizeof(saltBuf))) {
+        return std::nullopt;
+    }
+    struct crypt_data data;
+    data.initialized = 0;
+    const char *hash = crypt_r(password.c_str(), saltBuf, &data);
+    if (!hash) {
+        return std::nullopt;
+    }
+    return std::string{hash};
+}
+
+bool verifyPassword(const std::string &password, const std::string &hash) {
+    struct crypt_data data;
+    data.initialized = 0;
+    const char *computed = crypt_r(password.c_str(), hash.c_str(), &data);
+    if (!computed) {
+        return false;
+    }
+    return hash == computed;
+}
 
 bool hasBearerToken(const drogon::HttpRequestPtr &req, std::string &outToken) {
     const auto authHeader = req->getHeader("authorization");
@@ -125,10 +161,19 @@ void handleSignup(const drogon::HttpRequestPtr &req,
 
     const auto email = (*body)["email"].asString();
     const auto password = (*body)["password"].asString();
+    const auto passwordHash = hashPassword(password);
+    if (!passwordHash) {
+        Json::Value error;
+        error["error"] = "Unable to create account";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k500InternalServerError);
+        callback(resp);
+        return;
+    }
 
     {
         std::lock_guard<std::mutex> lock(userMutex);
-        if (userPasswords.find(email) != userPasswords.end()) {
+        if (userPasswordHashes.find(email) != userPasswordHashes.end()) {
             Json::Value error;
             error["error"] = "Account already exists";
             auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
@@ -136,7 +181,7 @@ void handleSignup(const drogon::HttpRequestPtr &req,
             callback(resp);
             return;
         }
-        userPasswords[email] = password;
+        userPasswordHashes[email] = *passwordHash;
     }
 
     const auto token = issueTokenForUser(email);
@@ -169,8 +214,8 @@ void handleLogin(const drogon::HttpRequestPtr &req,
     bool passwordMatches = false;
     {
         std::lock_guard<std::mutex> lock(userMutex);
-        auto it = userPasswords.find(email);
-        passwordMatches = (it != userPasswords.end() && it->second == password);
+        auto it = userPasswordHashes.find(email);
+        passwordMatches = (it != userPasswordHashes.end() && verifyPassword(password, it->second));
     }
 
     if (!passwordMatches) {
@@ -211,6 +256,7 @@ int main(int argc, char* argv[]) {
     }
 
     // SSL enablement when certs are available
+    const bool useSsl = static_cast<bool>(sslCert && sslKey);
     if (sslCert && sslKey) {
         app.setSSLFiles(sslCert.value(), sslKey.value());
         std::cout << "[security] SSL enabled with provided certificate and key." << std::endl;
@@ -247,7 +293,7 @@ int main(int argc, char* argv[]) {
         callback(buildPreflightResponse(req, allowedOrigins));
     };
 
-    app.addListener("0.0.0.0", static_cast<unsigned short>(std::stoi(port)))
+    app.addListener("0.0.0.0", static_cast<unsigned short>(std::stoi(port)), useSsl)
         .setThreadNum(std::thread::hardware_concurrency())
         .registerHandler("/health", [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
             auto resp = drogon::HttpResponse::newHttpResponse();

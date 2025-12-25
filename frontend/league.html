@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your League - College Fantasy Football</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand__logo">CF</div>
+      <div>
+        <div class="brand__title">College Fantasy</div>
+        <div class="brand__subtitle">Modern manager hub</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a class="nav__link" href="index.html">Home</a>
+      <a class="nav__link is-active" href="league.html">Leagues</a>
+      <a class="nav__link" href="#">Draft Room</a>
+      <a class="nav__link" href="#">Players</a>
+    </nav>
+    <div class="nav__actions">
+      <a class="button button--ghost" id="nav-sign-in" href="signin.html">Sign in</a>
+      <button class="button button--ghost" id="nav-logout" type="button" hidden>Sign out</button>
+      <a class="button button--primary" href="index.html">Back to home</a>
+    </div>
+  </div>
+
+  <main class="layout" style="max-width: 1080px">
+    <section class="card card--accent">
+      <div class="card__header">
+        <h2>League overview</h2>
+        <span class="pill">Active</span>
+      </div>
+      <div id="league-empty" class="muted">
+        No saved league yet. Create a league on the home page to see it here.
+      </div>
+      <div id="league-details" hidden>
+        <div class="grid">
+          <div>
+            <div class="label">League name</div>
+            <div class="value" id="league-name"></div>
+          </div>
+          <div>
+            <div class="label">Teams</div>
+            <div class="value" id="league-teams"></div>
+          </div>
+          <div>
+            <div class="label">Scoring</div>
+            <div class="value" id="league-scoring"></div>
+          </div>
+          <div>
+            <div class="label">Draft</div>
+            <div class="value" id="league-draft"></div>
+          </div>
+        </div>
+        <div class="list">
+          <div class="row">
+            <div>
+              <strong>League ID</strong>
+              <div class="muted" id="league-id"></div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <strong>Notes</strong>
+              <div class="muted" id="league-notes"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="cta-row" style="margin-top: 16px">
+        <a class="button button--ghost" href="index.html">Create another league</a>
+        <button class="button button--primary" id="clear-league" type="button">Clear saved league</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Next steps</h2>
+      <div class="list">
+        <div class="row">
+          <div>
+            <strong>Invite managers</strong>
+            <div class="muted">Send a link and set up the draft schedule.</div>
+          </div>
+          <div class="pill pill--muted">Coming soon</div>
+        </div>
+        <div class="row">
+          <div>
+            <strong>Finalize roster rules</strong>
+            <div class="muted">Lock in flex spots, bench size, and scoring tweaks.</div>
+          </div>
+          <div class="pill pill--muted">Coming soon</div>
+        </div>
+        <div class="row">
+          <div>
+            <strong>Start draft lobby</strong>
+            <div class="muted">Launch the draft room once managers confirm.</div>
+          </div>
+          <div class="pill pill--muted">Coming soon</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">Built for college fantasy managers.</footer>
+  <script src="league.js"></script>
+</body>
+</html>

@@ -23,6 +23,7 @@
     </nav>
     <div class="nav__actions">
       <a class="button button--primary" href="index.html">Back to app</a>
+      <button class="button button--ghost" id="signout-btn" type="button" hidden>Sign out</button>
     </div>
   </div>
 
@@ -35,7 +36,7 @@
       <p class="muted small">
         Sign up with an email and password to start creating leagues. Tokens are issued per session.
       </p>
-      <form id="signup-form" class="form">
+      <form id="signup-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
         <label class="field">
           <span>Email</span>
           <input id="signup-email" type="email" name="email" placeholder="you@example.com" required autocomplete="email" />
@@ -56,7 +57,7 @@
         <h2>Sign in</h2>
         <span class="pill pill--muted">Returning</span>
       </div>
-      <form id="login-form" class="form">
+      <form id="login-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
         <label class="field">
           <span>Email</span>
           <input id="login-email" type="email" name="email" placeholder="you@example.com" required autocomplete="email" />
@@ -78,6 +79,7 @@
         A session token is stored locally and sent with requests to create leagues. Return to the home
         page to start building your league.
       </p>
+            <div id="auth-note" class="muted small"></div>
       <div class="cta-row">
         <a class="button button--primary" href="index.html">Go to home</a>
       </div>
@@ -88,3 +90,4 @@
   <script src="auth.js"></script>
 </body>
 </html>
+
