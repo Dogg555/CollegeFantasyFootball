@@ -3,6 +3,7 @@
 #include <json/json.h>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cff {
 
@@ -36,6 +37,7 @@ struct League {
     ScoringSettings scoring{};
     DraftSettings draft{};
     std::string notes{};
+    std::vector<std::string> invitedEmails{};
 
     static League fromJson(const Json::Value &body);
     Json::Value toJson() const;
