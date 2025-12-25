@@ -9,6 +9,7 @@ option(ENABLE_DROGON "Build with Drogon HTTP framework" ON)
 
 add_executable(college_ff_server
     src/main.cpp
+    src/league_models.cpp
 )
 
 target_include_directories(college_ff_server PRIVATE src)

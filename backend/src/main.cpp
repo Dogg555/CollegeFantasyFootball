@@ -7,6 +7,7 @@
 
 #ifdef DROGON_FOUND
 #include <drogon/drogon.h>
+#include "league_models.h"
 #endif
 
 #ifdef DROGON_FOUND
@@ -111,7 +112,7 @@ int main(int argc, char* argv[]) {
                              resp->setBody(R"({"status":"ok","scope":"secure"})");
                              resp->addHeader("Content-Type", "application/json");
                              callback(resp);
-                         },
+                        },
                          {drogon::Post, drogon::Get})
         .registerHandler("/api/auth/validate",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
@@ -123,6 +124,15 @@ int main(int argc, char* argv[]) {
                              callback(resp);
                          },
                          {drogon::Get})
+        .registerHandler("/api/leagues",
+                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             const auto body = req->getJsonObject();
+                             const auto league = cff::League::fromJson(body ? *body : Json::Value{});
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(league.toJson());
+                             resp->setStatusCode(drogon::k201Created);
+                             callback(resp);
+                         },
+                         {drogon::Post})
         .run();
 #else
     // Stub output to avoid hard dependency on Drogon in early scaffolding.
