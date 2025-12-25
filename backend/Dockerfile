@@ -26,21 +26,18 @@ RUN git clone --branch v1.9.7 --depth 1 --recurse-submodules \
 WORKDIR /app
 COPY . /app
 
-# Build your server (Drogon installs into /usr/local by default)
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local \
- && cmake --build build --target college_ff_server -- -j"$(nproc)"
+RUN cmake -S . -B build -DDROGON_FOUND=ON \
+    && cmake --build build --target college_ff_server -- -j$(nproc)
 
 FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
     libssl3 \
     libjsoncpp25 \
     libuuid1 \
     zlib1g \
     libbrotli1 \
     libsqlite3-0 \
- && rm -rf /var/lib/apt/lists/*
-
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY --from=build /app/build/college_ff_server /srv/college_ff_server
 
