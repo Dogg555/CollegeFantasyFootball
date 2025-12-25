@@ -17,11 +17,29 @@ const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
 const searchResultsEl = document.getElementById('search-results');
 const leagueSummaryEl = document.getElementById('league-summary');
+const accountHint = document.getElementById('account-hint');
+let authState = null;
 let leagueState = null;
 
 document.querySelectorAll('.js-open-league').forEach(btn => {
   btn.addEventListener('click', () => openModal());
 });
+
+function loadStoredAuth() {
+  try {
+    const raw = localStorage.getItem('cff_auth');
+    if (raw) {
+      authState = JSON.parse(raw);
+    }
+  } catch {
+    authState = null;
+  }
+}
+
+function persistAuth() {
+  if (!authState) return;
+  localStorage.setItem('cff_auth', JSON.stringify(authState));
+}
 
 function openModal() {
   modal.classList.add('is-open');
@@ -60,6 +78,13 @@ function setActiveSegment(value) {
 function setFormStatus(message, isError = false) {
   formStatus.textContent = message;
   formStatus.style.color = isError ? '#ffb3b3' : 'var(--muted)';
+}
+
+function authHeaders() {
+  if (authState && authState.token) {
+    return { Authorization: `Bearer ${authState.token}` };
+  }
+  return {};
 }
 
 async function fetchLiveScores() {
@@ -136,10 +161,13 @@ form.addEventListener('submit', async (e) => {
   try {
     const resp = await fetch(`${apiBase}/leagues`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
+      if (resp.status === 401) {
+        throw new Error('You must sign in before creating a league.');
+      }
       throw new Error('Unable to create league');
     }
     const data = await resp.json();
@@ -157,13 +185,20 @@ function loadLeagueSummary() {
     renderLeagueSummary();
     return;
   }
+  const message = authState
+    ? `Signed in as ${authState.email || 'manager'}. Create a league to see it here.`
+    : 'Sign in to create and view leagues.';
+  if (accountHint) {
+    accountHint.textContent = authState
+      ? `Signed in as ${authState.email || 'manager'}.`
+      : 'Go to the sign-in page to create an account or log in.';
+  }
   leagueSummaryEl.innerHTML = `
     <div class="row">
       <div>
-        <strong>League features</strong>
-        <div class="muted">Create leagues, customize scoring, draft players, and manage lineups.</div>
+        <strong>No leagues yet</strong>
+        <div class="muted">${message}</div>
       </div>
-      <a class="button" href="#">Sign in</a>
     </div>
   `;
 }
@@ -195,5 +230,6 @@ function renderLeagueSummary() {
 }
 
 // Initial bootstrap
+loadStoredAuth();
 fetchLiveScores();
 loadLeagueSummary();
