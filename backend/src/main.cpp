@@ -7,6 +7,7 @@
 
 #ifdef DROGON_FOUND
 #include <drogon/drogon.h>
+#include <json/json.h>
 #include "league_models.h"
 #include "handlers/league_handler.h"
 #endif
@@ -32,6 +33,29 @@ bool isAuthorized(const drogon::HttpRequestPtr &req, const std::string &secret) 
     }
     auto token = authHeader.substr(bearerPrefix.size());
     return token == secret;
+}
+
+void applyCorsHeaders(const drogon::HttpRequestPtr &req,
+                      const drogon::HttpResponsePtr &resp,
+                      const std::unordered_set<std::string> &allowedOrigins) {
+    if (!allowedOrigins.empty()) {
+        auto origin = req->getHeader("Origin");
+        if (allowedOrigins.find(origin) != allowedOrigins.end()) {
+            resp->addHeader("Access-Control-Allow-Origin", origin);
+        }
+    } else {
+        resp->addHeader("Access-Control-Allow-Origin", "*");
+    }
+    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+}
+
+drogon::HttpResponsePtr buildPreflightResponse(const drogon::HttpRequestPtr &req,
+                                               const std::unordered_set<std::string> &allowedOrigins) {
+    auto resp = drogon::HttpResponse::newHttpResponse();
+    applyCorsHeaders(req, resp, allowedOrigins);
+    resp->setStatusCode(drogon::k204NoContent);
+    return resp;
 }
 } // namespace
 #endif
@@ -80,17 +104,13 @@ int main(int argc, char* argv[]) {
 
     app.registerPostHandlingAdvice([allowedOrigins](const drogon::HttpRequestPtr &req,
                                                     const drogon::HttpResponsePtr &resp) {
-        if (!allowedOrigins.empty()) {
-            auto origin = req->getHeader("Origin");
-            if (allowedOrigins.find(origin) != allowedOrigins.end()) {
-                resp->addHeader("Access-Control-Allow-Origin", origin);
-            }
-        } else {
-            resp->addHeader("Access-Control-Allow-Origin", "*");
-        }
-        resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        applyCorsHeaders(req, resp, allowedOrigins);
     });
+
+    auto preflightHandler = [allowedOrigins](const drogon::HttpRequestPtr &req,
+                                             std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+        callback(buildPreflightResponse(req, allowedOrigins));
+    };
 
     app.addListener("0.0.0.0", static_cast<unsigned short>(std::stoi(port)))
         .setThreadNum(std::thread::hardware_concurrency())
@@ -125,9 +145,45 @@ int main(int argc, char* argv[]) {
                              callback(resp);
                          },
                          {drogon::Get})
+        .registerHandler("/api/auth/login",
+                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             const auto body = req->getJsonObject();
+                             const auto tokenField = body && body->isMember("token") && (*body)["token"].isString()
+                                                     ? (*body)["token"].asString()
+                                                     : std::string{};
+                             const auto email = body && body->isMember("email") && (*body)["email"].isString()
+                                                     ? (*body)["email"].asString()
+                                                     : std::string{};
+
+                             const bool requiresSecret = jwtSecret.has_value();
+                             const bool authorized = requiresSecret ? (tokenField == jwtSecret.value()) : !tokenField.empty();
+
+                             if (!authorized) {
+                                 Json::Value error;
+                                 error["error"] = requiresSecret ? "Invalid token" : "Token required";
+                                 auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+                                 resp->setStatusCode(drogon::k401Unauthorized);
+                                 callback(resp);
+                                 return;
+                             }
+
+                             Json::Value payload;
+                             payload["token"] = tokenField;
+                             payload["email"] = email;
+                             payload["valid"] = true;
+
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+                             resp->setStatusCode(drogon::k200OK);
+                             callback(resp);
+                         },
+                         {drogon::Post})
         .registerHandler("/api/leagues",
                          &cff::handlers::handleCreateLeague,
                          {drogon::Post})
+        .registerHandler("/api/secure/ping", preflightHandler, {drogon::Options})
+        .registerHandler("/api/auth/validate", preflightHandler, {drogon::Options})
+        .registerHandler("/api/auth/login", preflightHandler, {drogon::Options})
+        .registerHandler("/api/leagues", preflightHandler, {drogon::Options})
         .run();
 #else
     // Stub output to avoid hard dependency on Drogon in early scaffolding.
