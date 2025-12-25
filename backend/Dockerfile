@@ -31,7 +31,7 @@ RUN git config --global http.version HTTP/1.1 \
 WORKDIR /app
 COPY . /app
 
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local \
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local -DDROGON_FOUND=ON \
  && cmake --build build --target college_ff_server -- -j"$(nproc)"
 
 FROM debian:bookworm-slim
