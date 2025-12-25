@@ -26,59 +26,27 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# ----------------- Platform detection (safe on all OSes) -----------------
-$IsWin = $env:OS -eq "Windows_NT"
-
-$osDesc = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
-$arch   = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()  # X64/Arm64/etc
-
-$IsMac   = (-not $IsWin) -and ($osDesc -match "Darwin|macOS")
-$IsLinux = (-not $IsWin) -and (-not $IsMac)
-
-# Defaults
-if (-not $VcpkgDir) {
-  $VcpkgDir = if ($IsWin) { Join-Path $env:USERPROFILE "vcpkg" } else { Join-Path $HOME "vcpkg" }
+function Is-Administrator {
+  $current = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+  return $current.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
 }
-if (-not $LogDir) {
-  $LogDir = Join-Path $PSScriptRoot "logs"
-}
-if (-not $Triplet) {
-  if ($IsWin) {
-    $Triplet = "x64-windows"
-  } elseif ($IsMac) {
-    $Triplet = if ($arch -eq "Arm64") { "arm64-osx" } else { "x64-osx" }
-  } else {
-    $Triplet = if ($arch -eq "Arm64") { "arm64-linux" } else { "x64-linux" }
+
+if (-not (Is-Administrator)) {
+  Write-Host "Elevating to administrator..." -ForegroundColor Yellow
+  $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath)
+  foreach ($kv in $MyInvocation.BoundParameters.GetEnumerator()) {
+    $argList += ("-$($kv.Key)")
+    $argList += ("$($kv.Value)")
   }
-}
 
-# ----------------- Logging / Pause helpers -----------------
-if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
-$TimeStamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$LogFile   = Join-Path $LogDir "bootstrap_$TimeStamp.log"
+  # prefer pwsh (PowerShell Core), fall back to Windows PowerShell (powershell.exe)
+  $elevExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Path
+  if (-not $elevExe) { $elevExe = (Get-Command powershell -ErrorAction SilentlyContinue).Path }
 
-Start-Transcript -Path $LogFile -Append | Out-Null
-
-function Pause-ForUser([string]$Message = "Press Enter to exit...") {
-  if (-not $IsWin) { return }
-  Write-Host ""
-  Write-Host $Message -ForegroundColor Yellow
-  try { [void](Read-Host) } catch {}
-}
-
-trap {
-  Write-Host ""
-  Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
-  if ($_.InvocationInfo) {
-    Write-Host "Location: $($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
-    Write-Host "Line: $($_.InvocationInfo.Line)" -ForegroundColor Red
+  if (-not $elevExe) {
+    Write-Host "Error: neither 'pwsh' nor 'powershell' was found to re-launch the script elevated. Run this script from an elevated session or install PowerShell Core." -ForegroundColor Red
+    exit 1
   }
-  Write-Host ""
-  Write-Host "Full log: $LogFile" -ForegroundColor Cyan
-  try { Stop-Transcript | Out-Null } catch {}
-  Pause-ForUser "Press Enter to close this window..."
-  exit 1
-}
 
 Write-Host "Platform: $osDesc" -ForegroundColor Cyan
 Write-Host "Arch    : $arch" -ForegroundColor Cyan
