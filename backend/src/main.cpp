@@ -192,29 +192,6 @@ void handleLogin(const drogon::HttpRequestPtr &req,
     resp->setStatusCode(drogon::k200OK);
     callback(resp);
 }
-
-void applyCorsHeaders(const drogon::HttpRequestPtr &req,
-                      const drogon::HttpResponsePtr &resp,
-                      const std::unordered_set<std::string> &allowedOrigins) {
-    if (!allowedOrigins.empty()) {
-        auto origin = req->getHeader("Origin");
-        if (allowedOrigins.find(origin) != allowedOrigins.end()) {
-            resp->addHeader("Access-Control-Allow-Origin", origin);
-        }
-    } else {
-        resp->addHeader("Access-Control-Allow-Origin", "*");
-    }
-    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-}
-
-drogon::HttpResponsePtr buildPreflightResponse(const drogon::HttpRequestPtr &req,
-                                               const std::unordered_set<std::string> &allowedOrigins) {
-    auto resp = drogon::HttpResponse::newHttpResponse();
-    applyCorsHeaders(req, resp, allowedOrigins);
-    resp->setStatusCode(drogon::k204NoContent);
-    return resp;
-}
 } // namespace
 #endif
 
