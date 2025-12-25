@@ -8,6 +8,7 @@
 #ifdef DROGON_FOUND
 #include <drogon/drogon.h>
 #include "league_models.h"
+#include "handlers/league_handler.h"
 #endif
 
 #ifdef DROGON_FOUND
@@ -125,13 +126,7 @@ int main(int argc, char* argv[]) {
                          },
                          {drogon::Get})
         .registerHandler("/api/leagues",
-                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             const auto body = req->getJsonObject();
-                             const auto league = cff::League::fromJson(body ? *body : Json::Value{});
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(league.toJson());
-                             resp->setStatusCode(drogon::k201Created);
-                             callback(resp);
-                         },
+                         &cff::handlers::handleCreateLeague,
                          {drogon::Post})
         .run();
 #else

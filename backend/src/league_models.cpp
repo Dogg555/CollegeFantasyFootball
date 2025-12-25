@@ -1,4 +1,5 @@
 #include "league_models.h"
+#include "json_utils.h"
 
 #include <chrono>
 #include <random>
@@ -80,9 +81,7 @@ Json::Value DraftSettings::toJson() const {
 
 League League::fromJson(const Json::Value &body) {
     League league;
-    if (body.isMember("name") && body["name"].isString()) {
-        league.name = body["name"].asString();
-    }
+    league.name = cff::getStringOrDefault(body, "name", "New League");
     if (body.isMember("teams")) {
         league.teams = TeamSettings::fromJson(body["teams"]);
     }
@@ -92,8 +91,13 @@ League League::fromJson(const Json::Value &body) {
     if (body.isMember("draftType") && body["draftType"].isString()) {
         league.draft = DraftSettings::fromId(body["draftType"].asString());
     }
-    if (body.isMember("notes") && body["notes"].isString()) {
-        league.notes = body["notes"].asString();
+    league.notes = cff::getStringOrDefault(body, "notes", "");
+    if (body.isMember("invitedEmails") && body["invitedEmails"].isArray()) {
+        for (const auto &email : body["invitedEmails"]) {
+            if (email.isString()) {
+                league.invitedEmails.push_back(email.asString());
+            }
+        }
     }
     league.id = generateLeagueId();
     return league;
@@ -109,6 +113,11 @@ Json::Value League::toJson() const {
     json["draftType"] = draft.type;
     json["draftTypeLabel"] = draft.label;
     json["notes"] = notes;
+    Json::Value invites(Json::arrayValue);
+    for (const auto &email : invitedEmails) {
+        invites.append(email);
+    }
+    json["invitedEmails"] = invites;
     return json;
 }
 
