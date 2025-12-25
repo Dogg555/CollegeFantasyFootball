@@ -1,8 +1,12 @@
 #include <cstdlib>
+#include <chrono>
 #include <iostream>
+#include <mutex>
 #include <optional>
+#include <random>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 
 #ifdef DROGON_FOUND
@@ -22,7 +26,11 @@ std::optional<std::string> readEnv(const std::string &key) {
     return std::string{val};
 }
 
-bool isAuthorized(const drogon::HttpRequestPtr &req, const std::string &secret) {
+std::mutex userMutex;
+std::unordered_map<std::string, std::string> userPasswords;
+std::unordered_map<std::string, std::string> activeTokens; // token -> email
+
+bool hasBearerToken(const drogon::HttpRequestPtr &req, std::string &outToken) {
     const auto authHeader = req->getHeader("authorization");
     if (authHeader.size() < 8) {
         return false;
@@ -31,8 +39,158 @@ bool isAuthorized(const drogon::HttpRequestPtr &req, const std::string &secret) 
     if (authHeader.rfind(bearerPrefix, 0) != 0) {
         return false;
     }
-    auto token = authHeader.substr(bearerPrefix.size());
-    return token == secret;
+    outToken = authHeader.substr(bearerPrefix.size());
+    return true;
+}
+
+std::string randomToken() {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::random_device rd;
+    std::mt19937_64 gen(rd() ^ static_cast<std::mt19937_64::result_type>(now));
+    std::uniform_int_distribution<std::uint64_t> dist;
+    return "token-" + std::to_string(dist(gen));
+}
+
+std::string issueTokenForUser(const std::string &email) {
+    const auto token = randomToken();
+    std::lock_guard<std::mutex> lock(userMutex);
+    activeTokens[token] = email;
+    return token;
+}
+
+bool isAuthorized(const drogon::HttpRequestPtr &req, const std::optional<std::string> &secret) {
+    std::string token;
+    if (!hasBearerToken(req, token)) {
+        return false;
+    }
+    if (secret && token == secret.value()) {
+        return true; // compatibility for pre-shared secret
+    }
+    std::lock_guard<std::mutex> lock(userMutex);
+    return activeTokens.find(token) != activeTokens.end();
+}
+
+std::optional<std::string> emailForToken(const std::string &token) {
+    std::lock_guard<std::mutex> lock(userMutex);
+    auto it = activeTokens.find(token);
+    if (it == activeTokens.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+void applyCorsHeaders(const drogon::HttpRequestPtr &req,
+                      const drogon::HttpResponsePtr &resp,
+                      const std::unordered_set<std::string> &allowedOrigins) {
+    if (!allowedOrigins.empty()) {
+        auto origin = req->getHeader("Origin");
+        if (allowedOrigins.find(origin) != allowedOrigins.end()) {
+            resp->addHeader("Access-Control-Allow-Origin", origin);
+        }
+    } else {
+        resp->addHeader("Access-Control-Allow-Origin", "*");
+    }
+    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+}
+
+drogon::HttpResponsePtr buildPreflightResponse(const drogon::HttpRequestPtr &req,
+                                               const std::unordered_set<std::string> &allowedOrigins) {
+    auto resp = drogon::HttpResponse::newHttpResponse();
+    applyCorsHeaders(req, resp, allowedOrigins);
+    resp->setStatusCode(drogon::k204NoContent);
+    return resp;
+}
+
+bool ensureCredentials(const Json::Value &body) {
+    return body.isMember("email") && body["email"].isString()
+        && body.isMember("password") && body["password"].isString()
+        && !body["email"].asString().empty()
+        && !body["password"].asString().empty();
+}
+
+void handleSignup(const drogon::HttpRequestPtr &req,
+                  std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                  const std::optional<std::string> &jwtSecret) {
+    (void)jwtSecret; // unused until persistent auth is wired
+    const auto body = req->getJsonObject();
+    if (!body || !ensureCredentials(*body)) {
+        Json::Value error;
+        error["error"] = "Email and password are required";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k400BadRequest);
+        callback(resp);
+        return;
+    }
+
+    const auto email = (*body)["email"].asString();
+    const auto password = (*body)["password"].asString();
+
+    {
+        std::lock_guard<std::mutex> lock(userMutex);
+        if (userPasswords.find(email) != userPasswords.end()) {
+            Json::Value error;
+            error["error"] = "Account already exists";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(drogon::k409Conflict);
+            callback(resp);
+            return;
+        }
+        userPasswords[email] = password;
+    }
+
+    const auto token = issueTokenForUser(email);
+    Json::Value payload;
+    payload["email"] = email;
+    payload["token"] = token;
+    payload["valid"] = true;
+    payload["message"] = "Account created";
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+    resp->setStatusCode(drogon::k201Created);
+    callback(resp);
+}
+
+void handleLogin(const drogon::HttpRequestPtr &req,
+                 std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                 const std::optional<std::string> &jwtSecret) {
+    (void)jwtSecret; // unused until persistent auth is wired
+    const auto body = req->getJsonObject();
+    if (!body || !ensureCredentials(*body)) {
+        Json::Value error;
+        error["error"] = "Email and password are required";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k400BadRequest);
+        callback(resp);
+        return;
+    }
+
+    const auto email = (*body)["email"].asString();
+    const auto password = (*body)["password"].asString();
+    bool passwordMatches = false;
+    {
+        std::lock_guard<std::mutex> lock(userMutex);
+        auto it = userPasswords.find(email);
+        passwordMatches = (it != userPasswords.end() && it->second == password);
+    }
+
+    if (!passwordMatches) {
+        Json::Value error;
+        error["error"] = "Invalid credentials";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k401Unauthorized);
+        callback(resp);
+        return;
+    }
+
+    const auto token = issueTokenForUser(email);
+    Json::Value payload;
+    payload["email"] = email;
+    payload["token"] = token;
+    payload["valid"] = true;
+    payload["message"] = "Signed in";
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+    resp->setStatusCode(drogon::k200OK);
+    callback(resp);
 }
 
 void applyCorsHeaders(const drogon::HttpRequestPtr &req,
@@ -123,7 +281,7 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/secure/ping",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              auto resp = drogon::HttpResponse::newHttpResponse();
-                             if (!jwtSecret || !isAuthorized(req, jwtSecret.value())) {
+                             if (!isAuthorized(req, jwtSecret)) {
                                  resp->setStatusCode(drogon::k401Unauthorized);
                                  resp->setBody("unauthorized");
                                  callback(resp);
@@ -138,51 +296,49 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/auth/validate",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              auto resp = drogon::HttpResponse::newHttpResponse();
-                             const bool authorized = jwtSecret && isAuthorized(req, jwtSecret.value());
+                             std::string token;
+                             const bool hasToken = hasBearerToken(req, token);
+                             const bool authorized = isAuthorized(req, jwtSecret);
+                             Json::Value payload;
+                             payload["valid"] = authorized;
+                             if (authorized) {
+                                 if (auto email = emailForToken(token)) {
+                                     payload["email"] = *email;
+                                 }
+                             }
                              resp->setStatusCode(authorized ? drogon::k200OK : drogon::k401Unauthorized);
-                             resp->setBody(authorized ? R"({"valid":true})" : R"({"valid":false})");
+                             resp->setBody(payload.toStyledString());
                              resp->addHeader("Content-Type", "application/json");
                              callback(resp);
                          },
                          {drogon::Get})
         .registerHandler("/api/auth/login",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             const auto body = req->getJsonObject();
-                             const auto tokenField = body && body->isMember("token") && (*body)["token"].isString()
-                                                     ? (*body)["token"].asString()
-                                                     : std::string{};
-                             const auto email = body && body->isMember("email") && (*body)["email"].isString()
-                                                     ? (*body)["email"].asString()
-                                                     : std::string{};
-
-                             const bool requiresSecret = jwtSecret.has_value();
-                             const bool authorized = requiresSecret ? (tokenField == jwtSecret.value()) : !tokenField.empty();
-
-                             if (!authorized) {
+                             handleLogin(req, std::move(callback), jwtSecret);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/auth/signup",
+                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             handleSignup(req, std::move(callback), jwtSecret);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues",
+                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             if (!isAuthorized(req, jwtSecret)) {
                                  Json::Value error;
-                                 error["error"] = requiresSecret ? "Invalid token" : "Token required";
+                                 error["error"] = "Unauthorized";
                                  auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
                                  resp->setStatusCode(drogon::k401Unauthorized);
                                  callback(resp);
                                  return;
                              }
-
-                             Json::Value payload;
-                             payload["token"] = tokenField;
-                             payload["email"] = email;
-                             payload["valid"] = true;
-
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
+                             cff::handlers::handleCreateLeague(req, std::move(callback));
                          },
-                         {drogon::Post})
-        .registerHandler("/api/leagues",
-                         &cff::handlers::handleCreateLeague,
                          {drogon::Post})
         .registerHandler("/api/secure/ping", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/validate", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/login", preflightHandler, {drogon::Options})
+        .registerHandler("/api/auth/signup", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues", preflightHandler, {drogon::Options})
         .run();
 #else

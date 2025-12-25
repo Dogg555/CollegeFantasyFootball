@@ -22,7 +22,7 @@
       <a class="nav__link" href="#">Players</a>
     </nav>
     <div class="nav__actions">
-      <button class="button button--ghost" id="nav-sign-in" type="button">Sign in</button>
+      <a class="button button--ghost" id="nav-sign-in" href="signin.html">Sign in</a>
       <button class="button button--primary js-open-league">Create League</button>
     </div>
   </div>
@@ -123,22 +123,12 @@
 
     <section class="card">
       <h2>Your League</h2>
-      <form id="sign-in-form" class="form">
-        <div class="field">
-          <span>Email</span>
-          <input id="sign-in-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" />
-        </div>
-        <div class="field">
-          <span>Access token</span>
-          <input id="sign-in-token" type="password" name="token" placeholder="dev-secret-token" required />
-        </div>
-        <div class="actions">
-          <button class="button button--ghost" type="button" id="prefill-token">Use dev token</button>
-          <button class="button button--primary" type="submit">Sign in</button>
-        </div>
-      </form>
-      <div id="sign-in-status" class="muted small" role="status"></div>
+      <div class="muted small" id="account-hint">Sign in to create and view leagues.</div>
       <div id="league-summary" class="list">Sign in to see your league.</div>
+      <div class="cta-row">
+        <a class="button button--ghost" href="signin.html">Go to sign in</a>
+        <button class="button button--primary js-open-league">Create a League</button>
+      </div>
     </section>
   </main>
 
