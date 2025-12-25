@@ -7,15 +7,106 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand__logo">CF</div>
+      <div>
+        <div class="brand__title">College Fantasy</div>
+        <div class="brand__subtitle">Modern manager hub</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a class="nav__link is-active" href="#">Home</a>
+      <a class="nav__link" href="#">Leagues</a>
+      <a class="nav__link" href="#">Draft Room</a>
+      <a class="nav__link" href="#">Players</a>
+    </nav>
+    <div class="nav__actions">
+      <button class="button button--ghost">Sign in</button>
+      <button class="button button--primary js-open-league">Create League</button>
+    </div>
+  </div>
+
   <header class="hero">
     <div class="hero__content">
-      <h1>College Fantasy Football</h1>
-      <p class="subtitle">FBS &amp; FCS coverage with a modern fantasy experience.</p>
-      <button id="cta" class="button button--primary">Create a League</button>
+      <div class="hero__copy">
+        <p class="pill pill--muted">League setup</p>
+        <h1>Build a custom college league in minutes</h1>
+        <p class="subtitle">
+          Pick your team count, scoring flavor, and draft type. Designed with the streamlined feel of
+          pro fantasy platforms—minus the licensed branding.
+        </p>
+        <div class="cta-row">
+          <button class="button button--primary js-open-league">Create your league</button>
+          <button class="button button--ghost">Explore features</button>
+        </div>
+        <div class="muted small">Save settings, invite managers, and schedule the draft in one flow.</div>
+      </div>
+      <div class="hero__summary">
+        <div class="summary__card">
+          <div class="summary__row">
+            <div>
+              <div class="label">Draft type</div>
+              <div class="value">Snake / Auction</div>
+            </div>
+            <div class="pill">Live</div>
+          </div>
+          <div class="summary__row">
+            <div>
+              <div class="label">Scoring</div>
+              <div class="value">PPR • Half-PPR • Standard</div>
+            </div>
+            <div class="badge">Custom</div>
+          </div>
+          <div class="summary__row">
+            <div>
+              <div class="label">Team sizes</div>
+              <div class="value">8 / 10 / 12</div>
+            </div>
+            <div class="label">Roster presets with Flex slots</div>
+          </div>
+          <button class="button button--primary js-open-league full">Start setup</button>
+        </div>
+      </div>
     </div>
   </header>
 
   <main class="layout">
+    <section class="card card--accent">
+      <div class="card__header">
+        <h2>Create a League</h2>
+        <span class="pill">New</span>
+      </div>
+      <p class="muted">
+        Spin up a league with friends — pick a name, choose scoring, and invite managers. Built to feel
+        like the polished pro fantasy flows while staying school-agnostic.
+      </p>
+      <div class="grid">
+        <div>
+          <div class="label">League name</div>
+          <div class="value">College Saturdays</div>
+        </div>
+        <div>
+          <div class="label">Teams</div>
+          <div class="value">8 or 10</div>
+        </div>
+        <div>
+          <div class="label">Scoring</div>
+          <div class="value">PPR</div>
+        </div>
+        <div>
+          <div class="label">Draft</div>
+          <div class="value">Snake</div>
+        </div>
+      </div>
+      <div class="cta-row">
+        <button class="button button--primary js-open-league">Create a League</button>
+        <div class="muted small">
+          Save settings, send invites, and schedule the draft — all in one flow.
+        </div>
+      </div>
+    </section>
+
     <section class="card">
       <h2>Live Scores</h2>
       <div id="live-scores" class="list">Loading live scores...</div>
@@ -37,6 +128,68 @@
   </main>
 
   <footer class="footer">Built for college fantasy managers.</footer>
+
+  <div id="league-modal" class="modal" aria-hidden="true">
+    <div class="modal__backdrop"></div>
+    <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal__header">
+        <div>
+          <div class="pill pill--muted">League creation</div>
+          <h3 id="modal-title">Create your league</h3>
+          <p class="muted small">Name your league, choose scoring, and set team count.</p>
+        </div>
+        <button class="icon-button" id="close-modal" aria-label="Close create league form">✕</button>
+      </div>
+
+      <form id="create-league-form" class="form">
+        <label class="field">
+          <span>League name</span>
+          <input id="league-name" type="text" name="name" placeholder="College Saturdays" required />
+        </label>
+
+        <div class="field-group">
+          <label class="field">
+            <span>Teams</span>
+            <select id="league-size" name="teams">
+              <option value="8">8 teams</option>
+              <option value="10">10 teams</option>
+              <option value="12">12 teams</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Scoring</span>
+            <select id="league-scoring" name="scoring">
+              <option value="ppr">PPR</option>
+              <option value="half_ppr">Half-PPR</option>
+              <option value="standard">Standard</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="field">
+          <span>Draft type</span>
+          <div class="segmented">
+            <button type="button" class="segment is-active" data-value="snake">Snake</button>
+            <button type="button" class="segment" data-value="auction">Auction</button>
+            <input id="draft-type" type="hidden" name="draftType" value="snake" />
+          </div>
+        </label>
+
+        <label class="field">
+          <span>Notes for your managers</span>
+          <textarea id="league-notes" name="notes" rows="3" placeholder="Draft is Sunday at 7 PM ET. PPR scoring with 2 flex spots."></textarea>
+        </label>
+
+        <div class="form__footer">
+          <div id="form-status" class="muted small" role="status"></div>
+          <div class="actions">
+            <button type="button" class="button" id="cancel-modal">Cancel</button>
+            <button class="button button--primary" type="submit">Save &amp; continue</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
