@@ -1,15 +1,66 @@
 const apiBase = '/api';
 
-const cta = document.getElementById('cta');
-cta.addEventListener('click', () => {
-  alert('League creation flow coming soon.');
-});
+const modal = document.getElementById('league-modal');
+const modalBackdrop = modal.querySelector('.modal__backdrop');
+const closeModalBtn = document.getElementById('close-modal');
+const cancelModalBtn = document.getElementById('cancel-modal');
+const form = document.getElementById('create-league-form');
+const leagueNameInput = document.getElementById('league-name');
+const leagueSizeInput = document.getElementById('league-size');
+const leagueScoringInput = document.getElementById('league-scoring');
+const draftTypeInput = document.getElementById('draft-type');
+const notesInput = document.getElementById('league-notes');
+const formStatus = document.getElementById('form-status');
 
 const liveScoresEl = document.getElementById('live-scores');
 const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
 const searchResultsEl = document.getElementById('search-results');
 const leagueSummaryEl = document.getElementById('league-summary');
+let leagueState = null;
+
+document.querySelectorAll('.js-open-league').forEach(btn => {
+  btn.addEventListener('click', () => openModal());
+});
+
+function openModal() {
+  modal.classList.add('is-open');
+  modal.setAttribute('aria-hidden', 'false');
+  leagueNameInput.focus();
+  setFormStatus('Draft type defaults to snake (like NFL Fantasy).');
+}
+
+function closeModal() {
+  modal.classList.remove('is-open');
+  modal.setAttribute('aria-hidden', 'true');
+  form.reset();
+  draftTypeInput.value = 'snake';
+  setActiveSegment('snake');
+  setFormStatus('');
+}
+
+modalBackdrop.addEventListener('click', closeModal);
+closeModalBtn.addEventListener('click', closeModal);
+cancelModalBtn.addEventListener('click', closeModal);
+
+document.querySelectorAll('.segment').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const value = btn.dataset.value;
+    draftTypeInput.value = value;
+    setActiveSegment(value);
+  });
+});
+
+function setActiveSegment(value) {
+  document.querySelectorAll('.segment').forEach(btn => {
+    btn.classList.toggle('is-active', btn.dataset.value === value);
+  });
+}
+
+function setFormStatus(message, isError = false) {
+  formStatus.textContent = message;
+  formStatus.style.color = isError ? '#ffb3b3' : 'var(--muted)';
+}
 
 async function fetchLiveScores() {
   liveScoresEl.textContent = 'Loading live scores...';
@@ -70,7 +121,42 @@ function renderSearchResults(players = []) {
   `).join('');
 }
 
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    name: leagueNameInput.value.trim() || 'New League',
+    teams: parseInt(leagueSizeInput.value, 10),
+    scoring: leagueScoringInput.value,
+    draftType: draftTypeInput.value,
+    notes: notesInput.value.trim(),
+  };
+
+  setFormStatus('Saving league...');
+
+  try {
+    const resp = await fetch(`${apiBase}/leagues`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      throw new Error('Unable to create league');
+    }
+    const data = await resp.json();
+    leagueState = data;
+    renderLeagueSummary();
+    setFormStatus('League saved. Draft date and invites are up next.');
+    setTimeout(closeModal, 500);
+  } catch (err) {
+    setFormStatus('Could not create the league right now. Try again soon.', true);
+  }
+});
+
 function loadLeagueSummary() {
+  if (leagueState) {
+    renderLeagueSummary();
+    return;
+  }
   leagueSummaryEl.innerHTML = `
     <div class="row">
       <div>
@@ -78,6 +164,32 @@ function loadLeagueSummary() {
         <div class="muted">Create leagues, customize scoring, draft players, and manage lineups.</div>
       </div>
       <a class="button" href="#">Sign in</a>
+    </div>
+  `;
+}
+
+function renderLeagueSummary() {
+  if (!leagueState) {
+    loadLeagueSummary();
+    return;
+  }
+
+  leagueSummaryEl.innerHTML = `
+    <div class="row">
+      <div>
+        <strong>${leagueState.name}</strong> — ${leagueState.teams} teams
+        <div class="muted">
+          ${leagueState.scoringLabel || leagueState.scoring} • ${leagueState.draftTypeLabel || leagueState.draftType} draft
+        </div>
+      </div>
+      <div class="badge">ID: ${leagueState.id}</div>
+    </div>
+    <div class="row">
+      <div>
+        <div class="muted">Next step: send invites and schedule the draft.</div>
+        <div class="muted small">${leagueState.notes || 'We’ll remind managers 1 hour before the draft.'}</div>
+      </div>
+      <button class="button">Manage league</button>
     </div>
   `;
 }
