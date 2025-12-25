@@ -5,6 +5,12 @@ const modalBackdrop = modal.querySelector('.modal__backdrop');
 const closeModalBtn = document.getElementById('close-modal');
 const cancelModalBtn = document.getElementById('cancel-modal');
 const form = document.getElementById('create-league-form');
+const navSignInBtn = document.getElementById('nav-sign-in');
+const signInForm = document.getElementById('sign-in-form');
+const signInEmailInput = document.getElementById('sign-in-email');
+const signInTokenInput = document.getElementById('sign-in-token');
+const signInStatus = document.getElementById('sign-in-status');
+const prefillTokenBtn = document.getElementById('prefill-token');
 const leagueNameInput = document.getElementById('league-name');
 const leagueSizeInput = document.getElementById('league-size');
 const leagueScoringInput = document.getElementById('league-scoring');
@@ -17,11 +23,28 @@ const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
 const searchResultsEl = document.getElementById('search-results');
 const leagueSummaryEl = document.getElementById('league-summary');
+let authState = null;
 let leagueState = null;
 
 document.querySelectorAll('.js-open-league').forEach(btn => {
   btn.addEventListener('click', () => openModal());
 });
+
+function loadStoredAuth() {
+  try {
+    const raw = localStorage.getItem('cff_auth');
+    if (raw) {
+      authState = JSON.parse(raw);
+    }
+  } catch {
+    authState = null;
+  }
+}
+
+function persistAuth() {
+  if (!authState) return;
+  localStorage.setItem('cff_auth', JSON.stringify(authState));
+}
 
 function openModal() {
   modal.classList.add('is-open');
@@ -61,6 +84,60 @@ function setFormStatus(message, isError = false) {
   formStatus.textContent = message;
   formStatus.style.color = isError ? '#ffb3b3' : 'var(--muted)';
 }
+
+function setSignInStatus(message, isError = false) {
+  signInStatus.textContent = message;
+  signInStatus.style.color = isError ? '#ffb3b3' : 'var(--muted)';
+}
+
+function authHeaders() {
+  if (authState && authState.token) {
+    return { Authorization: `Bearer ${authState.token}` };
+  }
+  return {};
+}
+
+navSignInBtn?.addEventListener('click', () => {
+  signInForm.scrollIntoView({ behavior: 'smooth' });
+  signInEmailInput.focus();
+});
+
+prefillTokenBtn?.addEventListener('click', () => {
+  signInTokenInput.value = 'dev-secret-token';
+  signInTokenInput.focus();
+});
+
+signInForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = signInEmailInput.value.trim();
+  const token = signInTokenInput.value.trim();
+  if (!token) {
+    setSignInStatus('Provide a token to sign in (dev-secret-token by default).', true);
+    return;
+  }
+  setSignInStatus('Signing in...');
+  try {
+    const resp = await fetch(`${apiBase}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, token }),
+    });
+    if (!resp.ok) {
+      const errorText = await resp.text();
+      throw new Error(errorText || 'Invalid token');
+    }
+    const data = await resp.json();
+    authState = {
+      email: data.email || email || 'manager',
+      token: data.token || token,
+    };
+    persistAuth();
+    setSignInStatus(`Signed in as ${authState.email}.`);
+    renderLeagueSummary();
+  } catch (err) {
+    setSignInStatus('Sign-in failed. Check your token and try again.', true);
+  }
+});
 
 async function fetchLiveScores() {
   liveScoresEl.textContent = 'Loading live scores...';
@@ -136,7 +213,7 @@ form.addEventListener('submit', async (e) => {
   try {
     const resp = await fetch(`${apiBase}/leagues`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
@@ -157,13 +234,15 @@ function loadLeagueSummary() {
     renderLeagueSummary();
     return;
   }
+  const message = authState
+    ? `Signed in as ${authState.email || 'manager'}. Create a league to see it here.`
+    : 'Sign in above to see your league.';
   leagueSummaryEl.innerHTML = `
     <div class="row">
       <div>
-        <strong>League features</strong>
-        <div class="muted">Create leagues, customize scoring, draft players, and manage lineups.</div>
+        <strong>No leagues yet</strong>
+        <div class="muted">${message}</div>
       </div>
-      <a class="button" href="#">Sign in</a>
     </div>
   `;
 }
@@ -195,5 +274,6 @@ function renderLeagueSummary() {
 }
 
 // Initial bootstrap
+loadStoredAuth();
 fetchLiveScores();
 loadLeagueSummary();
