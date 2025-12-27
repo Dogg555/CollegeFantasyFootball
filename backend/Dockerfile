@@ -1,5 +1,5 @@
 # Backend container for local testing
-FROM debian:13.2-slim AS build
+FROM debian:bookworm AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -35,7 +35,7 @@ COPY . /app
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local -DENABLE_DROGON=ON \
  && cmake --build build --target college_ff_server -- -j"$(nproc)"
 
-FROM debian:13.2-slim
+FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
