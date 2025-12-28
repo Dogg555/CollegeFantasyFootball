@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     uuid-dev \
     zlib1g-dev \
     libssl-dev \
+    libpq-dev \
     libbrotli-dev \
     libsqlite3-dev \
  && update-ca-certificates \
@@ -43,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcrypt1 \
     libuuid1 \
     zlib1g \
+    libpq5 \
     libbrotli1 \
     libsqlite3-0 \
  && rm -rf /var/lib/apt/lists/*
