@@ -176,35 +176,37 @@ function renderLiveScores(scores = []) {
   `).join('');
 }
 
-searchForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const term = searchInput.value.trim();
-  if (!term) return;
-  searchResultsEl.textContent = 'Searching...';
-  try {
-    const resp = await fetch(`${apiBase}/players?query=${encodeURIComponent(term)}`);
-    if (!resp.ok) throw new Error('Search failed');
-    const data = await resp.json();
-    renderSearchResults(data);
-  } catch (err) {
-    searchResultsEl.textContent = 'Unable to fetch players right now.';
-  }
-});
+if (searchForm && searchInput && searchResultsEl) {
+  searchForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const term = searchInput.value.trim();
+    if (!term) return;
+    searchResultsEl.textContent = 'Searching...';
+    try {
+      const resp = await fetch(`${apiBase}/players?query=${encodeURIComponent(term)}`);
+      if (!resp.ok) throw new Error('Search failed');
+      const data = await resp.json();
+      renderSearchResults(data);
+    } catch (err) {
+      searchResultsEl.textContent = 'Unable to fetch players right now.';
+    }
+  });
 
-function renderSearchResults(players = []) {
-  if (!players.length) {
-    searchResultsEl.textContent = 'No players found.';
-    return;
-  }
-  searchResultsEl.innerHTML = players.slice(0, 10).map(p => `
-    <div class="row">
-      <div>
-        <strong>${p.name}</strong> — ${p.team} (${p.position})
-        <div class="muted">${p.conference || 'Conference TBD'} • ${p.class || 'Class TBD'}</div>
+  function renderSearchResults(players = []) {
+    if (!players.length) {
+      searchResultsEl.textContent = 'No players found.';
+      return;
+    }
+    searchResultsEl.innerHTML = players.slice(0, 10).map(p => `
+      <div class="row">
+        <div>
+          <strong>${p.name}</strong> — ${p.team} (${p.position})
+          <div class="muted">${p.conference || 'Conference TBD'} • ${p.class || 'Class TBD'}</div>
+        </div>
+        <button class="button" data-player="${p.id}">Add to queue</button>
       </div>
-      <button class="button" data-player="${p.id}">Add to queue</button>
-    </div>
-  `).join('');
+    `).join('');
+  }
 }
 
 form.addEventListener('submit', async (e) => {
@@ -309,4 +311,3 @@ document.addEventListener('visibilitychange', () => {
     refreshAuthState();
   }
 });
-
