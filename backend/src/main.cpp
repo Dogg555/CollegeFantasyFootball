@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <chrono>
@@ -16,6 +17,7 @@
 #include <json/json.h>
 #include "league_models.h"
 #include "handlers/league_handler.h"
+#include "player_catalog.h"
 #endif
 
 #ifdef DROGON_FOUND
@@ -237,6 +239,14 @@ void handleLogin(const drogon::HttpRequestPtr &req,
     resp->setStatusCode(drogon::k200OK);
     callback(resp);
 }
+
+std::optional<std::string> getOptionalParam(const drogon::HttpRequestPtr &req, const std::string &key) {
+    auto value = req->getParameter(key);
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    return value;
+}
 } // namespace
 #endif
 
@@ -358,11 +368,48 @@ int main(int argc, char* argv[]) {
                              cff::handlers::handleCreateLeague(req, std::move(callback));
                          },
                          {drogon::Post})
+        .registerHandler("/api/players",
+                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             const auto query = req->getParameter("query");
+                             if (query.empty()) {
+                                 Json::Value error;
+                                 error["error"] = "Query parameter is required";
+                                 auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+                                 resp->setStatusCode(drogon::k400BadRequest);
+                                 callback(resp);
+                                 return;
+                             }
+
+                             auto positionFilter = getOptionalParam(req, "position");
+                             auto conferenceFilter = getOptionalParam(req, "conference");
+
+                             std::size_t limit = 25;
+                             const auto limitParam = req->getParameter("limit");
+                             if (!limitParam.empty()) {
+                                 char *end = nullptr;
+                                 const auto parsed = std::strtoul(limitParam.c_str(), &end, 10);
+                                 if (end != limitParam.c_str() && parsed > 0) {
+                                     limit = std::min<std::size_t>(parsed, 50);
+                                 }
+                             }
+
+                             const auto results = cff::searchPlayers(query, positionFilter, conferenceFilter, limit);
+                             Json::Value payload(Json::arrayValue);
+                             for (const auto &player : results) {
+                                 payload.append(player.toJson());
+                             }
+
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+                             resp->setStatusCode(drogon::k200OK);
+                             callback(resp);
+                         },
+                         {drogon::Get})
         .registerHandler("/api/secure/ping", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/validate", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/login", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/signup", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues", preflightHandler, {drogon::Options})
+        .registerHandler("/api/players", preflightHandler, {drogon::Options})
         .run();
 #else
     // Stub output to avoid hard dependency on Drogon in early scaffolding.
