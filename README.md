@@ -16,6 +16,9 @@ A full-stack concept for a college fantasy football platform covering Division I
    # Debian/Ubuntu example
    ./scripts/install_dependencies.sh
    ```
+   - Optional local database tooling:
+     - Linux: `./scripts/install_postgres_pgadmin.sh` (installs PostgreSQL + pgAdmin)
+     - Windows: `powershell -ExecutionPolicy Bypass -File .\scripts\install_postgres_pgadmin.ps1` (winget install)
 3. Build the backend (requires Drogon and CMake):
    ```bash
    cmake -S backend -B backend/build -DDROGON_FOUND=ON
