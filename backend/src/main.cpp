@@ -370,6 +370,14 @@ int main(int argc, char* argv[]) {
                          {drogon::Post})
         .registerHandler("/api/players",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+#ifndef CFF_HAS_POSTGRES
+                             Json::Value error;
+                             error["error"] = "Player search unavailable: backend not built with PostgreSQL support.";
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+                             resp->setStatusCode(drogon::k503ServiceUnavailable);
+                             callback(resp);
+                             return;
+#else
                              const auto query = req->getParameter("query");
                              if (query.empty()) {
                                  Json::Value error;
@@ -402,6 +410,7 @@ int main(int argc, char* argv[]) {
                              auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
                              resp->setStatusCode(drogon::k200OK);
                              callback(resp);
+ #endif
                          },
                          {drogon::Get})
         .registerHandler("/api/secure/ping", preflightHandler, {drogon::Options})

@@ -17,13 +17,9 @@ add_executable(college_ff_server
 
 target_include_directories(college_ff_server PRIVATE src)
 
-find_package(PostgreSQL)
-if (PostgreSQL_FOUND)
-    target_link_libraries(college_ff_server PRIVATE PostgreSQL::PostgreSQL)
-    target_compile_definitions(college_ff_server PRIVATE CFF_HAS_POSTGRES)
-else()
-    message(WARNING "PostgreSQL client not found; /api/players will run without database-backed search.")
-endif()
+find_package(PostgreSQL REQUIRED)
+target_link_libraries(college_ff_server PRIVATE PostgreSQL::PostgreSQL)
+target_compile_definitions(college_ff_server PRIVATE CFF_HAS_POSTGRES)
 
 if (ENABLE_DROGON)
     find_package(Drogon CONFIG REQUIRED)
