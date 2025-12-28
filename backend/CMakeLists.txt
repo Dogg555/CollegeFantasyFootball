@@ -12,9 +12,14 @@ add_executable(college_ff_server
     src/json_utils.cpp
     src/handlers/league_handler.cpp
     src/league_models.cpp
+    src/player_catalog.cpp
 )
 
 target_include_directories(college_ff_server PRIVATE src)
+
+find_package(PostgreSQL REQUIRED)
+target_link_libraries(college_ff_server PRIVATE PostgreSQL::PostgreSQL)
+target_compile_definitions(college_ff_server PRIVATE CFF_HAS_POSTGRES)
 
 if (ENABLE_DROGON)
     find_package(Drogon CONFIG REQUIRED)
