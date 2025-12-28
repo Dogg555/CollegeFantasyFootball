@@ -9,7 +9,10 @@ function Require-Admin {
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Error "Please run this script from an elevated PowerShell session (Run as Administrator)."
+        Write-Host "This script must be run from an elevated PowerShell session (Run as Administrator)." -ForegroundColor Red
+        Write-Host "Right-click PowerShell, choose 'Run as administrator', then rerun:" -ForegroundColor Yellow
+        Write-Host "  powershell -ExecutionPolicy Bypass -File .\\scripts\\install_postgres_pgadmin.ps1" -ForegroundColor Yellow
+        exit 1
     }
 }
 
