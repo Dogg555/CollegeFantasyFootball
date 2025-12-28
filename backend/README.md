@@ -51,6 +51,24 @@ docker run --rm -p 8080:8080 -e JWT_SECRET=dev-secret-token college-ff-backend
 - `GET /health` — basic liveness check.
 - `GET /api/players?query=<term>` — database-backed player search (PostgreSQL) with optional `position`, `conference`, and `limit` filters. Requires `DB_URL` and assumes the `players`/`teams` tables are populated from an external feed. A practical source for FBS/FCS rosters is [FootballDB](https://www.footballdb.com/college-football/teams/index.html); ingest those rosters into the schema in `db/schema.sql` so search returns real player data.
 
+## Running locally with Docker
+- A Postgres container is required for player search. An example `docker-compose.yml` (root of the repo) wires `DB_URL` to the backend:
+  ```yaml
+  services:
+    postgres:
+      image: postgres:16
+      environment:
+        POSTGRES_USER: cff
+        POSTGRES_PASSWORD: cffpass
+        POSTGRES_DB: cff
+      ports:
+        - \"5432:5432\"
+    backend:
+      environment:
+        - DB_URL=postgres://cff:cffpass@postgres:5432/cff
+  ```
+  Load roster data (e.g., scraped from FootballDB) into the `teams` and `players` tables defined in `db/schema.sql` before hitting `/api/players`.
+
 ## Next steps
 1. Add package/dependency setup for Drogon (FetchContent or system packages).
 2. Flesh out route handlers for auth, leagues, players, drafts, and lineups.
