@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: cff
-      POSTGRES_PASSWORD: cffpass
-      POSTGRES_DB: cff
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env.local}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env.local}
+      POSTGRES_DB: ${POSTGRES_DB:-cff}
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cff"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -18,14 +18,14 @@ services:
     build:
       context: ./backend
     environment:
-      - PORT=8080
-      - JWT_SECRET=dev-secret-token
-      - DB_URL=postgres://cff:cffpass@postgres:5432/cff
-      - SSL_CERT_FILE=/certs/dev.crt
-      - SSL_KEY_FILE=/certs/dev.key
+      - PORT=${PORT:-8080}
+      - JWT_SECRET=${JWT_SECRET:?set in .env.local}
+      - DB_URL=${DB_URL:?set in .env.local}
+      - SSL_CERT_FILE=${SSL_CERT_FILE:-/certs/dev.crt}
+      - SSL_KEY_FILE=${SSL_KEY_FILE:-/certs/dev.key}
       # - ALLOWED_ORIGINS=http://localhost:8080,http://localhost:3000
     volumes:
-      - ./certs:/certs:ro
+      - ${CERTS_DIR:-./certs}:/certs:ro
     ports:
       - "8080:8080"
     depends_on:
