@@ -1,8 +1,10 @@
 certs/
 .env
 .env.local
+.env.*
+!.env.example
+.secrets/
 docker-compose.override.yml
 scripts/
 db/
 docs/
-
