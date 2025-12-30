@@ -28,7 +28,7 @@ cmake --build build
 ### Docker (local testing)
 ```bash
 docker build -t college-ff-backend .
-docker run --rm -p 8080:8080 -e JWT_SECRET=dev-secret-token college-ff-backend
+docker run --rm -p 8080:8080 -e JWT_SECRET=<jwt_secret> college-ff-backend
 ```
 
 ## Directory structure
@@ -47,6 +47,11 @@ docker run --rm -p 8080:8080 -e JWT_SECRET=dev-secret-token college-ff-backend
 - `SSL_CERT_FILE` / `SSL_KEY_FILE` (optional HTTPS)
 - `ALLOWED_ORIGINS` (comma-separated CORS allowlist)
 
+## Security notes
+- Set a strong `JWT_SECRET` (32+ random bytes) before running the server; secure routes will reject requests when the secret is missing.
+- Session tokens returned from `/api/auth/login` and `/api/auth/signup` are 256-bit hex strings generated from OS entropy with a secure fallback.
+- Keep secrets in environment variables or gitignored files such as `.env.local`; never commit secrets or TLS keys.
+
 ## Available endpoints (scaffold)
 - `GET /health` — basic liveness check.
 - `GET /api/players?query=<term>` — database-backed player search (PostgreSQL) with optional `position`, `conference`, and `limit` filters. Requires `DB_URL` and assumes the `players`/`teams` tables are populated from an external feed. A practical source for FBS/FCS rosters is [FootballDB](https://www.footballdb.com/college-football/teams/index.html); ingest those rosters into the schema in `db/schema.sql` so search returns real player data.
@@ -58,14 +63,14 @@ docker run --rm -p 8080:8080 -e JWT_SECRET=dev-secret-token college-ff-backend
     postgres:
       image: postgres:16
       environment:
-        POSTGRES_USER: cff
-        POSTGRES_PASSWORD: cffpass
-        POSTGRES_DB: cff
+        POSTGRES_USER: <postgres_user>
+        POSTGRES_PASSWORD: <postgres_password>
+        POSTGRES_DB: <postgres_db>
       ports:
         - \"5432:5432\"
-    backend:
-      environment:
-        - DB_URL=postgres://cff:cffpass@postgres:5432/cff
+      backend:
+        environment:
+          - DB_URL=postgres://<postgres_user>:<postgres_password>@postgres:5432/<postgres_db>
   ```
   Load roster data (e.g., scraped from FootballDB) into the `teams` and `players` tables defined in `db/schema.sql` before hitting `/api/players`.
 
