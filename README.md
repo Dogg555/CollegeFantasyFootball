@@ -1,47 +1,17 @@
-# College Fantasy Football
+# College Fantasy Football (overview)
 
-A full-stack concept for a college fantasy football platform covering Division I FBS and FCS players. The backend is written in C++ and the frontend uses lightweight HTML/CSS/JavaScript.
+This repository contains a lightweight concept for a college fantasy football experience. It is split into a C++ backend scaffold and a static prototype frontend.
 
-## Structure
-- `docs/architecture.md` — architecture overview and roadmap.
-- `backend/` — C++ backend scaffold (Drogon-ready) with CMake config.
-- `frontend/` — static UI prototype for live scores, player search, and league summary.
+## Directory layout
+- `backend/` — server scaffold and sample database schema.
+- `frontend/` — static HTML/JS mock UI for sign-in, leagues, and player search.
+- `docs/` — high-level notes for architecture and environment setup.
+- `scripts/` — helper scripts for local development (installers, ingestion).
 
-## Quickstart
-1. Review `docs/architecture.md` for the proposed system design.
-2. Install dependencies:
-   - Debian/Ubuntu: `./scripts/install_dependencies.sh`
-   - Windows 11: run `./scripts/install_windows.ps1` (PowerShell) or see `docs/windows-setup.md` (vcpkg/WSL options)
-   ```bash
-   # Debian/Ubuntu example
-   ./scripts/install_dependencies.sh
-   ```
-   - Optional local database tooling:
-     - Linux: `./scripts/install_postgres_pgadmin.sh` (installs PostgreSQL + pgAdmin)
-     - Windows: `powershell -ExecutionPolicy Bypass -File .\scripts\install_postgres_pgadmin.ps1` (winget install)
-3. Build the backend (requires Drogon and CMake):
-   ```bash
-   cmake -S backend -B backend/build -DDROGON_FOUND=ON
-   cmake --build backend/build
-   ./backend/build/college_ff_server
-   ```
-   - Environment variables: `PORT` (default `8080`), `JWT_SECRET` (required for secure endpoints), optional `SSL_CERT_FILE`/`SSL_KEY_FILE` for HTTPS, and `ALLOWED_ORIGINS` (comma-separated) for CORS.
-4. Serve the frontend locally (any static server, e.g., `python -m http.server` from `frontend/`).
-5. Optional: run everything via Docker for local testing:
-   ```bash
-   docker compose up --build
-   ```
-   - Backend available at `http://localhost:8080`.
-   - Frontend available at `http://localhost:3000` (includes `test.html` to hit the secure ping endpoint).
-6. Optional: ingest CFBD data into Postgres for player search. See `docs/ingestion_cfbd.md` and run `python scripts/ingest_cfbd.py` after applying the schema in `backend/db/schema.sql`.
-7. Secrets: copy `.env.example` to `.env.local` (gitignored) and fill in secrets (DB_URL, JWT_SECRET, CFBD_API_KEY, cert paths). See `docs/secrets.md` for local/CI guidance.
+## What to keep out of git
+- Environment files: `.env`, `.env.local`, and any machine-specific variants.
+- Secrets and certificates: TLS keys, API keys, and anything under `certs/`.
+- Local databases and cache artifacts: `db/`, Postgres dumps, Redis snapshots.
+- Generated assets and OS cruft: build outputs, IDE settings, and temp files.
 
-## Security notes
-- Always provide a strong, unpredictable `JWT_SECRET` (at least 32 random bytes) before exposing the backend. Without it, secure endpoints intentionally reject all requests.
-- Runtime bearer tokens issued by the backend are random 256-bit hex strings sourced from OS entropy (with a secure fallback). Restarting the server invalidates in-memory tokens.
-- Keep `.env.local`, certificates, and database credentials out of version control. Rotate secrets if compromise is suspected.
-
-## Roadmap
-- Implement auth, league creation, player search, and draft APIs in C++.
-- Wire the frontend to real backend endpoints for live scores and player search.
-- Add data ingestion for schedules, rosters, and live stats.
+If sensitive material accidentally lands in the repo, remove it and rotate any exposed keys immediately.
