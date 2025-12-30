@@ -21,8 +21,8 @@ services:
       - PORT=${PORT:-8080}
       - JWT_SECRET=${JWT_SECRET:?set in .env.local}
       - DB_URL=${DB_URL:?set in .env.local}
-      - SSL_CERT_FILE=${SSL_CERT_FILE:-/certs/dev.crt}
-      - SSL_KEY_FILE=${SSL_KEY_FILE:-/certs/dev.key}
+      - SSL_CERT_FILE=${SSL_CERT_FILE:?set in .env.local}
+      - SSL_KEY_FILE=${SSL_KEY_FILE:?set in .env.local}
       # - ALLOWED_ORIGINS=http://localhost:8080,http://localhost:3000
     volumes:
       - ${CERTS_DIR:-./certs}:/certs:ro
