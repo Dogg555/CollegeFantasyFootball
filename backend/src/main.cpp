@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdlib>
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -33,6 +34,15 @@ std::optional<std::string> readEnv(const std::string &key) {
 std::mutex userMutex;
 std::unordered_map<std::string, std::string> userPasswordHashes;
 std::unordered_map<std::string, std::string> activeTokens; // token -> email
+
+bool fillFromUrandom(std::array<unsigned char, 32> &bytes) {
+    std::ifstream urandom("/dev/urandom", std::ios::in | std::ios::binary);
+    if (!urandom.is_open()) {
+        return false;
+    }
+    urandom.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    return urandom.gcount() == static_cast<std::streamsize>(bytes.size());
+}
 
 std::optional<std::string> hashPassword(const std::string &password) {
     constexpr int kCost = 12;
@@ -82,11 +92,24 @@ bool hasBearerToken(const drogon::HttpRequestPtr &req, std::string &outToken) {
 }
 
 std::string randomToken() {
-    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-    std::random_device rd;
-    std::mt19937_64 gen(rd() ^ static_cast<std::mt19937_64::result_type>(now));
-    std::uniform_int_distribution<std::uint64_t> dist;
-    return "token-" + std::to_string(dist(gen));
+    constexpr std::size_t kTokenBytes = 32; // 256 bits of entropy
+    std::array<unsigned char, kTokenBytes> bytes{};
+    if (!fillFromUrandom(bytes)) {
+        std::random_device rd;
+        for (auto &b : bytes) {
+            b = static_cast<unsigned char>(rd());
+        }
+    }
+
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string token;
+    token.reserve(6 + bytes.size() * 2);
+    token.append("token-");
+    for (auto byte : bytes) {
+        token.push_back(kHex[byte >> 4]);
+        token.push_back(kHex[byte & 0x0F]);
+    }
+    return token;
 }
 
 std::string issueTokenForUser(const std::string &email) {
