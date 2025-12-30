@@ -33,7 +33,14 @@ std::optional<std::string> readEnv(const std::string &key) {
 
 std::mutex userMutex;
 std::unordered_map<std::string, std::string> userPasswordHashes;
-std::unordered_map<std::string, std::string> activeTokens; // token -> email
+
+struct TokenRecord {
+    std::string email;
+    std::chrono::steady_clock::time_point expiresAt;
+};
+
+std::unordered_map<std::string, TokenRecord> activeTokens; // token -> record
+constexpr std::chrono::hours kTokenTtl{24};
 
 bool fillFromUrandom(std::array<unsigned char, 32> &bytes) {
     std::ifstream urandom("/dev/urandom", std::ios::in | std::ios::binary);
@@ -48,9 +55,11 @@ std::optional<std::string> hashPassword(const std::string &password) {
     constexpr int kCost = 12;
     constexpr std::size_t kSaltLen = 16;
     std::array<unsigned char, kSaltLen> saltBytes{};
-    std::random_device rd;
-    for (auto &byte : saltBytes) {
-        byte = static_cast<unsigned char>(rd());
+    if (!fillFromUrandom(saltBytes)) {
+        std::random_device rd;
+        for (auto &byte : saltBytes) {
+            byte = static_cast<unsigned char>(rd());
+        }
     }
     char saltBuf[128];
     if (!crypt_gensalt_rn("$2b$", kCost,
@@ -114,8 +123,17 @@ std::string randomToken() {
 
 std::string issueTokenForUser(const std::string &email) {
     const auto token = randomToken();
+    const auto expiresAt = std::chrono::steady_clock::now() + kTokenTtl;
     std::lock_guard<std::mutex> lock(userMutex);
-    activeTokens[token] = email;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = activeTokens.begin(); it != activeTokens.end();) {
+        if (it->second.expiresAt <= now) {
+            it = activeTokens.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    activeTokens[token] = TokenRecord{email, expiresAt};
     return token;
 }
 
@@ -128,28 +146,39 @@ bool isAuthorized(const drogon::HttpRequestPtr &req, const std::optional<std::st
         return true; // compatibility for pre-shared secret
     }
     std::lock_guard<std::mutex> lock(userMutex);
-    return activeTokens.find(token) != activeTokens.end();
+    const auto now = std::chrono::steady_clock::now();
+    auto it = activeTokens.find(token);
+    if (it == activeTokens.end()) {
+        return false;
+    }
+    if (it->second.expiresAt <= now) {
+        activeTokens.erase(it);
+        return false;
+    }
+    return true;
 }
 
 std::optional<std::string> emailForToken(const std::string &token) {
     std::lock_guard<std::mutex> lock(userMutex);
     auto it = activeTokens.find(token);
+    const auto now = std::chrono::steady_clock::now();
     if (it == activeTokens.end()) {
         return std::nullopt;
     }
-    return it->second;
+    if (it->second.expiresAt <= now) {
+        activeTokens.erase(it);
+        return std::nullopt;
+    }
+    return it->second.email;
 }
 
 void applyCorsHeaders(const drogon::HttpRequestPtr &req,
                       const drogon::HttpResponsePtr &resp,
                       const std::unordered_set<std::string> &allowedOrigins) {
-    if (!allowedOrigins.empty()) {
-        auto origin = req->getHeader("Origin");
-        if (allowedOrigins.find(origin) != allowedOrigins.end()) {
-            resp->addHeader("Access-Control-Allow-Origin", origin);
-        }
-    } else {
-        resp->addHeader("Access-Control-Allow-Origin", "*");
+    const auto origin = req->getHeader("Origin");
+    if (!allowedOrigins.empty() && allowedOrigins.find(origin) != allowedOrigins.end()) {
+        resp->addHeader("Access-Control-Allow-Origin", origin);
+        resp->addHeader("Vary", "Origin");
     }
     resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
     resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -164,10 +193,23 @@ drogon::HttpResponsePtr buildPreflightResponse(const drogon::HttpRequestPtr &req
 }
 
 bool ensureCredentials(const Json::Value &body) {
-    return body.isMember("email") && body["email"].isString()
-        && body.isMember("password") && body["password"].isString()
-        && !body["email"].asString().empty()
-        && !body["password"].asString().empty();
+    constexpr std::size_t kMaxEmail = 254;
+    constexpr std::size_t kMinPassword = 8;
+    constexpr std::size_t kMaxPassword = 72; // bcrypt truncates longer passwords
+    if (!(body.isMember("email") && body["email"].isString()
+          && body.isMember("password") && body["password"].isString())) {
+        return false;
+    }
+
+    const auto email = body["email"].asString();
+    const auto password = body["password"].asString();
+    if (email.empty() || email.size() > kMaxEmail) {
+        return false;
+    }
+    if (password.size() < kMinPassword || password.size() > kMaxPassword) {
+        return false;
+    }
+    return true;
 }
 
 void handleSignup(const drogon::HttpRequestPtr &req,
@@ -314,6 +356,8 @@ int main(int argc, char* argv[]) {
             }
             start = pos + 1;
         }
+    } else {
+        std::cout << "[security] ALLOWED_ORIGINS not set; cross-origin requests will be blocked." << std::endl;
     }
 
     app.registerPostHandlingAdvice([allowedOrigins](const drogon::HttpRequestPtr &req,
