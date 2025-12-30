@@ -6,18 +6,22 @@ This repo includes a helper script to pull teams and rosters from [collegefootba
 - Python 3.9+
 - `requests` and `psycopg2-binary` (install via `pip install -r scripts/requirements-ingest.txt`)
 - A running Postgres instance with the schema from `backend/db/schema.sql` applied.
-- Environment variables:
-  - `CFBD_API_KEY` — API key from [CollegeFootballData](https://collegefootballdata.com).
-  - `DB_URL` — Postgres connection string (e.g., `postgres://cff:cffpass@localhost:5432/cff`).
-  - Optional: `CFBD_SEASON` (defaults to current year), `CFBD_DELAY_SEC` (default `0.2` seconds between HTTP calls).
+- Provide configuration via **flags or environment variables**:
+  - `--api-key` or `CFBD_API_KEY` — API key from [CollegeFootballData](https://collegefootballdata.com).
+  - `--db-url` or `DB_URL` — Postgres connection string (e.g., `postgres://cff:cffpass@localhost:5432/cff`).
+  - Optional: `--season` or `CFBD_SEASON` (defaults to current year), `--delay` or `CFBD_DELAY_SEC` (default `0.2` seconds between HTTP calls).
 
 ## Running locally
 ```bash
 pip install -r scripts/requirements-ingest.txt
+# Option A: env vars
 export CFBD_API_KEY=your_cfbd_key
 export DB_URL=postgres://cff:cffpass@localhost:5432/cff
 export CFBD_SEASON=2024   # optional
 python scripts/ingest_cfbd.py
+
+# Option B: CLI flags (Windows PowerShell example)
+python scripts/ingest_cfbd.py --api-key "<your_key>" --db-url "postgres://cff:cffpass@localhost:5432/cff" --season 2024
 ```
 
 ## Notes

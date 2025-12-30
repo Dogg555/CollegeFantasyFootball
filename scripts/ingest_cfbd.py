@@ -5,13 +5,14 @@ CollegeFootballData (CFBD) ingestion helper.
 Pulls teams and rosters from the public CFBD API and upserts them into the
 existing Postgres schema (teams, players).
 
-Environment variables:
-  CFBD_API_KEY   - API key for https://collegefootballdata.com
-  DB_URL         - Postgres connection string (e.g., postgres://user:pass@host:5432/db)
-  CFBD_SEASON    - Season year to ingest (defaults to current year)
-  CFBD_DELAY_SEC - Optional delay between HTTP calls (default: 0.2)
+Configuration via CLI flags or environment variables:
+  --api-key / CFBD_API_KEY   - API key for https://collegefootballdata.com
+  --db-url / DB_URL          - Postgres connection string (e.g., postgres://user:pass@host:5432/db)
+  --season / CFBD_SEASON     - Season year to ingest (defaults to current year)
+  --delay / CFBD_DELAY_SEC   - Optional delay between HTTP calls (default: 0.2)
 """
 
+import argparse
 import datetime
 import json
 import os
@@ -28,14 +29,7 @@ PROVIDER_ID = 1  # reserved provider_id for CFBD in our schema
 
 
 class IngestError(Exception):
-    pass
-
-
-def require_env(name: str) -> str:
-    val = os.getenv(name)
-    if not val:
-        raise IngestError(f"Environment variable {name} is required")
-    return val
+    """Domain error for ingestion failures."""
 
 
 def fetch_json(api_key: str, path: str, params: Dict) -> List[Dict]:
@@ -212,19 +206,42 @@ def upsert_players(conn, team_provider_id: str, team_id: int, roster: Iterable[D
 
 
 def main() -> int:
-    try:
-        api_key = require_env("CFBD_API_KEY")
-        db_url = require_env("DB_URL")
-        season = int(os.getenv("CFBD_SEASON", datetime.date.today().year))
-        delay = float(os.getenv("CFBD_DELAY_SEC", "0.2"))
-    except IngestError as exc:
-        print(f"[ingest] configuration error: {exc}", file=sys.stderr)
+    parser = argparse.ArgumentParser(description="CFBD ingestion helper (teams + rosters).")
+    parser.add_argument(
+        "--api-key",
+        default=os.getenv("CFBD_API_KEY"),
+        help="CFBD API key (env: CFBD_API_KEY)",
+    )
+    parser.add_argument(
+        "--db-url",
+        default=os.getenv("DB_URL"),
+        help="Postgres connection string (env: DB_URL)",
+    )
+    parser.add_argument(
+        "--season",
+        type=int,
+        default=int(os.getenv("CFBD_SEASON", datetime.date.today().year)),
+        help="Season year to ingest (env: CFBD_SEASON; default: current year)",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=float(os.getenv("CFBD_DELAY_SEC", "0.2")),
+        help="Delay between HTTP calls in seconds (env: CFBD_DELAY_SEC; default: 0.2)",
+    )
+    args = parser.parse_args()
+
+    if not args.api_key:
+        print("[ingest] configuration error: API key is required (use --api-key or CFBD_API_KEY)", file=sys.stderr)
+        return 1
+    if not args.db_url:
+        print("[ingest] configuration error: DB URL is required (use --db-url or DB_URL)", file=sys.stderr)
         return 1
 
-    conn = psycopg2.connect(db_url)
+    conn = psycopg2.connect(args.db_url)
     try:
-        print(f"[ingest] fetching teams for season {season} ...")
-        teams = fetch_teams(api_key, season)
+        print(f"[ingest] fetching teams for season {args.season} ...")
+        teams = fetch_teams(args.api_key, args.season)
         team_map = upsert_teams(conn, teams)
         print(f"[ingest] upserted {len(team_map)} teams")
 
@@ -235,13 +252,13 @@ def main() -> int:
             if not team_id:
                 print(f"[warn] no team_id for {team.get('school')}, skipping roster")
                 continue
-            roster = fetch_roster(api_key, season, team.get("school"))
+            roster = fetch_roster(args.api_key, args.season, team.get("school"))
             _, player_total_after = upsert_players(conn, provider_team_id, team_id, roster)
             total_players = player_total_after
             print(
                 f"[ingest] roster for {team.get('school')}: {len(roster)} players (provider_id={provider_team_id})"
             )
-            time.sleep(delay)
+            time.sleep(args.delay)
 
         print(f"[ingest] done. total teams={len(team_map)} total players={total_players}")
         return 0

@@ -34,6 +34,7 @@ A full-stack concept for a college fantasy football platform covering Division I
    - Backend available at `http://localhost:8080`.
    - Frontend available at `http://localhost:3000` (includes `test.html` to hit the secure ping endpoint).
 6. Optional: ingest CFBD data into Postgres for player search. See `docs/ingestion_cfbd.md` and run `python scripts/ingest_cfbd.py` after applying the schema in `backend/db/schema.sql`.
+7. Secrets: copy `.env.example` to `.env.local` (gitignored) and fill in secrets (DB_URL, JWT_SECRET, CFBD_API_KEY, cert paths). See `docs/secrets.md` for local/CI guidance.
 
 ## Roadmap
 - Implement auth, league creation, player search, and draft APIs in C++.
