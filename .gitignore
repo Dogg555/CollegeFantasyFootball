@@ -2,3 +2,7 @@ certs/
 .env
 .env.local
 docker-compose.override.yml
+scripts/
+db/
+docs/
+
