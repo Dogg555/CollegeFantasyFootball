@@ -1,81 +1,16 @@
-# Backend (C++)
+# Backend snapshot
 
-This directory contains the C++ backend for the College Fantasy Football platform.
+This folder holds the server scaffold for the project. It is intentionally minimal and meant for local exploration.
 
-## Proposed stack
-- **Framework:** [Drogon](https://github.com/drogonframework/drogon) (C++17 HTTP/WebSocket/ORM)
-- **Database:** PostgreSQL (with Drogon ORM) + Redis for caching/sessions
-- **Build:** CMake 3.15+
+## Contents
+- `src/` — HTTP entry point, in-memory auth mock, and placeholder domain handlers.
+- `db/schema.sql` — starter tables for teams, players, and related fantasy data.
+- `Dockerfile` and `CMakeLists.txt` — build and container hints for local runs.
 
-If Drogon is unavailable in your environment, Crow or Pistache are viable alternatives; the structure below remains similar.
+## Safety reminders
+- Keep `.env`, `.env.local`, TLS keys, and database credentials out of version control.
+- Avoid committing database dumps or generated binaries; prefer a clean build each time.
+- Remove any stray certificates or secret keys from the repo history if they appear.
 
-## Building (example with Drogon)
-```bash
-cmake -S . -B build
-cmake --build build
-./build/college_ff_server
-```
-
-## Dependencies
-- C++17 toolchain, CMake
-- Drogon (libdrogon-dev) + OpenSSL (libssl-dev) + JsonCpp (libjsoncpp-dev) + UUID (uuid-dev) + zlib
-- Install on Debian/Ubuntu with the helper script at the repo root:
-  ```bash
-  ./scripts/install_dependencies.sh
-  ```
-- Windows 11 setup (vcpkg or WSL) is documented in `../docs/windows-setup.md`; automated install script: `../scripts/install_windows.ps1`.
-
-### Docker (local testing)
-```bash
-docker build -t college-ff-backend .
-docker run --rm -p 8080:8080 -e JWT_SECRET=<jwt_secret> college-ff-backend
-```
-
-## Directory structure
-- `src/main.cpp`: Entry point; wires HTTP routes and health checks.
-- `src/routes/`: Route handlers grouped by domain (auth, leagues, players, drafts, waivers, lineups, scoring).
-- `src/models/`: Data models and mappers (if using ORM).
-- `src/services/`: Business logic (scoring rules, draft engine, waiver processing).
-- `src/utils/`: Helpers (validation, logging, time, ID generation).
-- `db/schema.sql`: Postgres schema for teams, players, games, stats, depth charts, and fantasy overlays.
-
-## Environment variables (planned)
-- `DB_URL` (PostgreSQL connection string)
-- `REDIS_URL`
-- `JWT_SECRET`
-- `PORT` (defaults to 8080)
-- `SSL_CERT_FILE` / `SSL_KEY_FILE` (optional HTTPS)
-- `ALLOWED_ORIGINS` (comma-separated CORS allowlist)
-
-## Security notes
-- Set a strong `JWT_SECRET` (32+ random bytes) before running the server; secure routes will reject requests when the secret is missing.
-- Session tokens returned from `/api/auth/login` and `/api/auth/signup` are 256-bit hex strings generated from OS entropy with a secure fallback.
-- Keep secrets in environment variables or gitignored files such as `.env.local`; never commit secrets or TLS keys.
-
-## Available endpoints (scaffold)
-- `GET /health` — basic liveness check.
-- `GET /api/players?query=<term>` — database-backed player search (PostgreSQL) with optional `position`, `conference`, and `limit` filters. Requires `DB_URL` and assumes the `players`/`teams` tables are populated from an external feed. A practical source for FBS/FCS rosters is [FootballDB](https://www.footballdb.com/college-football/teams/index.html); ingest those rosters into the schema in `db/schema.sql` so search returns real player data.
-
-## Running locally with Docker
-- A Postgres container is required for player search. An example `docker-compose.yml` (root of the repo) wires `DB_URL` to the backend:
-  ```yaml
-  services:
-    postgres:
-      image: postgres:16
-      environment:
-        POSTGRES_USER: <postgres_user>
-        POSTGRES_PASSWORD: <postgres_password>
-        POSTGRES_DB: <postgres_db>
-      ports:
-        - \"5432:5432\"
-      backend:
-        environment:
-          - DB_URL=postgres://<postgres_user>:<postgres_password>@postgres:5432/<postgres_db>
-  ```
-  Load roster data (e.g., scraped from FootballDB) into the `teams` and `players` tables defined in `db/schema.sql` before hitting `/api/players`.
-
-## Next steps
-1. Add package/dependency setup for Drogon (FetchContent or system packages).
-2. Flesh out route handlers for auth, leagues, players, drafts, and lineups.
-3. Add integration tests for API endpoints and scoring logic.
-4. Wire ingestion jobs to the Postgres schema in `db/schema.sql` and cache hot lookups in Redis.
+## Quick build hint
+With Drogon and dependencies available, configure and build using CMake into `build/`, or run through the provided Dockerfile for an isolated test run. Configure environment variables like `JWT_SECRET`, `DB_URL`, and `ALLOWED_ORIGINS` at runtime rather than hardcoding them.
