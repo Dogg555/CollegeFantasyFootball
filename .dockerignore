@@ -1,5 +1,6 @@
 .git
 .gitignore
+.github
 
 # Node / frontend artifacts
 node_modules
@@ -8,6 +9,8 @@ pnpm-lock.yaml
 yarn.lock
 dist
 build
+coverage
+*.log
 
 # Editor / OS cruft
 .vscode
@@ -24,3 +27,17 @@ build
 certs/
 db/
 docker-compose.override.yml
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+
+# CMake and compiler outputs
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+*.o
+*.so
+*.a
