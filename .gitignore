@@ -5,9 +5,9 @@ certs/
 .env.*
 !.env.example
 docker-compose.override.yml
-scripts/
-db/
-docs/
+.scripts/
+.db/
+.docs/
 # Local tooling and caches
 .vscode/
 .idea/
