@@ -6,7 +6,7 @@
   <title>Backend Security Check</title>
   <link rel="stylesheet" href="style.css" />
   <style>
-    .status { margin-top: 12px; font-weight: 600; }yes
+    .status { margin-top: 12px; font-weight: 600; }
     .ok { color: #45d19f; }
     .fail { color: #ff7b7b; }
   </style>
@@ -15,9 +15,9 @@
   <main class="layout" style="max-width:720px">
     <section class="card">
       <h2>Secure Endpoint Test</h2>
-      <p class="subtitle">Calls <code>/api/secure/ping</code> using the supplied bearer token.</p>
+      <p class="subtitle">Calls <code>/api/secure/ping</code> using the supplied bearer token (do not paste signing keys or secrets).</p>
       <form id="ping-form" class="search">
-        <input id="token" type="text" placeholder="Enter JWT secret or bearer token" required />
+        <input id="token" type="text" placeholder="Enter bearer token" required />
         <button class="button button--primary" type="submit">Send Ping</button>
       </form>
       <div id="result" class="status muted">Awaiting request...</div>
