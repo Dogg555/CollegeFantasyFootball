@@ -1,45 +1,88 @@
-certs/
-.secrets/
+############################################
+# Project-specific: DO NOT COMMIT
+############################################
+
+# Local-only folders
+scripts/
+docs/
+db/
+
+# Backend local DB / runtime data
+backend/db/
+
+# Environment variables
 .env
-.env.local
 .env.*
 !.env.example
-docker-compose.override.yml
-.scripts/
-.db/
-.docs/
-# Local tooling and caches
+
+############################################
+# Databases & data files
+############################################
+
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.bak
+*.bak
+*.log
+
+############################################
+# Python
+############################################
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+############################################
+# Node / Frontend
+############################################
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+dist/
+build/
+
+############################################
+# Docker
+############################################
+
+# Local volumes / runtime files
+docker-data/
+*.pid
+
+############################################
+# OS / Editor junk
+############################################
+
+.DS_Store
+.DS_Store?
+Thumbs.db
+
 .vscode/
 .idea/
-.DS_Store
+
+############################################
+# Misc
+############################################
+
+*.tmp
 *.swp
-*.log
-.pytest_cache/
-__pycache__/
-.mypy_cache/
-.venv/
-venv/
-
-# Build outputs
-build/
-dist/
-node_modules/
-coverage/
-
-# Certificates and keys
-*.pem
-*.key
-*.crt
-*.pfx
-*.p12
-
-# CMake and compiler artifacts
-CMakeFiles/
-CMakeCache.txt
-cmake-build-*/
-*.o
-*.so
-*.a
-
-# Snyk Security Extension - AI Rules (auto-generated)
-.github/instructions/snyk_rules.instructions.md
+*.swo
