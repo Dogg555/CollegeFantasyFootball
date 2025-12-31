@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in • College Fantasy Football</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand__logo">CF</div>
+      <div>
+        <div class="brand__title">College Fantasy</div>
+        <div class="brand__subtitle">Modern manager hub</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a class="nav__link" href="index.html">Home</a>
+      <a class="nav__link" href="league.html">Leagues</a>
+      <a class="nav__link" href="#">Draft Room</a>
+      <a class="nav__link" href="players.html">Players</a>
+    </nav>
+    <div class="nav__actions">
+      <a class="button button--primary" href="index.html">Back to app</a>
+      <button class="button button--ghost" id="signout-btn" type="button" hidden>Sign out</button>
+    </div>
+  </div>
+
+  <main class="layout" style="max-width: 960px">
+    <section class="card card--accent">
+      <div class="card__header">
+        <h2>Create an account</h2>
+        <span class="pill">New</span>
+      </div>
+      <p class="muted small">
+        Sign up with an email and password to start creating leagues. Tokens are issued per session.
+      </p>
+      <form id="signup-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+        <label class="field">
+          <span>Email</span>
+          <input id="signup-email" type="email" name="email" placeholder="you@example.com" required autocomplete="email" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="signup-password" type="password" name="password" placeholder="Choose a password" required autocomplete="new-password" />
+        </label>
+        <div class="actions">
+          <button class="button button--primary" type="submit">Create account</button>
+          <div id="signup-status" class="muted small" role="status"></div>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="card__header">
+        <h2>Sign in</h2>
+        <span class="pill pill--muted">Returning</span>
+      </div>
+      <form id="login-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+        <label class="field">
+          <span>Email</span>
+          <input id="login-email" type="email" name="email" placeholder="you@example.com" required autocomplete="email" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="login-password" type="password" name="password" placeholder="Your password" required autocomplete="current-password" />
+        </label>
+        <div class="actions">
+          <button class="button" type="submit">Sign in</button>
+          <div id="login-status" class="muted small" role="status"></div>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>After signing in</h2>
+      <p class="muted">
+        A session token is stored locally and sent with requests to create leagues. Return to the home
+        page to start building your league.
+      </p>
+            <div id="auth-note" class="muted small"></div>
+      <div class="cta-row">
+        <a class="button button--primary" href="index.html">Go to home</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">Built for college fantasy managers.</footer>
+  <script src="auth.js"></script>
+</body>
+</html>

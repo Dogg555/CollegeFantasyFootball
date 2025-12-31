@@ -1,16 +1,35 @@
-version: "3.9"
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env.local}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env.local}
+      POSTGRES_DB: ${POSTGRES_DB:-cff}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - pgdata:/var/lib/postgresql/data
   backend:
     build:
       context: ./backend
     environment:
-      - PORT=8080
-      - JWT_SECRET=dev-secret-token
-      # - SSL_CERT_FILE=/certs/local.crt
-      # - SSL_KEY_FILE=/certs/local.key
+      - PORT=${PORT:-8080}
+      - JWT_SECRET=${JWT_SECRET:?set in .env.local}
+      - DB_URL=${DB_URL:?set in .env.local}
+      - SSL_CERT_FILE=${SSL_CERT_FILE:?set in .env.local}
+      - SSL_KEY_FILE=${SSL_KEY_FILE:?set in .env.local}
       # - ALLOWED_ORIGINS=http://localhost:8080,http://localhost:3000
+    volumes:
+      - ${CERTS_DIR:-./certs}:/certs:ro
     ports:
       - "8080:8080"
+    depends_on:
+      - postgres
   frontend:
     build:
       context: ./frontend
@@ -18,3 +37,5 @@ services:
       - "3000:80"
     depends_on:
       - backend
+volumes:
+  pgdata:

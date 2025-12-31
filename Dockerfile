@@ -1,19 +1,63 @@
-# GCC support can be specified at major, minor, or micro version
-# (e.g. 8, 8.2 or 8.2.0).
-# See https://hub.docker.com/r/library/gcc/ for all supported GCC
-# tags from Docker Hub.
-# See https://docs.docker.com/samples/library/gcc/ for more on how to use this image
-FROM gcc:latest
+# Frontend: static site served by nginx
+FROM nginx:1.27-alpine AS frontend
+WORKDIR /usr/share/nginx/html
+COPY frontend/ /usr/share/nginx/html
+EXPOSE 80
 
-# These commands copy your files into the specified directory in the image
-# and set that as the working location
-COPY . /usr/src/myapp
-WORKDIR /usr/src/myapp
+# Backend: Drogon-based server build
+FROM debian:bookworm AS backend-build
 
-# This command compiles your app using GCC, adjust for your source code
-RUN g++ -o myapp main.cpp
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    libjsoncpp-dev \
+    libcrypt-dev \
+    uuid-dev \
+    zlib1g-dev \
+    libssl-dev \
+    libbrotli-dev \
+    libsqlite3-dev \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
-# This command runs your application, comment out this line to compile only
-CMD ["./myapp"]
+# Build Drogon from source (Bookworm doesn't ship libdrogon-dev)
+RUN git config --global http.version HTTP/1.1 \
+ && git clone --branch v1.9.7 --depth 1 https://github.com/drogonframework/drogon.git /tmp/drogon \
+ && cd /tmp/drogon \
+ && git submodule update --init --recursive --depth 1 \
+ && cmake -S /tmp/drogon -B /tmp/drogon/build -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build /tmp/drogon/build --target install -- -j"$(nproc)" \
+ && ldconfig \
+ && rm -rf /tmp/drogon
+
+WORKDIR /app/backend
+COPY backend/ /app/backend
+
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local \
+    -DENABLE_DROGON=ON \
+ && cmake --build build --target college_ff_server -- -j"$(nproc)"
+
+FROM debian:bookworm-slim AS backend
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    libjsoncpp25 \
+    libcrypt1 \
+    libuuid1 \
+    zlib1g \
+    libbrotli1 \
+    libsqlite3-0 \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /srv
+COPY --from=backend-build /app/backend/build/college_ff_server /srv/college_ff_server
+
+EXPOSE 8080
+ENV PORT=8080
+CMD ["/srv/college_ff_server"]
 
 LABEL Name=collegefantasyfootball Version=0.0.1

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Players - College Fantasy Football</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand__logo">CF</div>
+      <div>
+        <div class="brand__title">College Fantasy</div>
+        <div class="brand__subtitle">Modern manager hub</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a class="nav__link" href="index.html">Home</a>
+      <a class="nav__link" href="league.html">Leagues</a>
+      <a class="nav__link" href="#">Draft Room</a>
+      <a class="nav__link is-active" href="players.html">Players</a>
+    </nav>
+    <div class="nav__actions">
+      <a class="button button--ghost" id="nav-sign-in" href="signin.html">Sign in</a>
+      <button class="button button--ghost" id="nav-logout" type="button" hidden>Sign out</button>
+      <a class="button button--primary" href="league.html">Your league</a>
+    </div>
+  </div>
+
+  <header class="hero hero--subtle">
+    <div class="hero__content">
+      <div class="hero__copy">
+        <p class="pill pill--muted">Players</p>
+        <h1>Search the full FBS/FCS player pool</h1>
+        <p class="subtitle">
+          Find college players by name, team, position, or conference. Results come from the
+          same database that powers drafts and rosters.
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout" style="max-width: 960px">
+    <section class="card">
+      <div class="card__header">
+        <h2>Player Search</h2>
+        <span class="pill">Live data</span>
+      </div>
+      <form id="search-form" class="search">
+        <input id="search-input" type="search" placeholder="Search players (name, team, position)" />
+        <button class="button" type="submit">Search</button>
+      </form>
+      <div id="search-results" class="list">Try searching for a player.</div>
+      <p class="muted small" style="margin-top: 12px">
+        Tip: filter by position or conference using keywords (e.g., "QB SEC", "Ohio State WR").
+      </p>
+    </section>
+  </main>
+
+  <footer class="footer">Built for college fantasy managers.</footer>
+  <script src="players.js"></script>
+</body>
+</html>

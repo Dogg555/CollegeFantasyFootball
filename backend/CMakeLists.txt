@@ -5,22 +5,30 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Drogon can be fetched via FetchContent or provided by the system.
-# To keep this scaffold lightweight, we do not fetch dependencies automatically.
-# Define DROGON_FOUND to ON if Drogon is available in your environment.
-
-if (DROGON_FOUND)
-    find_package(Drogon CONFIG REQUIRED)
-endif()
+option(ENABLE_DROGON "Build with Drogon HTTP framework" ON)
 
 add_executable(college_ff_server
     src/main.cpp
+    src/json_utils.cpp
+    src/handlers/league_handler.cpp
+    src/league_models.cpp
+    src/player_catalog.cpp
 )
 
 target_include_directories(college_ff_server PRIVATE src)
 
-if (DROGON_FOUND)
-    target_link_libraries(college_ff_server PRIVATE Drogon::Drogon)
+find_package(PostgreSQL REQUIRED)
+target_link_libraries(college_ff_server PRIVATE PostgreSQL::PostgreSQL)
+target_compile_definitions(college_ff_server PRIVATE CFF_HAS_POSTGRES)
+
+if (ENABLE_DROGON)
+    find_package(Drogon CONFIG REQUIRED)
+    find_library(CRYPT_LIB crypt)
+    if (NOT CRYPT_LIB)
+        message(FATAL_ERROR "crypt library not found")
+    endif()
+    target_link_libraries(college_ff_server PRIVATE Drogon::Drogon ${CRYPT_LIB})
+    target_compile_definitions(college_ff_server PRIVATE DROGON_FOUND)
 else()
-    message(WARNING "Drogon not found; building a stub server without HTTP bindings.")
+    message(WARNING "ENABLE_DROGON=OFF; building a stub server without HTTP bindings.")
 endif()
