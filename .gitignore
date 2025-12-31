@@ -1,10 +1,42 @@
 certs/
+.secrets/
 .env
 .env.local
 .env.*
 !.env.example
-.secrets/
 docker-compose.override.yml
 scripts/
 db/
 docs/
+# Local tooling and caches
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.log
+.pytest_cache/
+__pycache__/
+.mypy_cache/
+.venv/
+venv/
+
+# Build outputs
+build/
+dist/
+node_modules/
+coverage/
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+
+# CMake and compiler artifacts
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+*.o
+*.so
+*.a
