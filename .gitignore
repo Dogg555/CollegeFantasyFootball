@@ -9,6 +9,7 @@ db/
 
 # Backend local DB / runtime data
 backend/db/
+backend/db_schema/
 
 # Environment variables
 .env

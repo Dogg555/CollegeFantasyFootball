@@ -4,7 +4,7 @@ This folder holds the server scaffold for the project. It is intentionally minim
 
 ## Contents
 - `src/` — HTTP entry point, in-memory auth mock, and placeholder domain handlers.
-- `db/schema.sql` — starter tables for teams, players, and related fantasy data.
+- `db_schema/` (gitignored) — local Postgres schema snapshots for teams, players, games, and category-aware player stats.
 - `Dockerfile` and `CMakeLists.txt` — build and container hints for local runs.
 
 ## Safety reminders
