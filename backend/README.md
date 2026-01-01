@@ -4,8 +4,7 @@ This folder holds the server scaffold for the project. It is intentionally minim
 
 ## Contents
 - `src/` — HTTP entry point, in-memory auth mock, and placeholder domain handlers.
-- `db/schema.sql` — Postgres schema for teams, players, games, and category-aware player stats.
-- `db/stat_keys.md` — recommended `stat_name` keys for passing/rushing/receiving (defense reserved).
+- `db_schema/` (gitignored) — local Postgres schema snapshots for teams, players, games, and category-aware player stats.
 - `Dockerfile` and `CMakeLists.txt` — build and container hints for local runs.
 
 ## Safety reminders
