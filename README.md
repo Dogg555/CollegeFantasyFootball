@@ -5,8 +5,6 @@ This repository contains a lightweight concept for a college fantasy football ex
 ## Directory layout
 - `backend/` — server scaffold and sample database schema.
 - `frontend/` — static HTML/JS mock UI for sign-in, leagues, and player search.
-- `docs/` — high-level notes for architecture and environment setup.
-- `scripts/` — helper scripts for local development (installers, ingestion).
 
 ## What to keep out of git
 - Environment files: `.env`, `.env.local`, and any machine-specific variants.
