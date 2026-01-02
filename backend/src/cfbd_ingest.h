@@ -24,14 +24,19 @@ struct CfbdPlayer {
 struct IngestResult {
     std::size_t ingested = 0;
     std::size_t updated = 0;
+    std::size_t apiCalls = 0;
     std::vector<std::string> errors;
 };
 
 // Fetches players from CFBD using the provided base URL, API key, and season.
+// maxPages protects API quotas (e.g., monthly call limits). Defaults to a
+// reasonable ceiling; callers can lower it via env.
 std::vector<CfbdPlayer> fetchPlayersFromCFBD(const std::string &baseUrl,
                                              const std::string &apiKey,
                                              const std::string &season,
-                                             std::vector<std::string> &errors);
+                                             int maxPages,
+                                             std::vector<std::string> &errors,
+                                             std::size_t &apiCalls);
 
 // Upserts the provided players into Postgres using DB_URL. Ensures the table
 // and indexes exist before inserting.
@@ -43,6 +48,7 @@ IngestResult upsertPlayersToPostgres(const std::vector<CfbdPlayer> &players,
 // - CFBD_API_KEY (required)
 // - CFBD_BASE_URL (optional; defaults to https://api.collegefootballdata.com)
 // - CFBD_SEASON (optional; defaults to current year)
+// - CFBD_MAX_PAGES (optional; defaults to 200 to stay under API quotas)
 // - DB_URL (required)
 IngestResult runCfbdIngestOnce();
 

@@ -93,18 +93,21 @@ namespace cff {
 std::vector<CfbdPlayer> fetchPlayersFromCFBD(const std::string &baseUrl,
                                              const std::string &apiKey,
                                              const std::string &season,
-                                             std::vector<std::string> &errors) {
+                                             int maxPages,
+                                             std::vector<std::string> &errors,
+                                             std::size_t &apiCalls) {
     std::vector<CfbdPlayer> players;
     const auto normalizedBase = trimTrailingSlash(baseUrl.empty() ? "https://api.collegefootballdata.com" : baseUrl);
     const auto endpoint = normalizedBase + "/players";
 
-    constexpr int kMaxPages = 200;
-    for (int page = 1; page <= kMaxPages; ++page) {
+    const int cappedPages = std::max(1, std::min(maxPages, 500)); // guardrails for API quotas
+    for (int page = 1; page <= cappedPages; ++page) {
         auto resp = cpr::Get(
             cpr::Url{endpoint},
             cpr::Header{{"Authorization", "Bearer " + apiKey}},
             cpr::Parameters{{"year", season}, {"page", std::to_string(page)}}
         );
+        ++apiCalls;
 
         if (resp.error) {
             errors.push_back("Network error on page " + std::to_string(page) + ": " + resp.error.message);
@@ -243,13 +246,23 @@ IngestResult runCfbdIngestOnce() {
 
     const auto baseUrl = readEnv("CFBD_BASE_URL").value_or("https://api.collegefootballdata.com");
     const auto season = readEnv("CFBD_SEASON").value_or(currentYearString());
+    int maxPages = 200;
+    if (const auto envPages = readEnv("CFBD_MAX_PAGES")) {
+        try {
+            maxPages = std::stoi(*envPages);
+        } catch (const std::exception &) {
+            overall.errors.push_back("CFBD_MAX_PAGES is not a valid integer; using default 200.");
+        }
+    }
 
     std::vector<std::string> errors;
-    const auto players = fetchPlayersFromCFBD(baseUrl, *apiKey, season, errors);
+    std::size_t apiCalls = 0;
+    const auto players = fetchPlayersFromCFBD(baseUrl, *apiKey, season, maxPages, errors, apiCalls);
     auto upserted = upsertPlayersToPostgres(players, *dbUrl, errors);
 
     overall.ingested = upserted.ingested;
     overall.updated = upserted.updated;
+    overall.apiCalls = apiCalls;
     overall.errors = std::move(errors);
     return overall;
 }

@@ -382,7 +382,8 @@ int main(int argc, char* argv[]) {
         std::cout << "[cfbd] CFBD_INGEST_ON_STARTUP enabled; starting ingest..." << std::endl;
         const auto ingestResult = cff::runCfbdIngestOnce();
         std::cout << "[cfbd] ingest complete. inserted=" << ingestResult.ingested
-                  << " updated=" << ingestResult.updated << std::endl;
+                  << " updated=" << ingestResult.updated
+                  << " api_calls=" << ingestResult.apiCalls << std::endl;
         for (const auto &err : ingestResult.errors) {
             std::cerr << "[cfbd] ingest error: " << err << std::endl;
         }
@@ -456,6 +457,7 @@ int main(int argc, char* argv[]) {
                              payload["status"] = ingestResult.errors.empty() ? "ok" : "partial";
                              payload["ingested"] = static_cast<Json::UInt64>(ingestResult.ingested);
                              payload["updated"] = static_cast<Json::UInt64>(ingestResult.updated);
+                             payload["apiCalls"] = static_cast<Json::UInt64>(ingestResult.apiCalls);
                              if (!ingestResult.errors.empty()) {
                                  Json::Value errs(Json::arrayValue);
                                  for (const auto &err : ingestResult.errors) {
