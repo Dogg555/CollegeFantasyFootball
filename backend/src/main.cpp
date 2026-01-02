@@ -42,14 +42,17 @@ struct TokenRecord {
 std::unordered_map<std::string, TokenRecord> activeTokens; // token -> record
 constexpr std::chrono::hours kTokenTtl{24};
 
-bool fillFromUrandom(std::array<unsigned char, 32> &bytes) {
+template <std::size_t N>
+bool fillFromUrandom(std::array<unsigned char, N> &bytes) {
     std::ifstream urandom("/dev/urandom", std::ios::in | std::ios::binary);
     if (!urandom.is_open()) {
         return false;
     }
-    urandom.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    urandom.read(reinterpret_cast<char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
     return urandom.gcount() == static_cast<std::streamsize>(bytes.size());
 }
+
 
 std::optional<std::string> hashPassword(const std::string &password) {
     constexpr int kCost = 12;
