@@ -16,6 +16,7 @@
 #include <crypt.h>
 #include <drogon/drogon.h>
 #include <json/json.h>
+#include "cfbd_ingest.h"
 #include "league_models.h"
 #include "handlers/league_handler.h"
 #include "player_catalog.h"
@@ -325,6 +326,7 @@ int main(int argc, char* argv[]) {
     const auto sslCert = readEnv("SSL_CERT_FILE");
     const auto sslKey = readEnv("SSL_KEY_FILE");
     const auto allowedOriginEnv = readEnv("ALLOWED_ORIGINS");
+    const auto ingestOnStartupEnv = readEnv("CFBD_INGEST_ON_STARTUP");
 
     if (!jwtSecret.has_value()) {
         std::cerr << "[security] JWT_SECRET is not set; secure endpoints will reject all requests." << std::endl;
@@ -369,6 +371,19 @@ int main(int argc, char* argv[]) {
                                              std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
         callback(buildPreflightResponse(req, allowedOrigins));
     };
+
+    const bool ingestOnStartup = ingestOnStartupEnv &&
+                                 (*ingestOnStartupEnv == "1" || *ingestOnStartupEnv == "true" ||
+                                  *ingestOnStartupEnv == "TRUE" || *ingestOnStartupEnv == "yes");
+    if (ingestOnStartup) {
+        std::cout << "[cfbd] CFBD_INGEST_ON_STARTUP enabled; starting ingest..." << std::endl;
+        const auto ingestResult = cff::runCfbdIngestOnce();
+        std::cout << "[cfbd] ingest complete. inserted=" << ingestResult.ingested
+                  << " updated=" << ingestResult.updated << std::endl;
+        for (const auto &err : ingestResult.errors) {
+            std::cerr << "[cfbd] ingest error: " << err << std::endl;
+        }
+    }
 
     app.addListener("0.0.0.0", static_cast<unsigned short>(std::stoi(port)), useSsl)
         .setThreadNum(std::thread::hardware_concurrency())
@@ -420,6 +435,35 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/auth/signup",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              handleSignup(req, std::move(callback), jwtSecret);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/admin/ingest/cfbd",
+                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             if (!isAuthorized(req, jwtSecret)) {
+                                 Json::Value error;
+                                 error["error"] = "Unauthorized";
+                                 auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+                                 resp->setStatusCode(drogon::k401Unauthorized);
+                                 callback(resp);
+                                 return;
+                             }
+
+                             const auto ingestResult = cff::runCfbdIngestOnce();
+                             Json::Value payload;
+                             payload["status"] = ingestResult.errors.empty() ? "ok" : "partial";
+                             payload["ingested"] = static_cast<Json::UInt64>(ingestResult.ingested);
+                             payload["updated"] = static_cast<Json::UInt64>(ingestResult.updated);
+                             if (!ingestResult.errors.empty()) {
+                                 Json::Value errs(Json::arrayValue);
+                                 for (const auto &err : ingestResult.errors) {
+                                     errs.append(err);
+                                 }
+                                 payload["errors"] = errs;
+                             }
+
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+                             resp->setStatusCode(drogon::k200OK);
+                             callback(resp);
                          },
                          {drogon::Post})
         .registerHandler("/api/leagues",
@@ -485,6 +529,7 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/auth/login", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/signup", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues", preflightHandler, {drogon::Options})
+        .registerHandler("/api/admin/ingest/cfbd", preflightHandler, {drogon::Options})
         .registerHandler("/api/players", preflightHandler, {drogon::Options})
         .run();
 #else

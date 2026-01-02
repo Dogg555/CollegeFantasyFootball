@@ -21,21 +21,20 @@ CREATE TABLE IF NOT EXISTS teams (
 
 CREATE INDEX IF NOT EXISTS idx_teams_conference ON teams (conference);
 
--- Players are keyed by CFBD player ID and linked to teams.
+-- Players are keyed by CFBD player ID (text to support future providers) and keep raw JSON for forward compatibility.
 CREATE TABLE IF NOT EXISTS players (
-    id               BIGINT PRIMARY KEY, -- CFBD player ID
+    id               TEXT PRIMARY KEY, -- CFBD player ID
     full_name        TEXT NOT NULL,
     first_name       TEXT,
     last_name        TEXT,
     position         TEXT,
-    team_id          BIGINT REFERENCES teams(id) ON DELETE SET NULL,
-    jersey           TEXT,
-    height           INT,
-    weight           INT,
-    class            TEXT,
-    hometown         TEXT,
+    team             TEXT,
     conference       TEXT,
-    updated_at       TIMESTAMPTZ DEFAULT NOW()
+    year             TEXT,
+    height           TEXT,
+    weight           INTEGER,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    raw              JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_players_name_trgm ON players USING gin (full_name gin_trgm_ops);
