@@ -79,12 +79,15 @@ Thumbs.db
 
 .vscode/
 .idea/
-.certs/
+certs/
 
-############################################
+###########################################
 # Misc
 ############################################
 
 *.tmp
 *.swp
 *.swo
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.github/instructions/snyk_rules.instructions.md
