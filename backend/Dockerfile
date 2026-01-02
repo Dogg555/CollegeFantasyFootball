@@ -59,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     libbrotli1 \
     libsqlite3-0 \
-    libpqxx-dev \
+    libpqxx-7 \
     libcurl4 \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
