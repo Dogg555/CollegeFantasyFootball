@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     libbrotli-dev \
     libsqlite3-dev \
+    libpqxx-dev \
+    libcpr-dev \
+    nlohmann-json3-dev \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
@@ -47,6 +50,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     libbrotli1 \
     libsqlite3-0 \
+    libpqxx-dev \
+    libcpr1 \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY --from=build /app/build/college_ff_server /srv/college_ff_server
