@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     libbrotli-dev \
     libsqlite3-dev \
+    libpqxx-dev \
+    libcurl4-openssl-dev \
+    nlohmann-json3-dev \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
@@ -29,6 +32,15 @@ RUN git config --global http.version HTTP/1.1 \
  && cmake --build /tmp/drogon/build --target install -- -j"$(nproc)" \
  && ldconfig \
  && rm -rf /tmp/drogon
+
+# Build CPR from source (not available in Bookworm repos)
+RUN git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/cpr \
+ && cmake -S /tmp/cpr -B /tmp/cpr/build \
+        -DCPR_BUILD_TESTS=OFF -DCPR_BUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF \
+        -DCPR_FORCE_USE_SYSTEM_CURL=ON \
+ && cmake --build /tmp/cpr/build --target install -- -j"$(nproc)" \
+ && ldconfig \
+ && rm -rf /tmp/cpr
 
 WORKDIR /app
 COPY . /app
@@ -47,6 +59,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     libbrotli1 \
     libsqlite3-0 \
+    libpqxx-dev \
+    libcurl4 \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY --from=build /app/build/college_ff_server /srv/college_ff_server

@@ -130,14 +130,13 @@ std::vector<PlayerCard> searchPlayers(const std::string &query,
 
     std::string sql = R"SQL(
         SELECT
-            COALESCE(p.provider_player_id, 'player-' || p.id::text) AS id,
+            COALESCE(p.id, '') AS id,
             COALESCE(p.full_name, '') AS name,
-            COALESCE(t.abbreviation, COALESCE(t.school, '')) AS team,
+            COALESCE(p.team, '') AS team,
             COALESCE(p.position, '') AS position,
-            COALESCE(t.conference, '') AS conference,
-            COALESCE(p.class, '') AS class
+            COALESCE(p.conference, '') AS conference,
+            COALESCE(p.year, '') AS class
         FROM players p
-        LEFT JOIN teams t ON p.team_id = t.id
     )SQL";
 
     std::vector<std::string> params;
@@ -149,10 +148,9 @@ std::vector<PlayerCard> searchPlayers(const std::string &query,
         const auto idx = params.size();
         whereClauses.push_back(
             "(p.full_name ILIKE $" + std::to_string(idx) +
-            " OR t.school ILIKE $" + std::to_string(idx) +
-            " OR t.abbreviation ILIKE $" + std::to_string(idx) +
+            " OR p.team ILIKE $" + std::to_string(idx) +
             " OR p.position ILIKE $" + std::to_string(idx) +
-            " OR t.conference ILIKE $" + std::to_string(idx) + ")"
+            " OR p.conference ILIKE $" + std::to_string(idx) + ")"
         );
     }
 
@@ -165,7 +163,7 @@ std::vector<PlayerCard> searchPlayers(const std::string &query,
     if (conferenceFilter && !conferenceFilter->empty()) {
         params.push_back(*conferenceFilter);
         const auto idx = params.size();
-        whereClauses.push_back("t.conference ILIKE $" + std::to_string(idx));
+        whereClauses.push_back("p.conference ILIKE $" + std::to_string(idx));
     }
 
     if (!whereClauses.empty()) {
