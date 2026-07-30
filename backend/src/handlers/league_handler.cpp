@@ -28,6 +28,15 @@
 namespace cff::handlers {
 
 namespace {
+// Helpers are defined later in this translation unit, but several early
+// validation functions use them. Keep declarations here so the full source
+// compiles without moving or duplicating implementation code.
+std::string jsonString(const Json::Value &body,
+                       const std::string &key,
+                       const std::string &fallback = "");
+Json::Value &arrayForLeague(std::unordered_map<std::string, Json::Value> &store,
+                            const std::string &leagueId);
+
 constexpr std::size_t kMaxLeaguesPerAccount = 3;
 
 struct LeagueRecord {
@@ -659,7 +668,7 @@ bool isActiveMemberLocked(const std::string &accountEmail, const std::string &le
     return false;
 }
 
-std::string jsonString(const Json::Value &body, const std::string &key, const std::string &fallback = "") {
+std::string jsonString(const Json::Value &body, const std::string &key, const std::string &fallback) {
     return cff::getStringOrDefault(body, key, fallback);
 }
 
