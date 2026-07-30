@@ -2,6 +2,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_set>
 
@@ -49,9 +50,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "[security] JWT_SECRET is not set; secure endpoints will reject all requests." << std::endl;
     }
 
-    // SSL enablement when certs are available
-    if (sslCert && sslKey) {
-        app.enableSSL(sslCert.value(), sslKey.value());
+    const bool useSsl = sslCert.has_value() && sslKey.has_value();
+    if (useSsl) {
         std::cout << "[security] SSL enabled with provided certificate and key." << std::endl;
     } else {
         std::cout << "[security] SSL not configured. For testing only. Provide SSL_CERT_FILE and SSL_KEY_FILE to enable HTTPS." << std::endl;
@@ -90,7 +90,11 @@ int main(int argc, char* argv[]) {
         resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     });
 
-    app.addListener("0.0.0.0", static_cast<unsigned short>(std::stoi(port)))
+    app.addListener("0.0.0.0",
+                    static_cast<unsigned short>(std::stoi(port)),
+                    useSsl,
+                    sslCert.value_or(""),
+                    sslKey.value_or(""))
         .setThreadNum(std::thread::hardware_concurrency())
         .registerHandler("/health", [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
             auto resp = drogon::HttpResponse::newHttpResponse();
