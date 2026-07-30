@@ -54,6 +54,19 @@ Deploy sequence:
 6. Open `/health`; expected JSON includes `"status":"ok"` and `"database":"ok"`.
 7. Open the frontend URL, sign up, create a league, then open `Players` and refresh the Data Ingestion panel.
 
+Helper script:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/render-deploy-helper.ps1
+```
+
+After Render creates service URLs, generate the exact env checklist:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/render-deploy-helper.ps1 `
+  -BackendUrl https://YOUR-BACKEND.onrender.com `
+  -FrontendUrl https://YOUR-FRONTEND.onrender.com `
+  -WriteEnvChecklist
+```
+
 Useful smoke checks after deploy:
 - `GET /health`
 - `POST /api/auth/signup`

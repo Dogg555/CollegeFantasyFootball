@@ -3,6 +3,7 @@ services:
     name: college-ff-api
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     healthCheckPath: /health
     preDeployCommand: sh /srv/db/migrate.sh
     envVars:

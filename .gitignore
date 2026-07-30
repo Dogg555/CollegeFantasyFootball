@@ -12,6 +12,7 @@ backend/db_schema/
 .env
 .env.*
 !.env.example
+render-env-checklist.local.txt
 
 ############################################
 # Databases & data files
