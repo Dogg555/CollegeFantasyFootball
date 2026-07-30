@@ -1,7 +1,12 @@
-# Backend container for local testing
+# Backend container for local testing and Render deployment
 FROM debian:bookworm AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
+# Render Free and Starter builds have limited memory. Keep all C++ builds
+# serial by default; callers can override this build argument on larger builders.
+ARG BUILD_JOBS=1
+ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -23,30 +28,49 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Build Drogon from source (Bookworm doesn't ship libdrogon-dev)
+# Build only the Drogon components used by this application. The backend uses
+# libpq directly, so Drogon's database backends, ORM manager, examples, and CLI
+# are unnecessary. -O1 also reduces compiler peak memory versus Release's -O3.
 RUN git config --global http.version HTTP/1.1 \
  && git clone --branch v1.9.7 --depth 1 https://github.com/drogonframework/drogon.git /tmp/drogon \
  && cd /tmp/drogon \
  && git submodule update --init --recursive --depth 1 \
- && cmake -S /tmp/drogon -B /tmp/drogon/build -DCMAKE_BUILD_TYPE=Release \
- && cmake --build /tmp/drogon/build --target install -- -j"$(nproc)" \
+ && cmake -S /tmp/drogon -B /tmp/drogon/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG" \
+        -DBUILD_CTL=OFF \
+        -DBUILD_EXAMPLES=OFF \
+        -DBUILD_ORM=OFF \
+        -DBUILD_DOC=OFF \
+        -DBUILD_BROTLI=OFF \
+        -DBUILD_YAML_CONFIG=OFF \
+        -DBUILD_TESTING=OFF \
+ && cmake --build /tmp/drogon/build --target install --parallel "${BUILD_JOBS}" \
  && ldconfig \
  && rm -rf /tmp/drogon
 
-# Build CPR from source (not available in Bookworm repos)
+# Build CPR from source (not available in Bookworm repos) with the same
+# memory-conscious settings.
 RUN git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/cpr \
  && cmake -S /tmp/cpr -B /tmp/cpr/build \
-        -DCPR_BUILD_TESTS=OFF -DCPR_BUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG" \
+        -DCPR_BUILD_TESTS=OFF \
+        -DCPR_BUILD_EXAMPLES=OFF \
+        -DBUILD_SHARED_LIBS=OFF \
         -DCPR_FORCE_USE_SYSTEM_CURL=ON \
- && cmake --build /tmp/cpr/build --target install -- -j"$(nproc)" \
+ && cmake --build /tmp/cpr/build --target install --parallel "${BUILD_JOBS}" \
  && ldconfig \
  && rm -rf /tmp/cpr
 
 WORKDIR /app
 COPY . /app
 
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local \
- && cmake --build build --target college_ff_server -- -j"$(nproc)"
+RUN cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG" \
+        -DCMAKE_PREFIX_PATH=/usr/local \
+ && cmake --build build --target college_ff_server --parallel "${BUILD_JOBS}"
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
