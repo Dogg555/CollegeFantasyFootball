@@ -1,99 +1,128 @@
 const apiBase = '/api';
 
-const navSignInBtn = document.getElementById('nav-sign-in');
-const navLogoutBtn = document.getElementById('nav-logout');
 const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
+const positionFilter = document.getElementById('position-filter');
 const searchResultsEl = document.getElementById('search-results');
-
-let authState = null;
-
-function loadStoredAuth() {
-  try {
-    const raw = localStorage.getItem('cff_auth');
-    if (raw) {
-      authState = JSON.parse(raw);
-    }
-  } catch {
-    authState = null;
-  }
-}
-
-function clearAuth() {
-  authState = null;
-  localStorage.removeItem('cff_auth');
-  localStorage.removeItem('cff_league');
-  updateAuthUi();
-}
-
-function updateAuthUi() {
-  if (navSignInBtn) {
-    if (authState) {
-      navSignInBtn.textContent = authState.email || 'Account';
-      navSignInBtn.href = 'league.html';
-    } else {
-      navSignInBtn.textContent = 'Sign in';
-      navSignInBtn.href = 'signin.html';
-    }
-  }
-  if (navLogoutBtn) {
-    navLogoutBtn.hidden = !authState;
-  }
-}
+const queueList = document.getElementById('queue-list');
+const queueCount = document.getElementById('queue-count');
 
 function refreshAuthState() {
-  loadStoredAuth();
-  updateAuthUi();
+  updateSharedNav('players');
 }
 
-navLogoutBtn?.addEventListener('click', () => {
-  clearAuth();
+document.getElementById('nav-logout')?.addEventListener('click', () => {
+  clearSessionState();
+  refreshAuthState();
+  renderQueue();
 });
 
-if (searchForm && searchInput && searchResultsEl) {
-  searchForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const term = searchInput.value.trim();
-    if (!term) return;
-    searchResultsEl.textContent = 'Searching...';
-    try {
-      const resp = await fetch(`${apiBase}/players?query=${encodeURIComponent(term)}`);
-      if (!resp.ok) throw new Error('Search failed');
-      const data = await resp.json();
-      renderSearchResults(data);
-    } catch (err) {
-      searchResultsEl.textContent = 'Unable to fetch players right now.';
-    }
-  });
-
-  function renderSearchResults(players = []) {
-    if (!players.length) {
-      searchResultsEl.textContent = 'No players found.';
-      return;
-    }
-    searchResultsEl.innerHTML = players.slice(0, 20).map(p => `
-      <div class="row">
-        <div>
-          <strong>${p.name}</strong> — ${p.team} (${p.position || 'Pos TBD'})
-          <div class="muted">${p.conference || 'Conference TBD'} • ${p.class || 'Class TBD'}</div>
-        </div>
-        <button class="button" data-player="${p.id}">Add to queue</button>
-      </div>
-    `).join('');
+searchForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const term = searchInput.value.trim();
+  const position = positionFilter.value;
+  if (!term) return;
+  searchResultsEl.textContent = 'Searching...';
+  try {
+    const params = new URLSearchParams({ query: term });
+    if (position) params.set('position', position);
+    const resp = await fetch(`${apiBase}/players?${params.toString()}`);
+    if (!resp.ok) throw new Error('Search failed');
+    renderSearchResults(applyPositionFilter((await resp.json()).map(normalizePlayer), position));
+  } catch {
+    renderSearchResults(applyPositionFilter(filterSamplePlayers(term), position));
   }
+});
+
+positionFilter?.addEventListener('change', () => {
+  const term = searchInput.value.trim();
+  renderSearchResults(applyPositionFilter(filterSamplePlayers(term), positionFilter.value));
+});
+
+function applyPositionFilter(players, position) {
+  if (!position) return players;
+  return players.filter((player) => player.position === position);
 }
 
-// Initial bootstrap
-refreshAuthState();
+function renderSearchResults(players = []) {
+  if (!searchResultsEl) return;
+  if (!players.length) {
+    searchResultsEl.textContent = 'No players found.';
+    return;
+  }
+  searchResultsEl.innerHTML = players.slice(0, 20).map((player) => `
+    <div class="row">
+      <div>
+        <strong>${player.name}</strong> - ${player.team} (${player.position || 'Pos TBD'})
+        <div class="muted">${player.conference || 'Conference TBD'} / ${player.class || 'Class TBD'} / ${Number(player.projection).toFixed(1)} proj</div>
+      </div>
+      <button class="button" data-player="${player.id}" type="button">Add to queue</button>
+    </div>
+  `).join('');
+
+  searchResultsEl.querySelectorAll('[data-player]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const player = players.find((item) => item.id === button.dataset.player);
+      if (!player) return;
+      addPlayerToQueue(player);
+      try {
+        await saveDraftQueueApi(getQueue());
+      } catch {
+        // Local queue remains updated.
+      }
+      button.textContent = 'Queued';
+      renderQueue();
+    });
+  });
+}
+
+function renderQueue() {
+  const queue = getQueue();
+  if (queueCount) queueCount.textContent = String(queue.length);
+  if (!queueList) return;
+  if (!queue.length) {
+    queueList.textContent = 'No queued players yet.';
+    return;
+  }
+  queueList.innerHTML = queue.map((player, index) => `
+    <div class="row">
+      <div>
+        <strong>${index + 1}. ${player.name}</strong>
+        <div class="muted">${player.team} ${player.position} / Rank ${player.rank}</div>
+      </div>
+      <button class="button button--ghost" data-remove="${player.id}" type="button">Remove</button>
+    </div>
+  `).join('');
+  queueList.querySelectorAll('[data-remove]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      removeFromQueue(button.dataset.remove);
+      try {
+        await saveDraftQueueApi(getQueue());
+      } catch {
+        // Local queue remains updated.
+      }
+      renderQueue();
+    });
+  });
+}
+
+async function initPlayersPage() {
+  refreshAuthState();
+  try {
+    await syncLeaguesFromApi();
+    await syncDraftFromApi();
+  } catch {
+    // Keep local player queue available when the API is offline.
+  }
+  renderQueue();
+  renderSearchResults(samplePlayers.slice(0, 6));
+}
+
+initPlayersPage();
 
 window.addEventListener('storage', (event) => {
-  if (event.key === 'cff_auth') {
+  if ([CFF_AUTH_KEY, CFF_QUEUE_KEY].includes(event.key)) {
     refreshAuthState();
-  }
-});
-
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
-    refreshAuthState();
+    renderQueue();
   }
 });

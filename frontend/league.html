@@ -16,10 +16,9 @@
       </div>
     </div>
     <nav class="nav">
-      <a class="nav__link" href="index.html">Home</a>
-      <a class="nav__link is-active" href="league.html">Leagues</a>
-      <a class="nav__link" href="#">Draft Room</a>
-      <a class="nav__link" href="players.html">Players</a>
+      <a class="nav__link" data-page="home" href="index.html">Home</a>
+      <a class="nav__link is-active" data-page="league" href="league.html">Leagues</a>
+      <a class="nav__link" data-page="players" href="players.html">Players</a>
     </nav>
     <div class="nav__actions">
       <a class="button button--ghost" id="nav-sign-in" href="signin.html">Sign in</a>
@@ -29,7 +28,21 @@
   </div>
 
   <main class="layout" style="max-width: 1080px">
-    <section class="card card--accent">
+    <section class="league-tabs" aria-label="League sections">
+      <button class="league-tab is-active" data-league-tab="overview" type="button">Home</button>
+      <button class="league-tab" data-league-tab="team" type="button">My Team</button>
+      <button class="league-tab" data-league-tab="scoreboard" type="button">Scoreboard</button>
+      <button class="league-tab" data-league-tab="standings" type="button">Standings</button>
+      <button class="league-tab" data-league-tab="freeagency" type="button">Add/Drop</button>
+      <button class="league-tab" data-league-tab="waivers" type="button">Waivers</button>
+      <button class="league-tab" data-league-tab="trades" type="button">Trades</button>
+      <button class="league-tab" data-league-tab="managers" type="button">Members</button>
+      <button class="league-tab" data-league-tab="activity" type="button">Activity</button>
+      <button class="league-tab" data-league-tab="settings" type="button">Settings</button>
+      <a class="league-tab" href="draft.html">Draft Room</a>
+    </section>
+
+    <section class="card card--accent" data-league-panel="overview">
       <div class="card__header">
         <h2>League overview</h2>
         <span class="pill">Active</span>
@@ -69,15 +82,358 @@
               <div class="muted" id="league-notes"></div>
             </div>
           </div>
+          <div class="row">
+            <div>
+              <strong>Draft Queue</strong>
+              <div class="muted" id="league-queue-count"></div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <strong>Draft Date</strong>
+              <div class="muted" id="league-draft-date"></div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="cta-row" style="margin-top: 16px">
         <a class="button button--ghost" href="index.html">Create another league</a>
-        <button class="button button--primary" id="clear-league" type="button">Clear saved league</button>
+        <button class="button button--ghost" id="clear-league" type="button">Clear saved league</button>
       </div>
     </section>
 
-    <section class="card">
+    <section class="card card--accent" data-league-panel="team">
+      <div class="card__header">
+        <h2>My Team</h2>
+        <span class="pill">Roster</span>
+      </div>
+      <div id="team-roster" class="list">No players drafted yet.</div>
+      <div class="cta-row" style="margin-top: 12px">
+        <a class="button button--primary" href="players.html">Add players</a>
+        <a class="button" href="draft.html">Open draft room</a>
+      </div>
+    </section>
+
+    <section class="card" data-league-panel="team">
+      <div class="card__header">
+        <h2>Lineup Slots</h2>
+        <span class="pill pill--muted">Rules</span>
+      </div>
+      <div id="team-slots" class="grid compact-grid"></div>
+    </section>
+
+    <section class="card card--accent" data-league-panel="scoreboard">
+      <div class="card__header">
+        <h2>Scoreboard</h2>
+        <div class="actions">
+          <select class="lineup-select" id="scoreboard-week" aria-label="Scoreboard week"></select>
+          <button class="button" id="generate-season" type="button">Generate schedule</button>
+          <button class="button" id="score-week" type="button">Score week</button>
+          <button class="button button--primary" id="finalize-week" type="button">Finalize week</button>
+        </div>
+      </div>
+      <div id="score-week-status" class="muted small" role="status"></div>
+      <div id="scoreboard-list" class="list"></div>
+    </section>
+
+    <section class="card" data-league-panel="standings">
+      <div class="card__header">
+        <h2>Standings</h2>
+        <span class="pill pill--muted">Season</span>
+      </div>
+      <div id="standings-list" class="list"></div>
+    </section>
+
+    <section class="card card--accent" data-league-panel="freeagency">
+      <div class="card__header">
+        <h2>Add/Drop Players</h2>
+        <span class="pill">Free agency</span>
+      </div>
+      <div id="free-agent-list" class="list"></div>
+    </section>
+
+    <section class="card" data-league-panel="freeagency">
+      <div class="card__header">
+        <h2>Current Roster</h2>
+        <span class="pill pill--muted">Drop</span>
+      </div>
+      <div id="drop-player-list" class="list"></div>
+    </section>
+
+    <section class="card card--accent" data-league-panel="waivers">
+      <div class="card__header">
+        <h2>Waivers</h2>
+        <span class="pill">Claims</span>
+      </div>
+      <form id="waiver-form" class="form">
+        <div class="field-group">
+          <label class="field">
+            <span>Add player</span>
+            <select id="waiver-add-player"></select>
+          </label>
+          <label class="field">
+            <span>Drop player</span>
+            <select id="waiver-drop-player"></select>
+          </label>
+        </div>
+        <div class="form__footer">
+          <div id="waiver-status" class="muted small" role="status"></div>
+          <button class="button button--primary" type="submit">Submit claim</button>
+        </div>
+      </form>
+      <div id="waiver-list" class="list"></div>
+    </section>
+
+    <section class="card" data-league-panel="waivers">
+      <div class="card__header">
+        <h2>Waiver Priority</h2>
+        <button class="button button--ghost" id="reset-waiver-priority" type="button">Reset order</button>
+      </div>
+      <div id="waiver-priority-list" class="list"></div>
+    </section>
+
+    <section class="card card--accent" data-league-panel="trades">
+      <div class="card__header">
+        <h2>Trades</h2>
+        <span class="pill">Offers</span>
+      </div>
+      <form id="trade-form" class="form">
+        <div class="field-group">
+          <label class="field">
+            <span>Offer from roster</span>
+            <select id="trade-offer-player"></select>
+          </label>
+          <label class="field">
+            <span>Target manager</span>
+            <select id="trade-target-manager"></select>
+          </label>
+        </div>
+        <label class="field">
+          <span>Ask for</span>
+          <input id="trade-request-player" type="text" placeholder="Player or package you want back" />
+        </label>
+        <label class="field">
+          <span>Requested player card</span>
+          <select id="trade-request-player-id"></select>
+        </label>
+        <label class="field">
+          <span>Offer note</span>
+          <textarea id="trade-note" rows="2" placeholder="Why this deal makes sense"></textarea>
+        </label>
+        <div class="form__footer">
+          <div id="trade-status" class="muted small" role="status"></div>
+          <button class="button button--primary" type="submit">Send offer</button>
+        </div>
+      </form>
+      <div id="trade-list" class="list"></div>
+    </section>
+
+    <section class="card" data-league-panel="activity">
+      <div class="card__header">
+        <h2>Recent Activity</h2>
+        <span class="pill pill--muted">Transactions</span>
+      </div>
+      <div id="transaction-list" class="list"></div>
+    </section>
+
+    <section class="card" data-league-panel="overview">
+      <div class="card__header">
+        <h2>Your leagues</h2>
+        <span class="pill pill--muted" id="league-count">0 / 3</span>
+      </div>
+      <div id="league-list" class="list">No leagues yet.</div>
+      <div class="cta-row" style="margin-top: 12px">
+        <a class="button button--primary" id="create-league-link" href="index.html">Create league</a>
+      </div>
+    </section>
+
+    <section class="card" id="commissioner-locked" data-league-panel="settings" hidden>
+      <div class="card__header">
+        <h2>Commissioner settings</h2>
+        <span class="pill pill--muted">Locked</span>
+      </div>
+      <p class="muted">
+        Sign in as the commissioner to edit league settings, invite managers, change roster rules, or open the draft lobby.
+      </p>
+      <a class="button button--primary" href="signin.html">Sign in</a>
+    </section>
+
+    <section class="card" id="commissioner-settings" data-league-panel="settings">
+      <div class="card__header">
+        <h2>Commissioner settings</h2>
+        <span class="pill pill--muted">Editable</span>
+      </div>
+      <form id="league-settings-form" class="form">
+        <div class="field-group">
+          <label class="field">
+            <span>League name</span>
+            <input id="settings-name" type="text" name="name" placeholder="College Saturdays" />
+          </label>
+          <label class="field">
+            <span>Draft date</span>
+            <input id="settings-draft-date" type="datetime-local" name="draftDate" />
+          </label>
+        </div>
+        <div class="field-group">
+          <label class="field">
+            <span>Scoring preset</span>
+            <select id="settings-scoring" name="scoring">
+              <option value="ppr">PPR</option>
+              <option value="half_ppr">Half-PPR</option>
+              <option value="standard">Standard</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Teams</span>
+            <select id="settings-teams" name="teams">
+              <option value="8">8 teams</option>
+              <option value="10">10 teams</option>
+              <option value="12">12 teams</option>
+              <option value="14">14 teams</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <div class="label">Scoring settings</div>
+          <div class="grid scoring-grid">
+            <label class="field">
+              <span>Pass yards / point</span>
+              <input id="score-pass-yards" type="number" min="1" max="100" step="1" />
+            </label>
+            <label class="field">
+              <span>Pass TD</span>
+              <input id="score-pass-td" type="number" min="-20" max="20" step="0.5" />
+            </label>
+            <label class="field">
+              <span>Interception</span>
+              <input id="score-interception" type="number" min="-20" max="20" step="0.5" />
+            </label>
+            <label class="field">
+              <span>Rush yards / point</span>
+              <input id="score-rush-yards" type="number" min="1" max="100" step="1" />
+            </label>
+            <label class="field">
+              <span>Rush TD</span>
+              <input id="score-rush-td" type="number" min="-20" max="20" step="0.5" />
+            </label>
+            <label class="field">
+              <span>Rec yards / point</span>
+              <input id="score-rec-yards" type="number" min="1" max="100" step="1" />
+            </label>
+            <label class="field">
+              <span>Rec TD</span>
+              <input id="score-rec-td" type="number" min="-20" max="20" step="0.5" />
+            </label>
+            <label class="field">
+              <span>Reception</span>
+              <input id="score-reception" type="number" min="0" max="5" step="0.25" />
+            </label>
+            <label class="field">
+              <span>Fumble lost</span>
+              <input id="score-fumble" type="number" min="-20" max="20" step="0.5" />
+            </label>
+            <label class="field">
+              <span>2-point conversion</span>
+              <input id="score-two-point" type="number" min="-20" max="20" step="0.5" />
+            </label>
+          </div>
+        </div>
+        <label class="field">
+          <span>Invite emails</span>
+          <textarea id="settings-invites" rows="3" placeholder="friend@example.com, manager@example.com"></textarea>
+        </label>
+        <div>
+          <div class="label">Roster rules</div>
+          <div class="grid compact-grid">
+            <label class="field">
+              <span>QB</span>
+              <input id="rules-qb" type="number" min="0" max="20" />
+            </label>
+            <label class="field">
+              <span>RB</span>
+              <input id="rules-rb" type="number" min="0" max="20" />
+            </label>
+            <label class="field">
+              <span>WR</span>
+              <input id="rules-wr" type="number" min="0" max="20" />
+            </label>
+            <label class="field">
+              <span>TE</span>
+              <input id="rules-te" type="number" min="0" max="20" />
+            </label>
+            <label class="field">
+              <span>Flex</span>
+              <input id="rules-flex" type="number" min="0" max="20" />
+            </label>
+            <label class="field">
+              <span>Bench</span>
+              <input id="rules-bench" type="number" min="0" max="20" />
+            </label>
+          </div>
+        </div>
+        <div>
+          <div class="label">Waiver rules</div>
+          <div class="field-group">
+            <label class="field">
+              <span>Player add mode</span>
+              <select id="waiver-mode">
+                <option value="free_agency">Free agency</option>
+                <option value="waivers">Waivers only</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Claim deadline</span>
+              <input id="waiver-deadline" type="datetime-local" />
+            </label>
+            <label class="field">
+              <span>Lock free agency</span>
+              <select id="waiver-fa-lock">
+                <option value="false">Unlocked</option>
+                <option value="true">Locked</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div>
+          <div class="label">Trade rules</div>
+          <div class="field-group">
+            <label class="field">
+              <span>Commissioner approval</span>
+              <select id="trade-approval">
+                <option value="false">Not required</option>
+                <option value="true">Required</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Offer expiration hours</span>
+              <input id="trade-expiration" type="number" min="1" max="336" step="1" />
+            </label>
+          </div>
+        </div>
+        <label class="field">
+          <span>Manager notes</span>
+          <textarea id="settings-notes" rows="3" placeholder="Draft rules, keeper notes, payout rules, or reminders."></textarea>
+        </label>
+        <div class="form__footer">
+          <div id="settings-status" class="muted small" role="status"></div>
+          <button class="button button--primary" type="submit">Save settings</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" data-league-panel="managers">
+      <div class="card__header">
+        <h2>Managers</h2>
+        <span class="pill pill--muted" id="manager-count">0</span>
+      </div>
+      <div id="manager-list" class="list">No managers invited yet.</div>
+      <div class="cta-row" style="margin-top: 12px">
+        <button class="button button--primary" id="copy-invite-link" type="button">Copy invite link</button>
+        <div class="muted small" id="invite-link-status" role="status"></div>
+      </div>
+    </section>
+
+    <section class="card" data-league-panel="settings">
       <h2>Next steps</h2>
       <div class="list">
         <div class="row">
@@ -85,27 +441,35 @@
             <strong>Invite managers</strong>
             <div class="muted">Send a link and set up the draft schedule.</div>
           </div>
-          <div class="pill pill--muted">Coming soon</div>
+          <button class="button" id="step-invites" type="button">Set invites</button>
         </div>
         <div class="row">
           <div>
             <strong>Finalize roster rules</strong>
             <div class="muted">Lock in flex spots, bench size, and scoring tweaks.</div>
           </div>
-          <div class="pill pill--muted">Coming soon</div>
+          <button class="button" id="step-rules" type="button">Edit rules</button>
         </div>
         <div class="row">
           <div>
             <strong>Start draft lobby</strong>
             <div class="muted">Launch the draft room once managers confirm.</div>
           </div>
-          <div class="pill pill--muted">Coming soon</div>
+          <button class="button button--primary" id="step-lobby" type="button">Open lobby</button>
+        </div>
+        <div class="row">
+          <div>
+            <strong>Draft lobby status</strong>
+            <div class="muted" id="draft-lobby-status">Not opened yet.</div>
+          </div>
+          <a class="button" id="draft-lobby-link" href="draft.html">Enter draft room</a>
         </div>
       </div>
     </section>
   </main>
 
   <footer class="footer">Built for college fantasy managers.</footer>
+  <script src="state.js"></script>
   <script src="league.js"></script>
 </body>
 </html>

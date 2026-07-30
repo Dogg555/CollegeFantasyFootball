@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: college-ff-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    preDeployCommand: psql "$DB_URL" -f /srv/db/schema.sql
+    envVars:
+      - key: DB_URL
+        fromDatabase:
+          name: college-ff-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: CFBD_API_KEY
+        sync: false
+
+databases:
+  - name: college-ff-db
+    databaseName: college_ff
+    user: college_ff

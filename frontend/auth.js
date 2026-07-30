@@ -4,15 +4,15 @@ const signupForm = document.getElementById('signup-form');
 const signupEmail = document.getElementById('signup-email');
 const signupPassword = document.getElementById('signup-password');
 const signupStatus = document.getElementById('signup-status');
-
 const loginForm = document.getElementById('login-form');
 const loginEmail = document.getElementById('login-email');
 const loginPassword = document.getElementById('login-password');
 const loginStatus = document.getElementById('login-status');
-
 const signOutBtn = document.getElementById('signout-btn');
 const authNote = document.getElementById('auth-note');
+
 let storedAuth = null;
+const pendingInvite = new URLSearchParams(window.location.search).get('invite');
 
 function setStatus(el, message, isError = false) {
   if (!el) return;
@@ -22,40 +22,40 @@ function setStatus(el, message, isError = false) {
 
 function saveAuth(email, token) {
   storedAuth = { email, token };
-  localStorage.setItem('cff_auth', JSON.stringify(storedAuth));
+  setAuthState(storedAuth);
   updateAuthUi();
 }
 
 function loadStoredAuth() {
-  try {
-    const raw = localStorage.getItem('cff_auth');
-    if (raw) {
-      storedAuth = JSON.parse(raw);
-    }
-  } catch {
-    storedAuth = null;
-  }
+  storedAuth = getAuthState();
 }
 
 function clearAuth() {
   storedAuth = null;
-  localStorage.removeItem('cff_auth');
-  localStorage.removeItem('cff_league');
+  clearSessionState();
   updateAuthUi();
 }
 
 function updateAuthUi() {
+  updateSharedNav('');
   if (authNote) {
-    if (storedAuth && storedAuth.email) {
-      authNote.textContent = `Signed in as ${storedAuth.email}.`;
-    } else {
-      authNote.textContent = 'Not signed in yet.';
-    }
+    authNote.textContent = storedAuth?.email
+      ? `Signed in as ${storedAuth.email}.`
+      : 'Not signed in yet.';
   }
   if (signOutBtn) {
     signOutBtn.hidden = !storedAuth;
   }
 }
+
+function createLocalSession(email) {
+  return {
+    email,
+    token: `local-demo-${Date.now().toString(36)}`,
+    message: 'Local demo session created'
+  };
+}
+
 async function submitAuthForm(path, email, password, statusEl, redirectTo) {
   setStatus(statusEl, 'Working...');
   try {
@@ -66,17 +66,18 @@ async function submitAuthForm(path, email, password, statusEl, redirectTo) {
     });
     const data = await resp.json();
     if (!resp.ok) {
-      const message = data?.error || 'Request failed';
-      setStatus(statusEl, message, true);
+      setStatus(statusEl, data?.error || 'Request failed', true);
       return;
     }
     saveAuth(data.email || email, data.token);
     setStatus(statusEl, data.message || 'Success');
-    if (redirectTo) {
-      window.location.href = redirectTo;
-    }
-  } catch (err) {
-    setStatus(statusEl, 'Unable to reach the server. Is it running?', true);
+  } catch {
+    const local = createLocalSession(email);
+    saveAuth(local.email, local.token);
+    setStatus(statusEl, local.message);
+  }
+  if (redirectTo) {
+    window.location.href = pendingInvite ? `${redirectTo}?invite=${encodeURIComponent(pendingInvite)}` : redirectTo;
   }
 }
 
@@ -86,9 +87,14 @@ function stripUrlParams() {
   }
 }
 
-signupForm?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  await submitAuthForm('/auth/signup', signupEmail.value.trim(), signupPassword.value, signupStatus);
+signupForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await submitAuthForm('/auth/signup', signupEmail.value.trim(), signupPassword.value, signupStatus, pendingInvite ? 'league.html' : 'index.html');
+});
+
+loginForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await submitAuthForm('/auth/login', loginEmail.value.trim(), loginPassword.value, loginStatus, 'league.html');
 });
 
 signOutBtn?.addEventListener('click', () => {
@@ -96,17 +102,6 @@ signOutBtn?.addEventListener('click', () => {
   setStatus(loginStatus, 'Signed out');
 });
 
-loginForm?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  await submitAuthForm('/auth/login', loginEmail.value.trim(), loginPassword.value, loginStatus, 'league.html');
-});
-
-
 loadStoredAuth();
 updateAuthUi();
-
 stripUrlParams();
-if (storedAuth && storedAuth.token) {
-  window.location.href = 'league.html';
-}
-

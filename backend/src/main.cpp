@@ -4,6 +4,7 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -11,11 +12,15 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #ifdef DROGON_FOUND
 #include <crypt.h>
 #include <drogon/drogon.h>
 #include <json/json.h>
+#ifdef CFF_HAS_POSTGRES
+#include <postgresql/libpq-fe.h>
+#endif
 #include "cfbd_ingest.h"
 #include "league_models.h"
 #include "handlers/league_handler.h"
@@ -42,6 +47,115 @@ struct TokenRecord {
 
 std::unordered_map<std::string, TokenRecord> activeTokens; // token -> record
 constexpr std::chrono::hours kTokenTtl{24};
+
+#ifdef CFF_HAS_POSTGRES
+struct PgConnDeleter {
+    void operator()(PGconn *conn) const {
+        if (conn) {
+            PQfinish(conn);
+        }
+    }
+};
+
+struct PgResultDeleter {
+    void operator()(PGresult *result) const {
+        if (result) {
+            PQclear(result);
+        }
+    }
+};
+
+using PgConnPtr = std::unique_ptr<PGconn, PgConnDeleter>;
+using PgResultPtr = std::unique_ptr<PGresult, PgResultDeleter>;
+
+bool dbConfigured() {
+    const auto *url = std::getenv("DB_URL");
+    return url && std::string{url}.size() > 0;
+}
+
+PgConnPtr connectToDb() {
+    const auto *url = std::getenv("DB_URL");
+    if (!url) {
+        return nullptr;
+    }
+    auto conn = PgConnPtr{PQconnectdb(url)};
+    if (PQstatus(conn.get()) != CONNECTION_OK) {
+        std::cerr << "[auth] Failed to connect to Postgres: " << PQerrorMessage(conn.get()) << std::endl;
+        return nullptr;
+    }
+    return conn;
+}
+
+PgResultPtr execParams(PGconn *conn,
+                       const std::string &sql,
+                       const std::vector<std::string> &params) {
+    std::vector<const char *> values;
+    values.reserve(params.size());
+    for (const auto &param : params) {
+        values.push_back(param.c_str());
+    }
+    return PgResultPtr{PQexecParams(conn,
+                                    sql.c_str(),
+                                    static_cast<int>(values.size()),
+                                    nullptr,
+                                    values.data(),
+                                    nullptr,
+                                    nullptr,
+                                    0)};
+}
+
+bool resultOk(PGresult *result, ExecStatusType expected) {
+    return result && PQresultStatus(result) == expected;
+}
+
+bool dbCreateUser(const std::string &email, const std::string &passwordHash) {
+    auto conn = connectToDb();
+    if (!conn) return false;
+    auto result = execParams(conn.get(),
+                             "INSERT INTO users (email, password_hash) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                             {email, passwordHash});
+    return resultOk(result.get(), PGRES_COMMAND_OK) && std::string{PQcmdTuples(result.get())} == "1";
+}
+
+std::optional<std::string> dbPasswordHashForEmail(const std::string &email) {
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    auto result = execParams(conn.get(),
+                             "SELECT password_hash FROM users WHERE email = $1",
+                             {email});
+    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return std::string{PQgetvalue(result.get(), 0, 0)};
+}
+
+void dbPersistToken(const std::string &token, const std::string &email) {
+    auto conn = connectToDb();
+    if (!conn) return;
+    auto cleanup = execParams(conn.get(), "DELETE FROM auth_tokens WHERE expires_at <= NOW()", {});
+    (void)cleanup;
+    auto result = execParams(conn.get(),
+                             "INSERT INTO auth_tokens (token, email, expires_at) "
+                             "VALUES ($1, $2, NOW() + INTERVAL '24 hours') "
+                             "ON CONFLICT (token) DO UPDATE SET email = EXCLUDED.email, expires_at = EXCLUDED.expires_at",
+                             {token, email});
+    if (!resultOk(result.get(), PGRES_COMMAND_OK)) {
+        std::cerr << "[auth] token insert failed: " << PQerrorMessage(conn.get()) << std::endl;
+    }
+}
+
+std::optional<std::string> dbEmailForToken(const std::string &token) {
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    auto result = execParams(conn.get(),
+                             "SELECT email FROM auth_tokens WHERE token = $1 AND expires_at > NOW()",
+                             {token});
+    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return std::string{PQgetvalue(result.get(), 0, 0)};
+}
+#endif
 
 template <std::size_t N>
 bool fillFromUrandom(std::array<unsigned char, N> &bytes) {
@@ -138,6 +252,11 @@ std::string issueTokenForUser(const std::string &email) {
         }
     }
     activeTokens[token] = TokenRecord{email, expiresAt};
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        dbPersistToken(token, email);
+    }
+#endif
     return token;
 }
 
@@ -149,6 +268,11 @@ bool isAuthorized(const drogon::HttpRequestPtr &req, const std::optional<std::st
     if (secret && token == secret.value()) {
         return true; // compatibility for pre-shared secret
     }
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        return dbEmailForToken(token).has_value();
+    }
+#endif
     std::lock_guard<std::mutex> lock(userMutex);
     const auto now = std::chrono::steady_clock::now();
     auto it = activeTokens.find(token);
@@ -163,6 +287,11 @@ bool isAuthorized(const drogon::HttpRequestPtr &req, const std::optional<std::st
 }
 
 std::optional<std::string> emailForToken(const std::string &token) {
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        return dbEmailForToken(token);
+    }
+#endif
     std::lock_guard<std::mutex> lock(userMutex);
     auto it = activeTokens.find(token);
     const auto now = std::chrono::steady_clock::now();
@@ -185,7 +314,7 @@ void applyCorsHeaders(const drogon::HttpRequestPtr &req,
         resp->addHeader("Vary", "Origin");
     }
     resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 }
 
 drogon::HttpResponsePtr buildPreflightResponse(const drogon::HttpRequestPtr &req,
@@ -219,7 +348,7 @@ bool ensureCredentials(const Json::Value &body) {
 void handleSignup(const drogon::HttpRequestPtr &req,
                   std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                   const std::optional<std::string> &jwtSecret) {
-    (void)jwtSecret; // unused until persistent auth is wired
+    (void)jwtSecret;
     const auto body = req->getJsonObject();
     if (!body || !ensureCredentials(*body)) {
         Json::Value error;
@@ -241,6 +370,30 @@ void handleSignup(const drogon::HttpRequestPtr &req,
         callback(resp);
         return;
     }
+
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        if (!dbCreateUser(email, *passwordHash)) {
+            Json::Value error;
+            error["error"] = "Account already exists";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(drogon::k409Conflict);
+            callback(resp);
+            return;
+        }
+
+        const auto token = issueTokenForUser(email);
+        Json::Value payload;
+        payload["email"] = email;
+        payload["token"] = token;
+        payload["valid"] = true;
+        payload["message"] = "Account created";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+        resp->setStatusCode(drogon::k201Created);
+        callback(resp);
+        return;
+    }
+#endif
 
     {
         std::lock_guard<std::mutex> lock(userMutex);
@@ -269,7 +422,7 @@ void handleSignup(const drogon::HttpRequestPtr &req,
 void handleLogin(const drogon::HttpRequestPtr &req,
                  std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                  const std::optional<std::string> &jwtSecret) {
-    (void)jwtSecret; // unused until persistent auth is wired
+    (void)jwtSecret;
     const auto body = req->getJsonObject();
     if (!body || !ensureCredentials(*body)) {
         Json::Value error;
@@ -283,6 +436,12 @@ void handleLogin(const drogon::HttpRequestPtr &req,
     const auto email = (*body)["email"].asString();
     const auto password = (*body)["password"].asString();
     bool passwordMatches = false;
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        const auto passwordHash = dbPasswordHashForEmail(email);
+        passwordMatches = passwordHash && verifyPassword(password, *passwordHash);
+    } else
+#endif
     {
         std::lock_guard<std::mutex> lock(userMutex);
         auto it = userPasswordHashes.find(email);
@@ -315,6 +474,35 @@ std::optional<std::string> getOptionalParam(const drogon::HttpRequestPtr &req, c
         return std::nullopt;
     }
     return value;
+}
+
+std::optional<std::string> accountEmailForRequest(const drogon::HttpRequestPtr &req,
+                                                  const std::optional<std::string> &secret) {
+    std::string token;
+    if (!hasBearerToken(req, token)) {
+        return std::nullopt;
+    }
+    if (secret && token == secret.value()) {
+        return std::string{"admin@example.com"};
+    }
+    return emailForToken(token);
+}
+
+bool requireAccount(const drogon::HttpRequestPtr &req,
+                    std::function<void (const drogon::HttpResponsePtr &)> &callback,
+                    const std::optional<std::string> &secret,
+                    std::string &accountEmail) {
+    const auto email = accountEmailForRequest(req, secret);
+    if (!email) {
+        Json::Value error;
+        error["error"] = "Unauthorized";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k401Unauthorized);
+        callback(resp);
+        return false;
+    }
+    accountEmail = *email;
+    return true;
 }
 } // namespace
 #endif
@@ -372,6 +560,17 @@ int main(int argc, char* argv[]) {
 
     auto preflightHandler = [allowedOrigins](const drogon::HttpRequestPtr &req,
                                              std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+        callback(buildPreflightResponse(req, allowedOrigins));
+    };
+    auto preflightOneParamHandler = [allowedOrigins](const drogon::HttpRequestPtr &req,
+                                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                                     const std::string&) {
+        callback(buildPreflightResponse(req, allowedOrigins));
+    };
+    auto preflightTwoParamHandler = [allowedOrigins](const drogon::HttpRequestPtr &req,
+                                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                                     const std::string&,
+                                                     const std::string&) {
         callback(buildPreflightResponse(req, allowedOrigins));
     };
 
@@ -473,17 +672,407 @@ int main(int argc, char* argv[]) {
                          {drogon::Post})
         .registerHandler("/api/leagues",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             if (!isAuthorized(req, jwtSecret)) {
-                                 Json::Value error;
-                                 error["error"] = "Unauthorized";
-                                 auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-                                 resp->setStatusCode(drogon::k401Unauthorized);
-                                 callback(resp);
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
-                             cff::handlers::handleCreateLeague(req, std::move(callback));
+                             cff::handlers::handleListLeagues(req, std::move(callback), accountEmail);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues",
+                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleCreateLeague(req, std::move(callback), accountEmail);
                          },
                          {drogon::Post})
+        .registerHandler("/api/leagues/{1}",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleGetLeague(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleUpdateLeague(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Put})
+        .registerHandler("/api/leagues/{1}",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleDeleteLeague(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Delete})
+        .registerHandler("/api/leagues/{1}/members",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleListMembers(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/members",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleInviteMember(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/members/{2}",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId,
+                                     const std::string &memberEmail) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleUpdateMember(req, std::move(callback), accountEmail, leagueId, memberEmail);
+                         },
+                         {drogon::Put, drogon::Post})
+        .registerHandler("/api/leagues/{1}/join",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleJoinLeague(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/roster",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleGetRoster(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/rosters/{2}",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId,
+                                     const std::string &managerEmail) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleGetManagerRoster(req, std::move(callback), accountEmail, leagueId, managerEmail);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/roster",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleAddRosterPlayer(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/roster/drop",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleDropRosterPlayer(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/roster/{2}/slot",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId,
+                                     const std::string &playerId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleUpdateRosterSlot(req, std::move(callback), accountEmail, leagueId, playerId);
+                         },
+                         {drogon::Post, drogon::Put})
+        .registerHandler("/api/leagues/{1}/free-agents",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleFreeAgents(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/draft",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleGetDraftState(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/draft/queue",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleSaveDraftQueue(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Put, drogon::Post})
+        .registerHandler("/api/leagues/{1}/draft/picks",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleMakeDraftPick(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/draft/reset",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleResetDraft(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/waivers",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleListWaivers(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/waivers",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleCreateWaiver(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/waivers/process",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleProcessWaivers(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/waivers/{2}/process",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId,
+                                     const std::string &claimId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleProcessWaiver(req, std::move(callback), accountEmail, leagueId, claimId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/waiver-priority",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleListWaiverPriority(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/waiver-priority/reset",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleResetWaiverPriority(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/trades",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleListTrades(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/trades",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleCreateTrade(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/trades/{2}/status",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId,
+                                     const std::string &tradeId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleUpdateTradeStatus(req, std::move(callback), accountEmail, leagueId, tradeId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/matchups",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleListMatchups(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/matchups/generate",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleGenerateMatchups(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/matchups/generate-season",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleGenerateSeasonSchedule(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/score/week/{2}",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId,
+                                     const std::string &week) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleScoreWeek(req, std::move(callback), accountEmail, leagueId, week);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/score/week/{2}/finalize",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId,
+                                     const std::string &week) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleFinalizeWeek(req, std::move(callback), accountEmail, leagueId, week);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/transactions",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleListTransactions(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/scores/live",
+                         [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             Json::Value payload(Json::arrayValue);
+                             Json::Value game;
+                             game["away"] = "Oregon";
+                             game["home"] = "Ohio State";
+                             game["quarter"] = 2;
+                             game["clock"] = "07:18";
+                             game["awayScore"] = 17;
+                             game["homeScore"] = 14;
+                             payload.append(game);
+
+                             game.clear();
+                             game["away"] = "LSU";
+                             game["home"] = "Alabama";
+                             game["quarter"] = 3;
+                             game["clock"] = "11:02";
+                             game["awayScore"] = 24;
+                             game["homeScore"] = 24;
+                             payload.append(game);
+
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+                             resp->setStatusCode(drogon::k200OK);
+                             callback(resp);
+                         },
+                         {drogon::Get})
         .registerHandler("/api/players",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
 #ifndef CFF_HAS_POSTGRES
@@ -534,6 +1123,33 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/auth/login", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/signup", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues", preflightHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/members", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/members/{2}", preflightTwoParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/join", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/roster", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/rosters/{2}", preflightTwoParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/roster/drop", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/roster/{2}/slot", preflightTwoParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/free-agents", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/draft", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/draft/queue", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/draft/picks", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/draft/reset", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/waivers", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/waivers/process", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/waivers/{2}/process", preflightTwoParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/waiver-priority", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/waiver-priority/reset", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/trades", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/trades/{2}/status", preflightTwoParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/matchups", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/matchups/generate", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/matchups/generate-season", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/score/week/{2}", preflightTwoParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/score/week/{2}/finalize", preflightTwoParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/transactions", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/scores/live", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd", preflightHandler, {drogon::Options})
         .registerHandler("/api/players", preflightHandler, {drogon::Options})
         .run();

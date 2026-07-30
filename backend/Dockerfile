@@ -51,6 +51,7 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/loca
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    postgresql-client \
     libssl3 \
     libjsoncpp25 \
     libcrypt1 \
@@ -64,6 +65,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY --from=build /app/build/college_ff_server /srv/college_ff_server
+COPY --from=build /app/db/schema.sql /srv/db/schema.sql
 
 EXPOSE 8080
 ENV PORT=8080

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sign in • College Fantasy Football</title>
+  <title>Sign in - College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -16,10 +16,9 @@
       </div>
     </div>
     <nav class="nav">
-      <a class="nav__link" href="index.html">Home</a>
-      <a class="nav__link" href="league.html">Leagues</a>
-      <a class="nav__link" href="#">Draft Room</a>
-      <a class="nav__link" href="players.html">Players</a>
+      <a class="nav__link" data-page="home" href="index.html">Home</a>
+      <a class="nav__link" data-page="league" href="league.html">Leagues</a>
+      <a class="nav__link" data-page="players" href="players.html">Players</a>
     </nav>
     <div class="nav__actions">
       <a class="button button--primary" href="index.html">Back to app</a>
@@ -76,8 +75,8 @@
     <section class="card">
       <h2>After signing in</h2>
       <p class="muted">
-        A session token is stored locally and sent with requests to create leagues. Return to the home
-        page to start building your league.
+        A session token is stored locally and sent with requests to create leagues. If the backend is not
+        running, the frontend creates a local demo session so you can keep building.
       </p>
             <div id="auth-note" class="muted small"></div>
       <div class="cta-row">
@@ -87,6 +86,7 @@
   </main>
 
   <footer class="footer">Built for college fantasy managers.</footer>
+  <script src="state.js"></script>
   <script src="auth.js"></script>
 </body>
 </html>
