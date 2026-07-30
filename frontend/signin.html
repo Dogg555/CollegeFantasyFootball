@@ -72,11 +72,68 @@
       </form>
     </section>
 
+    <section class="card" id="verify-card">
+      <div class="card__header">
+        <h2>Verify email</h2>
+        <span class="pill pill--muted">Account</span>
+      </div>
+      <form id="verify-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+        <label class="field">
+          <span>Verification token</span>
+          <input id="verify-token" type="text" name="token" placeholder="Paste verification token" autocomplete="one-time-code" />
+        </label>
+        <div class="actions">
+          <button class="button" type="submit">Verify email</button>
+          <div id="verify-status" class="muted small" role="status"></div>
+        </div>
+      </form>
+      <form id="resend-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+        <label class="field">
+          <span>Email</span>
+          <input id="resend-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" />
+        </label>
+        <div class="actions">
+          <button class="button button--ghost" type="submit">Resend verification</button>
+          <div id="resend-status" class="muted small" role="status"></div>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" id="reset-card">
+      <div class="card__header">
+        <h2>Password reset</h2>
+        <span class="pill pill--muted">Recovery</span>
+      </div>
+      <form id="reset-request-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+        <label class="field">
+          <span>Email</span>
+          <input id="reset-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" />
+        </label>
+        <div class="actions">
+          <button class="button" type="submit">Send reset link</button>
+          <div id="reset-request-status" class="muted small" role="status"></div>
+        </div>
+      </form>
+      <form id="reset-complete-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+        <label class="field">
+          <span>Reset token</span>
+          <input id="reset-token" type="text" name="token" placeholder="Paste reset token" autocomplete="one-time-code" />
+        </label>
+        <label class="field">
+          <span>New password</span>
+          <input id="reset-password" type="password" name="password" placeholder="New password" autocomplete="new-password" />
+        </label>
+        <div class="actions">
+          <button class="button button--primary" type="submit">Reset password</button>
+          <div id="reset-complete-status" class="muted small" role="status"></div>
+        </div>
+      </form>
+    </section>
+
     <section class="card">
       <h2>After signing in</h2>
       <p class="muted">
-        A session token is stored locally and sent with requests to create leagues. If the backend is not
-        running, the frontend creates a local demo session so you can keep building.
+        A session token is stored locally and sent with requests to create leagues.
       </p>
             <div id="auth-note" class="muted small"></div>
       <div class="cta-row">

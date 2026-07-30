@@ -3,14 +3,23 @@
 Use this after every Render deploy.
 
 ## Environment
+Backend service:
 - `DB_URL` is attached from Render Postgres.
 - `JWT_SECRET` is set.
 - `ALLOWED_ORIGINS` includes the deployed frontend origin.
 - `CFBD_API_KEY` is set before running ingestion.
 - `CFF_REQUIRE_DB` is `true`.
+- `RESEND_API_KEY` is set if password reset/email verification should send real email.
+- `CFF_EMAIL_FROM` is a verified sender.
+- `CFF_FRONTEND_BASE_URL` is the deployed frontend URL.
 - `CFF_ALLOW_SHARED_SECRET_AUTH` is `false`.
 - `CFF_EXPOSE_AUTH_TOKENS` is `false`.
 - `CFF_LOG_AUTH_TOKENS` is `false`.
+
+Frontend service:
+- `CFF_API_BASE` is the deployed API URL plus `/api`.
+- `CFF_ALLOW_LOCAL_DEMO` is `false`.
+- Render build logs show `Frontend build ready in frontend-dist`.
 
 ## Backend Checks
 ```sh
@@ -60,6 +69,8 @@ Expected:
 - Recent runs are visible in the Players page Data Ingestion panel.
 
 ## Frontend Flow
+- Open the deployed frontend static service URL.
+- In browser dev tools, confirm `window.CFF_API_BASE` points to the deployed API service.
 - Sign up or sign in.
 - Create a league.
 - Invite a manager.

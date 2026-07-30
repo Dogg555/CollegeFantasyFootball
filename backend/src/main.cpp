@@ -16,6 +16,7 @@
 
 #ifdef DROGON_FOUND
 #include <crypt.h>
+#include <cpr/cpr.h>
 #include <drogon/drogon.h>
 #include <json/json.h>
 #ifdef CFF_HAS_POSTGRES
@@ -71,6 +72,82 @@ bool exposeAuthTokens() {
 
 bool logAuthTokens() {
     return envFlagEnabled("CFF_LOG_AUTH_TOKENS");
+}
+
+std::string jsonToString(const Json::Value &value) {
+    Json::StreamWriterBuilder builder;
+    builder["indentation"] = "";
+    return Json::writeString(builder, value);
+}
+
+std::optional<std::string> frontendBaseUrl() {
+    if (auto url = readEnv("CFF_FRONTEND_BASE_URL")) {
+        if (!url->empty()) return url;
+    }
+    if (auto origins = readEnv("ALLOWED_ORIGINS")) {
+        const auto comma = origins->find(',');
+        auto first = origins->substr(0, comma == std::string::npos ? std::string::npos : comma);
+        while (!first.empty() && first.back() == '/') first.pop_back();
+        if (!first.empty()) return first;
+    }
+    return std::nullopt;
+}
+
+bool emailDeliveryConfigured() {
+    const auto apiKey = readEnv("RESEND_API_KEY");
+    const auto from = readEnv("CFF_EMAIL_FROM");
+    const auto frontend = frontendBaseUrl();
+    return apiKey && !apiKey->empty() && from && !from->empty() && frontend.has_value();
+}
+
+bool sendEmail(const std::string &to,
+               const std::string &subject,
+               const std::string &text,
+               const std::string &html) {
+    const auto apiKey = readEnv("RESEND_API_KEY");
+    const auto from = readEnv("CFF_EMAIL_FROM");
+    if (!apiKey || apiKey->empty() || !from || from->empty()) {
+        std::cerr << "[email] RESEND_API_KEY and CFF_EMAIL_FROM are required to send email." << std::endl;
+        return false;
+    }
+
+    Json::Value payload;
+    payload["from"] = *from;
+    payload["to"].append(to);
+    payload["subject"] = subject;
+    payload["text"] = text;
+    payload["html"] = html;
+
+    const auto response = cpr::Post(
+        cpr::Url{"https://api.resend.com/emails"},
+        cpr::Header{{"Authorization", "Bearer " + *apiKey}, {"Content-Type", "application/json"}},
+        cpr::Body{jsonToString(payload)}
+    );
+    if (response.status_code < 200 || response.status_code >= 300) {
+        std::cerr << "[email] send failed status=" << response.status_code << " body=" << response.text << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool sendVerificationEmail(const std::string &email, const std::string &token) {
+    const auto baseUrl = frontendBaseUrl();
+    if (!baseUrl) return false;
+    const auto link = *baseUrl + "/signin.html?verify=" + token;
+    return sendEmail(email,
+                     "Verify your College Fantasy account",
+                     "Verify your account: " + link,
+                     "<p>Verify your College Fantasy account:</p><p><a href=\"" + link + "\">Verify account</a></p>");
+}
+
+bool sendPasswordResetEmail(const std::string &email, const std::string &token) {
+    const auto baseUrl = frontendBaseUrl();
+    if (!baseUrl) return false;
+    const auto link = *baseUrl + "/signin.html?reset=" + token;
+    return sendEmail(email,
+                     "Reset your College Fantasy password",
+                     "Reset your password: " + link,
+                     "<p>Reset your College Fantasy password:</p><p><a href=\"" + link + "\">Reset password</a></p>");
 }
 
 #ifdef CFF_HAS_POSTGRES
@@ -324,6 +401,7 @@ Json::Value healthPayload(const std::optional<std::string> &jwtSecret,
     payload["jwtSecretConfigured"] = jwtSecret.has_value();
     payload["allowedOriginsConfigured"] = !allowedOrigins.empty();
     payload["persistentDbRequired"] = persistentDbRequired();
+    payload["emailDeliveryConfigured"] = emailDeliveryConfigured();
 #ifdef CFF_HAS_POSTGRES
     payload["databaseConfigured"] = dbConfigured();
     if (dbConfigured()) {
@@ -593,17 +671,24 @@ void handleSignup(const drogon::HttpRequestPtr &req,
 
         const auto verificationToken = randomToken();
         const bool storedVerification = dbStoreEmailVerificationToken(email, verificationToken);
+        const bool sentVerification = storedVerification && sendVerificationEmail(email, verificationToken);
         if (storedVerification && logAuthTokens()) {
             std::cout << "[auth] email verification token for " << email << ": " << verificationToken << std::endl;
         }
-        const auto token = issueTokenForUser(email);
         Json::Value payload;
         payload["email"] = email;
-        payload["token"] = token;
-        payload["valid"] = true;
         payload["message"] = "Account created";
         payload["emailVerified"] = false;
         payload["emailVerificationRequired"] = emailVerificationRequired();
+        payload["emailSent"] = sentVerification;
+        if (!emailVerificationRequired()) {
+            const auto token = issueTokenForUser(email);
+            payload["token"] = token;
+            payload["valid"] = true;
+        } else {
+            payload["valid"] = false;
+            payload["message"] = "Account created. Verify your email before signing in.";
+        }
         if (storedVerification && exposeAuthTokens()) {
             payload["emailVerificationToken"] = verificationToken;
         }
@@ -790,6 +875,7 @@ void handleResendVerification(const drogon::HttpRequestPtr &req,
     if (dbConfigured() && !email.empty()) {
         verificationToken = randomToken();
         if (dbStoreEmailVerificationToken(email, *verificationToken)) {
+            sendVerificationEmail(email, *verificationToken);
             if (logAuthTokens()) {
                 std::cout << "[auth] email verification token for " << email << ": " << *verificationToken << std::endl;
             }
@@ -821,6 +907,7 @@ void handleRequestPasswordReset(const drogon::HttpRequestPtr &req,
         const auto candidate = randomToken();
         if (dbStorePasswordResetToken(email, candidate)) {
             resetToken = candidate;
+            sendPasswordResetEmail(email, candidate);
             if (logAuthTokens()) {
                 std::cout << "[auth] password reset token for " << email << ": " << candidate << std::endl;
             }

@@ -18,7 +18,7 @@ With Drogon and dependencies available, configure and build using CMake into `bu
 When `DB_URL` is set, auth and fantasy league data are persisted in Postgres. When `DB_URL` is not set, the API keeps the current local in-memory fallback for fast UI prototyping unless `CFF_REQUIRE_DB=true` is set. Use `CFF_REQUIRE_DB=true` for production and Render.
 
 ## Render deployment
-The repo root includes `render.yaml` for a Docker web service and a managed Postgres database. The backend image includes `psql`, and Render runs:
+The repo root includes `render.yaml` for the Docker API service, a separate static frontend service, and a managed Postgres database. The backend image includes `psql`, and Render runs:
 
 ```sh
 sh /srv/db/migrate.sh
@@ -33,17 +33,22 @@ Runtime environment:
 - `ALLOWED_ORIGINS` - comma-separated frontend origins that can call the API.
 - `CFBD_API_KEY` - required for CollegeFootballData ingestion.
 - `CFBD_INGEST_ON_STARTUP` - optional; set to `true` only when you want ingest to run during service startup.
+- `RESEND_API_KEY` - required to send password reset and email verification mail.
+- `CFF_EMAIL_FROM` - verified sender address for auth emails.
+- `CFF_FRONTEND_BASE_URL` - frontend origin used to build reset and verification links.
 - `CFF_REQUIRE_DB` - set to `true` in production to reject auth when Postgres is not configured.
 - `CFF_ALLOW_SHARED_SECRET_AUTH` - defaults off; only set `true` for legacy admin-token compatibility.
 - `CFF_REQUIRE_EMAIL_VERIFICATION` - blocks login until `/api/auth/verify-email` succeeds when set to `true`.
 - `CFF_EXPOSE_AUTH_TOKENS` - returns reset/verification tokens in responses for smoke tests only.
 - `CFF_LOG_AUTH_TOKENS` - logs reset/verification tokens for local debugging only. Keep `false` in hosted/open-source deployments.
 
-If the static frontend is hosted away from the API, set `window.CFF_API_BASE` in `frontend/config.js` to the API origin plus `/api`, for example:
+The Render frontend service runs `scripts/render-build-frontend.sh`, which copies `frontend/` to `frontend-dist/` and writes `frontend-dist/config.js`. Set the frontend service env var `CFF_API_BASE` to the API origin plus `/api`, for example:
 
-```js
-window.CFF_API_BASE = 'https://YOUR-RENDER-SERVICE.onrender.com/api';
+```sh
+CFF_API_BASE=https://YOUR-API-SERVICE.onrender.com/api
 ```
+
+Set the backend `ALLOWED_ORIGINS` and `CFF_FRONTEND_BASE_URL` to the deployed frontend origin, for example `https://YOUR-FRONTEND-SERVICE.onrender.com`.
 
 Post-deploy smoke checks:
 ```sh

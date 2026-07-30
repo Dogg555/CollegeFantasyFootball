@@ -11,9 +11,25 @@ const loginPassword = document.getElementById('login-password');
 const loginStatus = document.getElementById('login-status');
 const signOutBtn = document.getElementById('signout-btn');
 const authNote = document.getElementById('auth-note');
+const verifyForm = document.getElementById('verify-form');
+const verifyToken = document.getElementById('verify-token');
+const verifyStatus = document.getElementById('verify-status');
+const resendForm = document.getElementById('resend-form');
+const resendEmail = document.getElementById('resend-email');
+const resendStatus = document.getElementById('resend-status');
+const resetRequestForm = document.getElementById('reset-request-form');
+const resetEmail = document.getElementById('reset-email');
+const resetRequestStatus = document.getElementById('reset-request-status');
+const resetCompleteForm = document.getElementById('reset-complete-form');
+const resetToken = document.getElementById('reset-token');
+const resetPassword = document.getElementById('reset-password');
+const resetCompleteStatus = document.getElementById('reset-complete-status');
 
 let storedAuth = null;
-const pendingInvite = new URLSearchParams(window.location.search).get('invite');
+const urlParams = new URLSearchParams(window.location.search);
+const pendingInvite = urlParams.get('invite');
+const verificationTokenParam = urlParams.get('verify');
+const resetTokenParam = urlParams.get('reset');
 
 function setStatus(el, message, isError = false) {
   if (!el) return;
@@ -57,31 +73,52 @@ function createLocalSession(email) {
   };
 }
 
+async function postJson(path, body, token = '') {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const resp = await fetch(`${apiBase}${path}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body || {})
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const error = new Error(data?.error || `Request failed with ${resp.status}`);
+    error.status = resp.status;
+    error.data = data;
+    throw error;
+  }
+  return data;
+}
+
 async function submitAuthForm(path, email, password, statusEl, redirectTo) {
   setStatus(statusEl, 'Working...');
+  let authenticated = false;
   try {
-    const resp = await fetch(`${apiBase}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      setStatus(statusEl, data?.error || 'Request failed', true);
+    const data = await postJson(path, { email, password });
+    if (data.token) {
+      saveAuth(data.email || email, data.token);
+      authenticated = true;
+    }
+    const verifyCopy = data.emailVerificationRequired && !data.emailVerified
+      ? data.emailSent ? ' Check your email to verify before signing in.' : ' Email verification is required, but email delivery is not configured.'
+      : '';
+    setStatus(statusEl, `${data.message || 'Success'}${verifyCopy}`, data.emailVerificationRequired && !data.emailSent);
+  } catch (error) {
+    if (error.status) {
+      setStatus(statusEl, error.data?.error || error.message, true);
       return;
     }
-    saveAuth(data.email || email, data.token);
-    setStatus(statusEl, data.message || 'Success');
-  } catch {
     if (!allowLocalDemo) {
       setStatus(statusEl, 'API unavailable. Local demo sessions are disabled for this deployment.', true);
       return;
     }
     const local = createLocalSession(email);
     saveAuth(local.email, local.token);
+    authenticated = true;
     setStatus(statusEl, local.message);
   }
-  if (redirectTo) {
+  if (authenticated && redirectTo) {
     window.location.href = pendingInvite ? `${redirectTo}?invite=${encodeURIComponent(pendingInvite)}` : redirectTo;
   }
 }
@@ -102,12 +139,72 @@ loginForm?.addEventListener('submit', async (event) => {
   await submitAuthForm('/auth/login', loginEmail.value.trim(), loginPassword.value, loginStatus, 'league.html');
 });
 
-signOutBtn?.addEventListener('click', () => {
+verifyForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setStatus(verifyStatus, 'Verifying...');
+  try {
+    const data = await postJson('/auth/verify-email', { token: verifyToken.value.trim() });
+    setStatus(verifyStatus, data.message || 'Email verified. You can sign in now.');
+  } catch (error) {
+    setStatus(verifyStatus, error.data?.error || error.message || 'Could not verify email.', true);
+  }
+});
+
+resendForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setStatus(resendStatus, 'Sending...');
+  try {
+    const email = resendEmail.value.trim();
+    const data = await postJson('/auth/resend-verification', { email });
+    setStatus(resendStatus, data.message || 'Verification email queued.');
+  } catch (error) {
+    setStatus(resendStatus, error.data?.error || error.message || 'Could not resend verification.', true);
+  }
+});
+
+resetRequestForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setStatus(resetRequestStatus, 'Sending...');
+  try {
+    const data = await postJson('/auth/request-password-reset', { email: resetEmail.value.trim() });
+    setStatus(resetRequestStatus, data.message || 'If the account exists, a reset email will be sent.');
+  } catch (error) {
+    setStatus(resetRequestStatus, error.data?.error || error.message || 'Could not request password reset.', true);
+  }
+});
+
+resetCompleteForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setStatus(resetCompleteStatus, 'Resetting...');
+  try {
+    const data = await postJson('/auth/reset-password', {
+      token: resetToken.value.trim(),
+      password: resetPassword.value
+    });
+    setStatus(resetCompleteStatus, data.message || 'Password reset. Sign in with your new password.');
+    resetPassword.value = '';
+  } catch (error) {
+    setStatus(resetCompleteStatus, error.data?.error || error.message || 'Could not reset password.', true);
+  }
+});
+
+signOutBtn?.addEventListener('click', async () => {
+  const token = storedAuth?.token;
+  if (token && !String(token).startsWith('local-demo-')) {
+    try {
+      await postJson('/auth/logout', {}, token);
+    } catch {
+      // Local session cleanup still happens below.
+    }
+  }
   clearAuth();
   setStatus(loginStatus, 'Signed out');
 });
 
 async function initAuthPage() {
+  if (verifyToken && verificationTokenParam) verifyToken.value = verificationTokenParam;
+  if (resetToken && resetTokenParam) resetToken.value = resetTokenParam;
+  if (resendEmail && signupEmail?.value) resendEmail.value = signupEmail.value;
   loadStoredAuth();
   updateAuthUi();
   await validateAuthSession();
