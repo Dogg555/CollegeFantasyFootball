@@ -96,9 +96,23 @@ CREATE INDEX IF NOT EXISTS idx_ingestion_runs_resource ON ingestion_runs (resour
 CREATE TABLE IF NOT EXISTS users (
   email TEXT PRIMARY KEY,
   password_hash TEXT NOT NULL,
+  email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  email_verification_token TEXT,
+  email_verification_expires_at TIMESTAMPTZ,
+  password_reset_token TEXT,
+  password_reset_expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_token TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_expires_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_users_email_verification_token ON users(email_verification_token);
+CREATE INDEX IF NOT EXISTS idx_users_password_reset_token ON users(password_reset_token);
 
 CREATE TABLE IF NOT EXISTS auth_tokens (
   token TEXT PRIMARY KEY,
@@ -172,6 +186,7 @@ ALTER TABLE leagues ADD COLUMN IF NOT EXISTS trade_rules JSONB NOT NULL DEFAULT 
 CREATE TABLE IF NOT EXISTS league_members (
   league_id TEXT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
+  team_name TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('commissioner', 'member')),
   status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited', 'active', 'removed')),
   invited_by_email TEXT,
@@ -180,6 +195,8 @@ CREATE TABLE IF NOT EXISTS league_members (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (league_id, email)
 );
+
+ALTER TABLE league_members ADD COLUMN IF NOT EXISTS team_name TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_league_members_email ON league_members(email);
 CREATE INDEX IF NOT EXISTS idx_league_members_league_status ON league_members(league_id, status);
@@ -261,12 +278,14 @@ CREATE TABLE IF NOT EXISTS waiver_claims (
   add_player_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
   drop_player_id TEXT,
   priority INTEGER NOT NULL DEFAULT 1,
+  claim_order INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'cancelled')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   processed_at TIMESTAMPTZ
 );
 
 ALTER TABLE waiver_claims ADD COLUMN IF NOT EXISTS add_player_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE waiver_claims ADD COLUMN IF NOT EXISTS claim_order INTEGER NOT NULL DEFAULT 1;
 
 CREATE TABLE IF NOT EXISTS waiver_priorities (
   league_id TEXT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,

@@ -48,6 +48,31 @@ struct TokenRecord {
 std::unordered_map<std::string, TokenRecord> activeTokens; // token -> record
 constexpr std::chrono::hours kTokenTtl{24};
 
+bool envFlagEnabled(const std::string &key) {
+    const auto value = readEnv(key);
+    return value && (*value == "1" || *value == "true" || *value == "TRUE" || *value == "yes" || *value == "YES");
+}
+
+bool persistentDbRequired() {
+    return envFlagEnabled("CFF_REQUIRE_DB");
+}
+
+bool sharedSecretAuthAllowed() {
+    return envFlagEnabled("CFF_ALLOW_SHARED_SECRET_AUTH");
+}
+
+bool emailVerificationRequired() {
+    return envFlagEnabled("CFF_REQUIRE_EMAIL_VERIFICATION");
+}
+
+bool exposeAuthTokens() {
+    return envFlagEnabled("CFF_EXPOSE_AUTH_TOKENS");
+}
+
+bool logAuthTokens() {
+    return envFlagEnabled("CFF_LOG_AUTH_TOKENS");
+}
+
 #ifdef CFF_HAS_POSTGRES
 struct PgConnDeleter {
     void operator()(PGconn *conn) const {
@@ -117,6 +142,20 @@ bool dbCreateUser(const std::string &email, const std::string &passwordHash) {
     return resultOk(result.get(), PGRES_COMMAND_OK) && std::string{PQcmdTuples(result.get())} == "1";
 }
 
+void dbCleanupExpiredTokens(PGconn *conn) {
+    auto cleanupAuth = execParams(conn, "DELETE FROM auth_tokens WHERE expires_at <= NOW()", {});
+    (void)cleanupAuth;
+    auto cleanupUsers = execParams(conn,
+                                   "UPDATE users SET "
+                                   "email_verification_token = CASE WHEN email_verification_expires_at <= NOW() THEN NULL ELSE email_verification_token END, "
+                                   "email_verification_expires_at = CASE WHEN email_verification_expires_at <= NOW() THEN NULL ELSE email_verification_expires_at END, "
+                                   "password_reset_token = CASE WHEN password_reset_expires_at <= NOW() THEN NULL ELSE password_reset_token END, "
+                                   "password_reset_expires_at = CASE WHEN password_reset_expires_at <= NOW() THEN NULL ELSE password_reset_expires_at END "
+                                   "WHERE email_verification_expires_at <= NOW() OR password_reset_expires_at <= NOW()",
+                                   {});
+    (void)cleanupUsers;
+}
+
 std::optional<std::string> dbPasswordHashForEmail(const std::string &email) {
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
@@ -132,8 +171,7 @@ std::optional<std::string> dbPasswordHashForEmail(const std::string &email) {
 void dbPersistToken(const std::string &token, const std::string &email) {
     auto conn = connectToDb();
     if (!conn) return;
-    auto cleanup = execParams(conn.get(), "DELETE FROM auth_tokens WHERE expires_at <= NOW()", {});
-    (void)cleanup;
+    dbCleanupExpiredTokens(conn.get());
     auto result = execParams(conn.get(),
                              "INSERT INTO auth_tokens (token, email, expires_at) "
                              "VALUES ($1, $2, NOW() + INTERVAL '24 hours') "
@@ -147,6 +185,7 @@ void dbPersistToken(const std::string &token, const std::string &email) {
 std::optional<std::string> dbEmailForToken(const std::string &token) {
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
+    dbCleanupExpiredTokens(conn.get());
     auto result = execParams(conn.get(),
                              "SELECT email FROM auth_tokens WHERE token = $1 AND expires_at > NOW()",
                              {token});
@@ -155,7 +194,159 @@ std::optional<std::string> dbEmailForToken(const std::string &token) {
     }
     return std::string{PQgetvalue(result.get(), 0, 0)};
 }
+
+void dbRevokeToken(const std::string &token) {
+    auto conn = connectToDb();
+    if (!conn) return;
+    auto result = execParams(conn.get(), "DELETE FROM auth_tokens WHERE token = $1", {token});
+    (void)result;
+}
+
+void dbRevokeTokensForEmail(const std::string &email) {
+    auto conn = connectToDb();
+    if (!conn) return;
+    auto result = execParams(conn.get(), "DELETE FROM auth_tokens WHERE email = $1", {email});
+    (void)result;
+}
+
+std::optional<bool> dbEmailVerified(const std::string &email) {
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    auto result = execParams(conn.get(), "SELECT email_verified FROM users WHERE email = $1", {email});
+    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
+    return std::string{PQgetvalue(result.get(), 0, 0)} == "t";
+}
+
+bool dbStoreEmailVerificationToken(const std::string &email, const std::string &token) {
+    auto conn = connectToDb();
+    if (!conn) return false;
+    auto result = execParams(conn.get(),
+                             "UPDATE users SET email_verification_token = $2, email_verification_expires_at = NOW() + INTERVAL '48 hours', updated_at = NOW() "
+                             "WHERE email = $1 AND email_verified = false",
+                             {email, token});
+    return resultOk(result.get(), PGRES_COMMAND_OK) && std::string{PQcmdTuples(result.get())} == "1";
+}
+
+std::optional<std::string> dbVerifyEmailToken(const std::string &token) {
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    auto result = execParams(conn.get(),
+                             "UPDATE users SET email_verified = true, email_verification_token = NULL, email_verification_expires_at = NULL, updated_at = NOW() "
+                             "WHERE email_verification_token = $1 AND email_verification_expires_at > NOW() RETURNING email",
+                             {token});
+    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
+    return std::string{PQgetvalue(result.get(), 0, 0)};
+}
+
+std::optional<std::string> dbStorePasswordResetToken(const std::string &email, const std::string &token) {
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    auto result = execParams(conn.get(),
+                             "UPDATE users SET password_reset_token = $2, password_reset_expires_at = NOW() + INTERVAL '1 hour', updated_at = NOW() "
+                             "WHERE email = $1 RETURNING email",
+                             {email, token});
+    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
+    return std::string{PQgetvalue(result.get(), 0, 0)};
+}
+
+std::optional<std::string> dbResetPassword(const std::string &token, const std::string &passwordHash) {
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    auto result = execParams(conn.get(),
+                             "UPDATE users SET password_hash = $2, password_reset_token = NULL, password_reset_expires_at = NULL, updated_at = NOW() "
+                             "WHERE password_reset_token = $1 AND password_reset_expires_at > NOW() RETURNING email",
+                             {token, passwordHash});
+    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
+    const auto email = std::string{PQgetvalue(result.get(), 0, 0)};
+    auto revoke = execParams(conn.get(), "DELETE FROM auth_tokens WHERE email = $1", {email});
+    (void)revoke;
+    return email;
+}
+
+Json::Value dbIngestionStatus() {
+    Json::Value payload;
+    payload["configured"] = dbConfigured();
+    payload["runs"] = Json::Value{Json::arrayValue};
+    payload["counts"] = Json::Value{Json::objectValue};
+    auto conn = connectToDb();
+    if (!conn) {
+        payload["status"] = "unavailable";
+        return payload;
+    }
+
+    auto counts = execParams(conn.get(),
+                             "SELECT "
+                             "(SELECT COUNT(*) FROM teams), "
+                             "(SELECT COUNT(*) FROM players), "
+                             "(SELECT COUNT(*) FROM games), "
+                             "(SELECT COUNT(*) FROM player_stats)",
+                             {});
+    if (resultOk(counts.get(), PGRES_TUPLES_OK) && PQntuples(counts.get()) > 0) {
+        payload["counts"]["teams"] = std::stoll(PQgetvalue(counts.get(), 0, 0));
+        payload["counts"]["players"] = std::stoll(PQgetvalue(counts.get(), 0, 1));
+        payload["counts"]["games"] = std::stoll(PQgetvalue(counts.get(), 0, 2));
+        payload["counts"]["playerStats"] = std::stoll(PQgetvalue(counts.get(), 0, 3));
+    }
+
+    auto runs = execParams(conn.get(),
+                           "SELECT id, resource, COALESCE(season, 0), COALESCE(week, 0), "
+                           "COALESCE(to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
+                           "COALESCE(to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
+                           "COALESCE(status, ''), call_count, row_count, COALESCE(error_message, '') "
+                           "FROM ingestion_runs ORDER BY started_at DESC LIMIT 10",
+                           {});
+    if (resultOk(runs.get(), PGRES_TUPLES_OK)) {
+        for (int row = 0; row < PQntuples(runs.get()); ++row) {
+            Json::Value run;
+            run["id"] = std::stoll(PQgetvalue(runs.get(), row, 0));
+            run["resource"] = PQgetvalue(runs.get(), row, 1);
+            run["season"] = std::stoi(PQgetvalue(runs.get(), row, 2));
+            run["week"] = std::stoi(PQgetvalue(runs.get(), row, 3));
+            run["startedAt"] = PQgetvalue(runs.get(), row, 4);
+            run["finishedAt"] = PQgetvalue(runs.get(), row, 5);
+            run["status"] = PQgetvalue(runs.get(), row, 6);
+            run["apiCalls"] = std::stoi(PQgetvalue(runs.get(), row, 7));
+            run["rowCount"] = std::stoi(PQgetvalue(runs.get(), row, 8));
+            run["error"] = PQgetvalue(runs.get(), row, 9);
+            payload["runs"].append(run);
+        }
+    }
+    payload["status"] = "ok";
+    return payload;
+}
 #endif
+
+Json::Value healthPayload(const std::optional<std::string> &jwtSecret,
+                          const std::unordered_set<std::string> &allowedOrigins) {
+    Json::Value payload;
+    payload["status"] = "ok";
+    payload["service"] = "college-ff-api";
+    payload["jwtSecretConfigured"] = jwtSecret.has_value();
+    payload["allowedOriginsConfigured"] = !allowedOrigins.empty();
+    payload["persistentDbRequired"] = persistentDbRequired();
+#ifdef CFF_HAS_POSTGRES
+    payload["databaseConfigured"] = dbConfigured();
+    if (dbConfigured()) {
+        auto conn = connectToDb();
+        payload["database"] = conn ? "ok" : "unavailable";
+        if (!conn && persistentDbRequired()) {
+            payload["status"] = "degraded";
+        }
+    } else {
+        payload["database"] = "not_configured";
+        if (persistentDbRequired()) {
+            payload["status"] = "degraded";
+        }
+    }
+#else
+    payload["databaseConfigured"] = false;
+    payload["database"] = "not_compiled";
+    if (persistentDbRequired()) {
+        payload["status"] = "degraded";
+    }
+#endif
+    return payload;
+}
 
 template <std::size_t N>
 bool fillFromUrandom(std::array<unsigned char, N> &bytes) {
@@ -265,7 +456,16 @@ bool isAuthorized(const drogon::HttpRequestPtr &req, const std::optional<std::st
     if (!hasBearerToken(req, token)) {
         return false;
     }
-    if (secret && token == secret.value()) {
+#ifdef CFF_HAS_POSTGRES
+    if (persistentDbRequired() && !dbConfigured()) {
+        return false;
+    }
+#else
+    if (persistentDbRequired()) {
+        return false;
+    }
+#endif
+    if (sharedSecretAuthAllowed() && secret && token == secret.value()) {
         return true; // compatibility for pre-shared secret
     }
 #ifdef CFF_HAS_POSTGRES
@@ -287,6 +487,15 @@ bool isAuthorized(const drogon::HttpRequestPtr &req, const std::optional<std::st
 }
 
 std::optional<std::string> emailForToken(const std::string &token) {
+#ifdef CFF_HAS_POSTGRES
+    if (persistentDbRequired() && !dbConfigured()) {
+        return std::nullopt;
+    }
+#else
+    if (persistentDbRequired()) {
+        return std::nullopt;
+    }
+#endif
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
         return dbEmailForToken(token);
@@ -382,18 +591,36 @@ void handleSignup(const drogon::HttpRequestPtr &req,
             return;
         }
 
+        const auto verificationToken = randomToken();
+        const bool storedVerification = dbStoreEmailVerificationToken(email, verificationToken);
+        if (storedVerification && logAuthTokens()) {
+            std::cout << "[auth] email verification token for " << email << ": " << verificationToken << std::endl;
+        }
         const auto token = issueTokenForUser(email);
         Json::Value payload;
         payload["email"] = email;
         payload["token"] = token;
         payload["valid"] = true;
         payload["message"] = "Account created";
+        payload["emailVerified"] = false;
+        payload["emailVerificationRequired"] = emailVerificationRequired();
+        if (storedVerification && exposeAuthTokens()) {
+            payload["emailVerificationToken"] = verificationToken;
+        }
         auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
         resp->setStatusCode(drogon::k201Created);
         callback(resp);
         return;
     }
 #endif
+    if (persistentDbRequired()) {
+        Json::Value error;
+        error["error"] = "Database is required but DB_URL is not configured";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k503ServiceUnavailable);
+        callback(resp);
+        return;
+    }
 
     {
         std::lock_guard<std::mutex> lock(userMutex);
@@ -440,8 +667,27 @@ void handleLogin(const drogon::HttpRequestPtr &req,
     if (dbConfigured()) {
         const auto passwordHash = dbPasswordHashForEmail(email);
         passwordMatches = passwordHash && verifyPassword(password, *passwordHash);
+        if (passwordMatches && emailVerificationRequired()) {
+            const auto verified = dbEmailVerified(email);
+            if (!verified.value_or(false)) {
+                Json::Value error;
+                error["error"] = "Email verification required";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(drogon::k403Forbidden);
+                callback(resp);
+                return;
+            }
+        }
     } else
 #endif
+    if (persistentDbRequired()) {
+        Json::Value error;
+        error["error"] = "Database is required but DB_URL is not configured";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k503ServiceUnavailable);
+        callback(resp);
+        return;
+    } else
     {
         std::lock_guard<std::mutex> lock(userMutex);
         auto it = userPasswordHashes.find(email);
@@ -468,6 +714,185 @@ void handleLogin(const drogon::HttpRequestPtr &req,
     callback(resp);
 }
 
+void handleLogout(const drogon::HttpRequestPtr &req,
+                  std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+    std::string token;
+    if (!hasBearerToken(req, token)) {
+        Json::Value error;
+        error["error"] = "Unauthorized";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k401Unauthorized);
+        callback(resp);
+        return;
+    }
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        dbRevokeToken(token);
+    }
+#endif
+    {
+        std::lock_guard<std::mutex> lock(userMutex);
+        activeTokens.erase(token);
+    }
+    Json::Value payload;
+    payload["status"] = "ok";
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+    resp->setStatusCode(drogon::k200OK);
+    callback(resp);
+}
+
+void handleVerifyEmail(const drogon::HttpRequestPtr &req,
+                       std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+    const auto body = req->getJsonObject();
+    const auto token = body && body->isMember("token") && (*body)["token"].isString() ? (*body)["token"].asString() : "";
+    if (token.empty()) {
+        Json::Value error;
+        error["error"] = "token is required";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k400BadRequest);
+        callback(resp);
+        return;
+    }
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        const auto email = dbVerifyEmailToken(token);
+        if (!email) {
+            Json::Value error;
+            error["error"] = "Invalid or expired verification token";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(drogon::k400BadRequest);
+            callback(resp);
+            return;
+        }
+        Json::Value payload;
+        payload["status"] = "ok";
+        payload["email"] = *email;
+        payload["emailVerified"] = true;
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+        resp->setStatusCode(drogon::k200OK);
+        callback(resp);
+        return;
+    }
+#endif
+    Json::Value error;
+    error["error"] = "Email verification requires database persistence";
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(drogon::k503ServiceUnavailable);
+    callback(resp);
+}
+
+void handleResendVerification(const drogon::HttpRequestPtr &req,
+                              std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+    const auto body = req->getJsonObject();
+    const auto email = body && body->isMember("email") && (*body)["email"].isString() ? (*body)["email"].asString() : "";
+#ifdef CFF_HAS_POSTGRES
+    std::optional<std::string> verificationToken;
+    if (dbConfigured() && !email.empty()) {
+        verificationToken = randomToken();
+        if (dbStoreEmailVerificationToken(email, *verificationToken)) {
+            if (logAuthTokens()) {
+                std::cout << "[auth] email verification token for " << email << ": " << *verificationToken << std::endl;
+            }
+        } else {
+            verificationToken.reset();
+        }
+    }
+#endif
+    Json::Value payload;
+    payload["status"] = "ok";
+    payload["message"] = "If the account exists and needs verification, a verification email will be sent.";
+#ifdef CFF_HAS_POSTGRES
+    if (verificationToken && exposeAuthTokens()) {
+        payload["emailVerificationToken"] = *verificationToken;
+    }
+#endif
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+    resp->setStatusCode(drogon::k200OK);
+    callback(resp);
+}
+
+void handleRequestPasswordReset(const drogon::HttpRequestPtr &req,
+                                std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+    const auto body = req->getJsonObject();
+    const auto email = body && body->isMember("email") && (*body)["email"].isString() ? (*body)["email"].asString() : "";
+#ifdef CFF_HAS_POSTGRES
+    std::optional<std::string> resetToken;
+    if (dbConfigured() && !email.empty()) {
+        const auto candidate = randomToken();
+        if (dbStorePasswordResetToken(email, candidate)) {
+            resetToken = candidate;
+            if (logAuthTokens()) {
+                std::cout << "[auth] password reset token for " << email << ": " << candidate << std::endl;
+            }
+        }
+    }
+#endif
+    Json::Value payload;
+    payload["status"] = "ok";
+    payload["message"] = "If the account exists, a password reset email will be sent.";
+#ifdef CFF_HAS_POSTGRES
+    if (resetToken && exposeAuthTokens()) {
+        payload["passwordResetToken"] = *resetToken;
+    }
+#endif
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+    resp->setStatusCode(drogon::k200OK);
+    callback(resp);
+}
+
+void handleResetPassword(const drogon::HttpRequestPtr &req,
+                         std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+    const auto body = req->getJsonObject();
+    const auto token = body && body->isMember("token") && (*body)["token"].isString() ? (*body)["token"].asString() : "";
+    const auto password = body && body->isMember("password") && (*body)["password"].isString() ? (*body)["password"].asString() : "";
+    Json::Value credentialCheck;
+    credentialCheck["email"] = "reset@example.com";
+    credentialCheck["password"] = password;
+    if (token.empty() || !ensureCredentials(credentialCheck)) {
+        Json::Value error;
+        error["error"] = "Valid token and password are required";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k400BadRequest);
+        callback(resp);
+        return;
+    }
+    const auto passwordHash = hashPassword(password);
+    if (!passwordHash) {
+        Json::Value error;
+        error["error"] = "Unable to reset password";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k500InternalServerError);
+        callback(resp);
+        return;
+    }
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        const auto email = dbResetPassword(token, *passwordHash);
+        if (!email) {
+            Json::Value error;
+            error["error"] = "Invalid or expired reset token";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(drogon::k400BadRequest);
+            callback(resp);
+            return;
+        }
+        Json::Value payload;
+        payload["status"] = "ok";
+        payload["email"] = *email;
+        payload["message"] = "Password reset. Existing sessions were revoked.";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+        resp->setStatusCode(drogon::k200OK);
+        callback(resp);
+        return;
+    }
+#endif
+    Json::Value error;
+    error["error"] = "Password reset requires database persistence";
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(drogon::k503ServiceUnavailable);
+    callback(resp);
+}
+
 std::optional<std::string> getOptionalParam(const drogon::HttpRequestPtr &req, const std::string &key) {
     auto value = req->getParameter(key);
     if (value.empty()) {
@@ -482,7 +907,7 @@ std::optional<std::string> accountEmailForRequest(const drogon::HttpRequestPtr &
     if (!hasBearerToken(req, token)) {
         return std::nullopt;
     }
-    if (secret && token == secret.value()) {
+    if (sharedSecretAuthAllowed() && secret && token == secret.value()) {
         return std::string{"admin@example.com"};
     }
     return emailForToken(token);
@@ -577,6 +1002,13 @@ int main(int argc, char* argv[]) {
     const bool ingestOnStartup = ingestOnStartupEnv &&
                                  (*ingestOnStartupEnv == "1" || *ingestOnStartupEnv == "true" ||
                                   *ingestOnStartupEnv == "TRUE" || *ingestOnStartupEnv == "yes");
+    const auto healthHandler = [jwtSecret, allowedOrigins](const drogon::HttpRequestPtr&,
+                                                           std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(healthPayload(jwtSecret, allowedOrigins));
+        resp->setStatusCode(drogon::k200OK);
+        callback(resp);
+    };
+
     if (ingestOnStartup) {
         std::cout << "[cfbd] CFBD_INGEST_ON_STARTUP enabled; starting ingest..." << std::endl;
         const auto ingestResult = cff::runCfbdIngestOnce();
@@ -590,12 +1022,8 @@ int main(int argc, char* argv[]) {
 
     app.addListener("0.0.0.0", static_cast<unsigned short>(std::stoi(port)), useSsl)
         .setThreadNum(std::thread::hardware_concurrency())
-        .registerHandler("/health", [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-            auto resp = drogon::HttpResponse::newHttpResponse();
-            resp->setStatusCode(drogon::k200OK);
-            resp->setBody("ok");
-            callback(resp);
-        })
+        .registerHandler("/health", healthHandler, {drogon::Get})
+        .registerHandler("/api/health", healthHandler, {drogon::Get})
         .registerHandler("/api/secure/ping",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              auto resp = drogon::HttpResponse::newHttpResponse();
@@ -615,7 +1043,7 @@ int main(int argc, char* argv[]) {
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              auto resp = drogon::HttpResponse::newHttpResponse();
                              std::string token;
-                             const bool hasToken = hasBearerToken(req, token);
+                             hasBearerToken(req, token);
                              const bool authorized = isAuthorized(req, jwtSecret);
                              Json::Value payload;
                              payload["valid"] = authorized;
@@ -638,6 +1066,31 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/auth/signup",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              handleSignup(req, std::move(callback), jwtSecret);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/auth/logout",
+                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             handleLogout(req, std::move(callback));
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/auth/verify-email",
+                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             handleVerifyEmail(req, std::move(callback));
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/auth/resend-verification",
+                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             handleResendVerification(req, std::move(callback));
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/auth/request-password-reset",
+                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             handleRequestPasswordReset(req, std::move(callback));
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/auth/reset-password",
+                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             handleResetPassword(req, std::move(callback));
                          },
                          {drogon::Post})
         .registerHandler("/api/admin/ingest/cfbd",
@@ -670,6 +1123,31 @@ int main(int argc, char* argv[]) {
                              callback(resp);
                          },
                          {drogon::Post})
+        .registerHandler("/api/admin/ingest/cfbd/status",
+                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             if (!isAuthorized(req, jwtSecret)) {
+                                 Json::Value error;
+                                 error["error"] = "Unauthorized";
+                                 auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+                                 resp->setStatusCode(drogon::k401Unauthorized);
+                                 callback(resp);
+                                 return;
+                             }
+#ifndef CFF_HAS_POSTGRES
+                             Json::Value payload;
+                             payload["configured"] = false;
+                             payload["status"] = "unavailable";
+                             payload["error"] = "Backend was not built with PostgreSQL support.";
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+                             resp->setStatusCode(drogon::k503ServiceUnavailable);
+                             callback(resp);
+#else
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(dbIngestionStatus());
+                             resp->setStatusCode(drogon::k200OK);
+                             callback(resp);
+#endif
+                         },
+                         {drogon::Get})
         .registerHandler("/api/leagues",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              std::string accountEmail;
@@ -923,6 +1401,29 @@ int main(int argc, char* argv[]) {
                              cff::handlers::handleProcessWaiver(req, std::move(callback), accountEmail, leagueId, claimId);
                          },
                          {drogon::Post})
+        .registerHandler("/api/leagues/{1}/waivers/{2}/status",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId,
+                                     const std::string &claimId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleUpdateWaiverStatus(req, std::move(callback), accountEmail, leagueId, claimId);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/leagues/{1}/waivers/reorder",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleReorderWaivers(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
         .registerHandler("/api/leagues/{1}/waiver-priority",
                          [jwtSecret](const drogon::HttpRequestPtr& req,
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
@@ -1122,6 +1623,11 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/auth/validate", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/login", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/signup", preflightHandler, {drogon::Options})
+        .registerHandler("/api/auth/logout", preflightHandler, {drogon::Options})
+        .registerHandler("/api/auth/verify-email", preflightHandler, {drogon::Options})
+        .registerHandler("/api/auth/resend-verification", preflightHandler, {drogon::Options})
+        .registerHandler("/api/auth/request-password-reset", preflightHandler, {drogon::Options})
+        .registerHandler("/api/auth/reset-password", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/members", preflightOneParamHandler, {drogon::Options})
@@ -1139,6 +1645,8 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/leagues/{1}/waivers", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/waivers/process", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/waivers/{2}/process", preflightTwoParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/waivers/{2}/status", preflightTwoParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/waivers/reorder", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/waiver-priority", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/waiver-priority/reset", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/trades", preflightOneParamHandler, {drogon::Options})
@@ -1150,7 +1658,9 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/leagues/{1}/score/week/{2}/finalize", preflightTwoParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/transactions", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/scores/live", preflightHandler, {drogon::Options})
+        .registerHandler("/api/health", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd", preflightHandler, {drogon::Options})
+        .registerHandler("/api/admin/ingest/cfbd/status", preflightHandler, {drogon::Options})
         .registerHandler("/api/players", preflightHandler, {drogon::Options})
         .run();
 #else

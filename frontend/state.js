@@ -12,6 +12,7 @@ const CFF_DRAFT_PICKS_KEY = 'cff_draft_picks_by_league';
 const CFF_DRAFT_META_KEY = 'cff_draft_meta_by_league';
 const MAX_LEAGUES_PER_ACCOUNT = 3;
 const CFF_API_BASE = window.CFF_API_BASE || '/api';
+const CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
 
 const samplePlayers = [
   { id: 'p-001', name: 'Garrett Nussmeier', team: 'LSU', position: 'QB', conference: 'SEC', class: 'SR', rank: 1, projection: 24.8 },
@@ -143,6 +144,33 @@ function setAuthState(auth) {
     return;
   }
   writeJson(CFF_AUTH_KEY, auth);
+}
+
+async function validateAuthSession() {
+  const auth = getAuthState();
+  if (!auth?.token) return false;
+  if (String(auth.token).startsWith('local-demo-')) {
+    if (CFF_ALLOW_LOCAL_DEMO) return true;
+    clearSessionState();
+    return false;
+  }
+  try {
+    const data = await apiRequest('/auth/validate');
+    if (data?.valid) {
+      if (data.email && data.email !== auth.email) {
+        setAuthState({ ...auth, email: data.email });
+      }
+      return true;
+    }
+    clearSessionState();
+    return false;
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) {
+      clearSessionState();
+      return false;
+    }
+    return true;
+  }
 }
 
 function getLeagueState() {
@@ -348,12 +376,13 @@ function normalizeMembers(members = [], invitedEmails = []) {
     byEmail.set(auth.email, {
       email: auth.email,
       role: 'commissioner',
-      status: 'Active'
+      status: 'Active',
+      teamName: ''
     });
   }
   invitedEmails.forEach((email) => {
     if (!byEmail.has(email)) {
-      byEmail.set(email, { email, role: 'member', status: 'Invited' });
+      byEmail.set(email, { email, role: 'member', status: 'Invited', teamName: '' });
     }
   });
   if (Array.isArray(members)) {
@@ -363,7 +392,8 @@ function normalizeMembers(members = [], invitedEmails = []) {
         email: member.email,
         role: member.role === 'commissioner' ? 'commissioner' : 'member',
         status: normalizeMemberStatus(member.status),
-        invitedByEmail: member.invitedByEmail || ''
+        invitedByEmail: member.invitedByEmail || '',
+        teamName: member.teamName || member.team_name || ''
       });
     });
   }
@@ -385,6 +415,30 @@ function currentMemberRole(league = getLeagueState()) {
 
 function isCurrentCommissioner(league = getLeagueState()) {
   return currentMemberRole(league) === 'commissioner';
+}
+
+function managerDisplayName(email, league = getLeagueState()) {
+  if (!email) return 'Bye';
+  const member = (league?.members || []).find((item) => item.email === email);
+  return member?.teamName || email;
+}
+
+function isActiveTradeTarget(targetManager, league = getLeagueState()) {
+  const auth = getAuthState();
+  const currentMember = (league?.members || []).find((member) => member.email === auth?.email);
+  return Boolean(targetManager
+    && targetManager !== auth?.email
+    && currentMember?.status === 'Active'
+    && (league?.members || []).some((member) => member.email === targetManager && member.status === 'Active'));
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function scoringLabel(scoring) {
@@ -817,6 +871,7 @@ function generateLocalSeasonSchedule(league = getLeagueState(), weeks = 12) {
 function standingsFromMatchups(league = getLeagueState(), matchups = getMatchups()) {
   const rows = (league?.members || []).filter((member) => member.status !== 'Removed').map((member) => ({
     email: member.email,
+    teamName: member.teamName || '',
     role: member.role,
     status: member.status || 'Invited',
     wins: 0,
@@ -982,7 +1037,8 @@ async function updateMemberApi(email, changes = {}) {
     method: 'PUT',
     body: JSON.stringify({
       role: changes.role || member.role || 'member',
-      status: changes.status || member.status || 'Invited'
+      status: changes.status || member.status || 'Invited',
+      teamName: changes.teamName ?? member.teamName ?? ''
     })
   });
   saveLeagueForAccount({
@@ -1055,6 +1111,40 @@ async function processWaiverClaimApi(claimId) {
   return true;
 }
 
+async function cancelWaiverClaimApi(claimId) {
+  const league = getLeagueState();
+  if (!getAuthState()?.token || !league?.id) {
+    cancelWaiverClaim(claimId);
+    return true;
+  }
+  const claims = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/waivers/${encodeURIComponent(claimId)}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status: 'Cancelled' })
+  });
+  if (Array.isArray(claims)) {
+    saveWaiverClaims(claims);
+  }
+  await syncActiveLeagueCollectionsFromApi();
+  return true;
+}
+
+async function reorderWaiverClaimsApi(claimIds = []) {
+  const league = getLeagueState();
+  if (!getAuthState()?.token || !league?.id) {
+    reorderWaiverClaims(claimIds);
+    return true;
+  }
+  const claims = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/waivers/reorder`, {
+    method: 'POST',
+    body: JSON.stringify({ claimIds })
+  });
+  if (Array.isArray(claims)) {
+    saveWaiverClaims(claims);
+  }
+  await syncActiveLeagueCollectionsFromApi();
+  return true;
+}
+
 async function processWaiversApi() {
   const league = getLeagueState();
   if (!getAuthState()?.token || !league?.id) {
@@ -1115,7 +1205,7 @@ async function submitTradeOfferApi(offerPlayerId, requestPlayerName, targetManag
   const league = getLeagueState();
   const player = getRoster().find((item) => item.id === offerPlayerId);
   if (!getAuthState()?.token || !league?.id) return submitTradeOffer(offerPlayerId, requestPlayerName, targetManager, requestPlayer, note);
-  if (!player) return false;
+  if (!player || !requestPlayer?.id || !isActiveTradeTarget(targetManager, league)) return false;
   await apiRequest(`/leagues/${encodeURIComponent(league.id)}/trades`, {
     method: 'POST',
     body: JSON.stringify({ offerPlayer: player, requestPlayer: requestPlayer ? normalizePlayer(requestPlayer) : null, requestPlayerName, targetManager, note })
@@ -1260,15 +1350,56 @@ async function finalizeWeekApi(week = 1) {
 function submitWaiverClaim(addPlayer, dropPlayerId = '') {
   const player = normalizePlayer(addPlayer);
   const claims = getWaiverClaims();
+  const auth = getAuthState();
+  const claimOrder = claims
+    .filter((claim) => claim.status === 'Pending' && (claim.managerEmail || auth?.email || '') === (auth?.email || ''))
+    .reduce((max, claim) => Math.max(max, Number(claim.claimOrder || 0)), 0) + 1;
   claims.unshift({
     id: `waiver-${Date.now().toString(36)}`,
     addPlayer: player,
     dropPlayerId,
     status: 'Pending',
+    managerEmail: auth?.email || '',
+    priority: getWaiverPriority().find((item) => item.managerEmail === auth?.email)?.priority || 1,
+    claimOrder,
     createdAt: new Date().toISOString()
   });
   saveWaiverClaims(claims);
   addTransaction('Waiver Claim', `Claimed ${player.name}`);
+}
+
+function cancelWaiverClaim(claimId) {
+  const auth = getAuthState();
+  const commissioner = isCurrentCommissioner();
+  const claims = getWaiverClaims();
+  let cancelled = false;
+  const next = claims.map((claim) => {
+    const mine = !claim.managerEmail || claim.managerEmail === auth?.email;
+    if (claim.id === claimId && claim.status === 'Pending' && (mine || commissioner)) {
+      cancelled = true;
+      return { ...claim, status: 'Cancelled' };
+    }
+    return claim;
+  });
+  if (cancelled) {
+    saveWaiverClaims(next);
+    addTransaction('Waiver Cancelled', 'Cancelled waiver claim');
+  }
+  return cancelled;
+}
+
+function reorderWaiverClaims(claimIds = []) {
+  const auth = getAuthState();
+  const orderById = new Map(claimIds.map((id, index) => [id, index + 1]));
+  const claims = getWaiverClaims().map((claim) => {
+    const mine = !claim.managerEmail || claim.managerEmail === auth?.email;
+    if (mine && claim.status === 'Pending' && orderById.has(claim.id)) {
+      return { ...claim, claimOrder: orderById.get(claim.id) };
+    }
+    return claim;
+  });
+  saveWaiverClaims(claims);
+  return claims;
 }
 
 function processWaiverClaim(claimId) {
@@ -1294,7 +1425,11 @@ function processAllWaiverClaims() {
   if (!waiverDeadlinePassed()) {
     return { processed: [], cancelled: [], claims: getWaiverClaims() };
   }
-  const claims = getWaiverClaims().slice().sort((a, b) => Number(a.priority || 999) - Number(b.priority || 999));
+  const claims = getWaiverClaims().slice().sort((a, b) => (
+    Number(a.priority || 999) - Number(b.priority || 999)
+    || Number(a.claimOrder || 999) - Number(b.claimOrder || 999)
+    || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  ));
   const processed = [];
   claims.forEach((claim) => {
     if (claim.status === 'Pending') {
@@ -1306,7 +1441,7 @@ function processAllWaiverClaims() {
 
 function submitTradeOffer(offerPlayerId, requestPlayerName, targetManager, requestPlayer = null, note = '') {
   const player = getRoster().find((item) => item.id === offerPlayerId);
-  if (!player || playerLockedInTrade(offerPlayerId)) return false;
+  if (!player || !requestPlayer?.id || playerLockedInTrade(offerPlayerId) || !isActiveTradeTarget(targetManager)) return false;
   const rules = tradeRules();
   const auth = getAuthState();
   const offers = getTradeOffers();
@@ -1325,7 +1460,7 @@ function submitTradeOffer(offerPlayerId, requestPlayerName, targetManager, reque
     createdAt: new Date().toISOString()
   });
   saveTradeOffers(offers);
-  addTransaction('Trade Offer', `Offered ${player.name} to ${targetManager || 'another manager'}`);
+  addTransaction('Trade Offer', `Offered ${player.name} to ${managerDisplayName(targetManager) || 'another manager'}`);
   return true;
 }
 

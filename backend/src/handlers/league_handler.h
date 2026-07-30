@@ -119,6 +119,17 @@ void handleProcessWaiver(const drogon::HttpRequestPtr &req,
                          const std::string &leagueId,
                          const std::string &claimId);
 
+void handleUpdateWaiverStatus(const drogon::HttpRequestPtr &req,
+                              std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                              const std::string &accountEmail,
+                              const std::string &leagueId,
+                              const std::string &claimId);
+
+void handleReorderWaivers(const drogon::HttpRequestPtr &req,
+                          std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                          const std::string &accountEmail,
+                          const std::string &leagueId);
+
 void handleProcessWaivers(const drogon::HttpRequestPtr &req,
                           std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                           const std::string &accountEmail,

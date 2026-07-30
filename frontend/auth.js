@@ -1,4 +1,5 @@
-const apiBase = '/api';
+const apiBase = window.CFF_API_BASE || '/api';
+const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO !== false;
 
 const signupForm = document.getElementById('signup-form');
 const signupEmail = document.getElementById('signup-email');
@@ -72,6 +73,10 @@ async function submitAuthForm(path, email, password, statusEl, redirectTo) {
     saveAuth(data.email || email, data.token);
     setStatus(statusEl, data.message || 'Success');
   } catch {
+    if (!allowLocalDemo) {
+      setStatus(statusEl, 'API unavailable. Local demo sessions are disabled for this deployment.', true);
+      return;
+    }
     const local = createLocalSession(email);
     saveAuth(local.email, local.token);
     setStatus(statusEl, local.message);
@@ -102,6 +107,13 @@ signOutBtn?.addEventListener('click', () => {
   setStatus(loginStatus, 'Signed out');
 });
 
-loadStoredAuth();
-updateAuthUi();
-stripUrlParams();
+async function initAuthPage() {
+  loadStoredAuth();
+  updateAuthUi();
+  await validateAuthSession();
+  loadStoredAuth();
+  updateAuthUi();
+  stripUrlParams();
+}
+
+initAuthPage();

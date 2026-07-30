@@ -11,5 +11,6 @@
 - If a secret is committed, rotate it first, then scrub it from history (see `docs/secrets.md` for commands).
 
 ## Pre-merge checks
-- Run `pre-commit run --all-files` to execute `detect-secrets` and `gitleaks`.
-- Run the "Secret scanning" GitHub Action results before merging to ensure no secrets are introduced.
+- Run available secret scanning before merging, such as `gitleaks detect --source .`.
+- If you use pre-commit locally, wire it to `detect-secrets` or `gitleaks` and run `pre-commit run --all-files`.
+- Review GitHub secret scanning results before merging public contributions.

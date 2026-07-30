@@ -3,7 +3,8 @@ services:
     name: college-ff-api
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
-    preDeployCommand: psql "$DB_URL" -f /srv/db/schema.sql
+    healthCheckPath: /health
+    preDeployCommand: sh /srv/db/migrate.sh
     envVars:
       - key: DB_URL
         fromDatabase:
@@ -15,6 +16,16 @@ services:
         sync: false
       - key: CFBD_API_KEY
         sync: false
+      - key: CFF_REQUIRE_DB
+        value: "true"
+      - key: CFF_ALLOW_SHARED_SECRET_AUTH
+        value: "false"
+      - key: CFF_REQUIRE_EMAIL_VERIFICATION
+        value: "false"
+      - key: CFF_EXPOSE_AUTH_TOKENS
+        value: "false"
+      - key: CFF_LOG_AUTH_TOKENS
+        value: "false"
 
 databases:
   - name: college-ff-db

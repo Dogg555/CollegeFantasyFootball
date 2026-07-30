@@ -37,6 +37,7 @@ const tradeRequestPlayer = document.getElementById('trade-request-player');
 const tradeRequestPlayerId = document.getElementById('trade-request-player-id');
 const tradeNote = document.getElementById('trade-note');
 const tradeStatus = document.getElementById('trade-status');
+const tradeSubmitButton = tradeForm?.querySelector('button[type="submit"]');
 const tradeList = document.getElementById('trade-list');
 const transactionList = document.getElementById('transaction-list');
 const commissionerSettings = document.getElementById('commissioner-settings');
@@ -287,18 +288,37 @@ function renderWaivers() {
     waiverList.textContent = 'No waiver claims submitted.';
     return;
   }
+  const authEmail = getAuthState()?.email || '';
+  const orderedClaims = claims.slice().sort((a, b) => (
+    Number(a.priority || 999) - Number(b.priority || 999)
+    || Number(a.claimOrder || 999) - Number(b.claimOrder || 999)
+    || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  ));
+  const myPendingIds = orderedClaims
+    .filter((claim) => claim.status === 'Pending' && (!claim.managerEmail || claim.managerEmail === authEmail))
+    .map((claim) => claim.id);
   const processAll = isCurrentCommissioner()
-    ? `<div class="row"><div><strong>Pending waiver run</strong><div class="muted">${deadlinePassed ? 'Process claims by priority, then submitted time.' : `Claims process after ${new Date(rules.claimDeadline).toLocaleString()}.`}</div></div><button class="button button--primary" data-process-all-waivers type="button" ${deadlinePassed ? '' : 'disabled'}>Process all</button></div>`
+    ? `<div class="row"><div><strong>Pending waiver run</strong><div class="muted">${deadlinePassed ? 'Process claims by priority, claim order, then submitted time.' : `Claims process after ${new Date(rules.claimDeadline).toLocaleString()}.`}</div></div><button class="button button--primary" data-process-all-waivers type="button" ${deadlinePassed ? '' : 'disabled'}>Process all</button></div>`
     : '';
-  waiverList.innerHTML = processAll + claims.map((claim) => `
+  waiverList.innerHTML = processAll + orderedClaims.map((claim) => {
+    const mine = !claim.managerEmail || claim.managerEmail === authEmail;
+    const pending = claim.status === 'Pending';
+    const myIndex = myPendingIds.indexOf(claim.id);
+    return `
     <div class="row">
       <div>
         <strong>${claim.addPlayer.name}</strong>
-        <div class="muted">${claim.status} / Priority ${claim.priority || '--'} / ${claim.managerEmail || 'You'} / ${new Date(claim.createdAt).toLocaleString()}</div>
+        <div class="muted">${claim.status} / Priority ${claim.priority || '--'} / Claim ${claim.claimOrder || '--'} / ${escapeHtml(managerDisplayName(claim.managerEmail || authEmail, leagueState))} / ${new Date(claim.createdAt).toLocaleString()}</div>
       </div>
-      ${claim.status === 'Pending' ? `<button class="button" data-process-waiver="${claim.id}" type="button" ${deadlinePassed ? '' : 'disabled'}>Process</button>` : `<span class="badge">Done</span>`}
+      <div class="actions">
+        ${pending && mine ? `<button class="button button--ghost" data-waiver-up="${claim.id}" type="button" ${myIndex > 0 ? '' : 'disabled'}>Up</button>` : ''}
+        ${pending && mine ? `<button class="button button--ghost" data-waiver-down="${claim.id}" type="button" ${myIndex >= 0 && myIndex < myPendingIds.length - 1 ? '' : 'disabled'}>Down</button>` : ''}
+        ${pending && (mine || isCurrentCommissioner()) ? `<button class="button button--ghost" data-cancel-waiver="${claim.id}" type="button">Cancel</button>` : ''}
+        ${pending && isCurrentCommissioner() ? `<button class="button" data-process-waiver="${claim.id}" type="button" ${deadlinePassed ? '' : 'disabled'}>Process</button>` : !pending ? `<span class="badge">Done</span>` : ''}
+      </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
   waiverList.querySelector('[data-process-all-waivers]')?.addEventListener('click', async () => {
     try {
       const result = await processWaiversApi();
@@ -322,14 +342,48 @@ function renderWaivers() {
       renderLeague();
     });
   });
+  waiverList.querySelectorAll('[data-cancel-waiver]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        await cancelWaiverClaimApi(button.dataset.cancelWaiver);
+        if (waiverStatus) waiverStatus.textContent = 'Waiver claim cancelled.';
+      } catch {
+        if (!cancelWaiverClaim(button.dataset.cancelWaiver) && waiverStatus) {
+          waiverStatus.textContent = 'Could not cancel waiver claim.';
+        }
+      }
+      renderLeague();
+    });
+  });
+  const moveClaim = async (claimId, direction) => {
+    const ids = myPendingIds.slice();
+    const index = ids.indexOf(claimId);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= ids.length) return;
+    [ids[index], ids[nextIndex]] = [ids[nextIndex], ids[index]];
+    try {
+      await reorderWaiverClaimsApi(ids);
+      if (waiverStatus) waiverStatus.textContent = 'Waiver claim order updated.';
+    } catch {
+      reorderWaiverClaims(ids);
+      if (waiverStatus) waiverStatus.textContent = 'Waiver claim order saved locally.';
+    }
+    renderLeague();
+  };
+  waiverList.querySelectorAll('[data-waiver-up]').forEach((button) => {
+    button.addEventListener('click', () => moveClaim(button.dataset.waiverUp, -1));
+  });
+  waiverList.querySelectorAll('[data-waiver-down]').forEach((button) => {
+    button.addEventListener('click', () => moveClaim(button.dataset.waiverDown, 1));
+  });
 }
 
 function renderTrades(leagueState) {
   const roster = getRoster();
   const canManage = isCurrentCommissioner(leagueState);
   const managers = (leagueState?.members || [])
-    .filter((member) => member.email !== getAuthState()?.email && member.status !== 'Removed')
-    .map((member) => member.email);
+    .filter((member) => isActiveTradeTarget(member.email, leagueState))
+    .map((member) => ({ email: member.email, label: managerDisplayName(member.email, leagueState) }));
   if (tradeOfferPlayer) {
     const unlocked = roster.filter((player) => !playerLockedInTrade(player.id));
     tradeOfferPlayer.innerHTML = unlocked.length
@@ -338,8 +392,15 @@ function renderTrades(leagueState) {
   }
   if (tradeTargetManager) {
     tradeTargetManager.innerHTML = managers.length
-      ? managers.map((manager) => `<option value="${manager}">${manager}</option>`).join('')
-      : '<option value="Manager 2">Manager 2</option>';
+      ? managers.map((manager) => `<option value="${escapeHtml(manager.email)}">${escapeHtml(manager.label)}</option>`).join('')
+      : '<option value="">Invite another manager first</option>';
+    tradeTargetManager.disabled = !managers.length;
+  }
+  if (tradeSubmitButton) {
+    tradeSubmitButton.disabled = !managers.length || !roster.some((player) => !playerLockedInTrade(player.id));
+  }
+  if (tradeStatus && !managers.length) {
+    tradeStatus.textContent = 'Invite and confirm another manager before sending trade offers.';
   }
   if (tradeRequestPlayerId) {
     renderRequestedTradePlayers();
@@ -356,12 +417,12 @@ function renderTrades(leagueState) {
     const expires = offer.expiresAt ? ` / Expires ${new Date(offer.expiresAt).toLocaleString()}` : '';
     const mine = offer.offeredByEmail === getAuthState()?.email;
     const target = offer.offeredToEmail === getAuthState()?.email || canManage;
-    const note = offer.note ? `<div class="muted small">${offer.note}</div>` : '';
+    const note = offer.note ? `<div class="muted small">${escapeHtml(offer.note)}</div>` : '';
     return `
     <div class="row">
       <div>
-        <strong>${offer.offerPlayer.name} for ${offer.requestPlayer?.name || offer.requestPlayerName || 'requested return'}</strong>
-        <div class="muted">${offer.targetManager || offer.offeredToEmail || 'Manager'} / ${offer.status}${offer.requiresApproval ? ' / Approval required' : ''}${expires}</div>
+        <strong>${escapeHtml(offer.offerPlayer.name)} for ${escapeHtml(offer.requestPlayer?.name || offer.requestPlayerName || 'requested return')}</strong>
+        <div class="muted">${escapeHtml(managerDisplayName(offer.offeredToEmail || offer.targetManager, leagueState))} / ${offer.status}${offer.requiresApproval ? ' / Approval required' : ''}${expires}</div>
         ${note}
       </div>
       <div class="actions">
@@ -428,6 +489,12 @@ function renderTrades(leagueState) {
 async function renderRequestedTradePlayers() {
   if (!tradeRequestPlayerId) return;
   const target = tradeTargetManager?.value || '';
+  if (!target) {
+    tradeRequestPlayerId.innerHTML = '<option value="">No target manager selected</option>';
+    tradeRequestPlayerId.disabled = true;
+    return;
+  }
+  tradeRequestPlayerId.disabled = false;
   tradeRequestPlayerId.innerHTML = '<option value="">Loading roster...</option>';
   try {
     const roster = await getManagerRosterApi(target);
@@ -453,8 +520,9 @@ function renderTransactions() {
   transactionList.innerHTML = transactions.map((txn) => `
     <div class="row">
       <div>
-        <strong>${txn.type}</strong>
-        <div class="muted">${txn.summary}</div>
+        <strong>${escapeHtml(txn.type)}</strong>
+        <div class="muted">${escapeHtml(txn.summary)}</div>
+        ${txn.managerEmail ? `<div class="muted small">${escapeHtml(managerDisplayName(txn.managerEmail))}</div>` : ''}
       </div>
       <div class="label">${new Date(txn.createdAt).toLocaleString()}</div>
     </div>
@@ -551,7 +619,7 @@ function renderScoreboard(leagueState) {
   scoreboardList.innerHTML = matchups.map((matchup) => `
     <div class="row">
       <div>
-        <strong>${matchup.homeManager} vs ${matchup.awayManager || 'Bye'}</strong>
+        <strong>${escapeHtml(managerDisplayName(matchup.homeManager, leagueState))} vs ${escapeHtml(managerDisplayName(matchup.awayManager, leagueState))}</strong>
         <div class="muted">Week ${matchup.week || activeScoreboardWeek} / ${matchup.status === 'final' ? 'Final' : 'Projected matchup'}</div>
       </div>
       <div class="score">${Number(matchup.homeScore).toFixed(1)} - ${Number(matchup.awayScore).toFixed(1)}</div>
@@ -569,8 +637,8 @@ function renderStandings(leagueState) {
   standingsList.innerHTML = standings.map((manager, index) => `
     <div class="row">
       <div>
-        <strong>${index + 1}. ${manager.email}</strong>
-        <div class="muted">${manager.role === 'commissioner' ? 'Commissioner' : 'Manager'} / PF ${Number(manager.pointsFor).toFixed(1)}</div>
+        <strong>${index + 1}. ${escapeHtml(manager.teamName || manager.email)}</strong>
+        <div class="muted">${escapeHtml(manager.email)} / ${manager.role === 'commissioner' ? 'Commissioner' : 'Manager'} / PF ${Number(manager.pointsFor).toFixed(1)}</div>
       </div>
       <span class="badge">${manager.wins}-${manager.losses}${manager.ties ? `-${manager.ties}` : ''}</span>
     </div>
@@ -625,7 +693,7 @@ function renderWaiverPriority(leagueState = getLeagueState()) {
       return `
         <div class="row">
           <div>
-            <strong>${Number(item.priority || 0)}. ${email}</strong>
+            <strong>${Number(item.priority || 0)}. ${escapeHtml(managerDisplayName(email, leagueState))}</strong>
             <div class="muted">${item.role === 'commissioner' ? 'Commissioner' : 'Manager'} / ${item.status || 'Active'} / ${pendingByManager[email] || 0} pending claim${pendingByManager[email] === 1 ? '' : 's'}</div>
           </div>
           <span class="badge">${active ? 'You' : leagueState?.commissionerEmail === email ? 'Commish' : 'Priority'}</span>
@@ -688,11 +756,15 @@ function renderManagers(leagueState) {
   managerList.innerHTML = managers.map((member, index) => `
     <div class="row">
       <div>
-        <strong>Manager ${index + 1}</strong>
-        <div class="muted">${member.email}</div>
+        <strong>${escapeHtml(member.teamName || `Manager ${index + 1}`)}</strong>
+        <div class="muted">${escapeHtml(member.email)}</div>
         <div class="muted small">${member.role === 'commissioner' ? 'Commissioner' : 'Member'} / ${member.status || 'Invited'}</div>
       </div>
       <div class="actions">
+        ${canManage ? `
+          <input class="lineup-select manager-name-input" data-member-team-name="${escapeHtml(member.email)}" type="text" value="${escapeHtml(member.teamName || '')}" placeholder="Team name">
+          <button class="button" data-member-team-save="${escapeHtml(member.email)}" type="button">Save name</button>
+        ` : ''}
         <span class="pill pill--muted">${member.status || 'Invited'}</span>
         ${canManage && member.email !== getAuthState()?.email ? `
           <button class="button" data-member-activate="${member.email}" type="button">Confirm</button>
@@ -716,6 +788,21 @@ function renderManagers(leagueState) {
     button.addEventListener('click', async () => {
       const member = managers.find((item) => item.email === button.dataset.memberRole);
       await updateMemberApi(button.dataset.memberRole, { role: button.dataset.role, status: member?.status || 'Invited' });
+      await refreshLeagueFromApi();
+      renderLeague();
+    });
+  });
+  managerList.querySelectorAll('[data-member-team-save]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const email = button.dataset.memberTeamSave;
+      const member = managers.find((item) => item.email === email);
+      const input = Array.from(managerList.querySelectorAll('[data-member-team-name]'))
+        .find((item) => item.dataset.memberTeamName === email);
+      await updateMemberApi(email, {
+        role: member?.role || 'member',
+        status: member?.status || 'Invited',
+        teamName: input?.value?.trim() || ''
+      });
       await refreshLeagueFromApi();
       renderLeague();
     });
@@ -932,6 +1019,10 @@ waiverForm?.addEventListener('submit', async (event) => {
 
 tradeForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (!tradeTargetManager?.value) {
+    if (tradeStatus) tradeStatus.textContent = 'Invite and confirm another manager before sending trade offers.';
+    return;
+  }
   let ok = false;
   let requestPlayer = samplePlayers.find((item) => item.id === tradeRequestPlayerId?.value);
   try {
@@ -945,7 +1036,7 @@ tradeForm?.addEventListener('submit', async (event) => {
   } catch {
     ok = submitTradeOffer(tradeOfferPlayer.value, tradeRequestPlayer.value.trim(), tradeTargetManager.value, requestPlayer, tradeNote?.value.trim() || '');
   }
-  if (tradeStatus) tradeStatus.textContent = ok ? 'Trade offer sent.' : 'Draft or add a player before proposing a trade.';
+  if (tradeStatus) tradeStatus.textContent = ok ? 'Trade offer sent.' : 'Select a roster player, target manager, and requested player before proposing a trade.';
   if (ok) tradeRequestPlayer.value = '';
   if (ok && tradeNote) tradeNote.value = '';
   renderLeague();
@@ -1079,6 +1170,7 @@ finalizeWeekBtn?.addEventListener('click', async () => {
 });
 
 async function initLeaguePage() {
+  await validateAuthSession();
   renderLeague();
   setActiveLeagueTab(window.location.hash.replace('#', '') || 'overview');
   renderCommissionerAccess(isCurrentCommissioner(getLeagueState()));

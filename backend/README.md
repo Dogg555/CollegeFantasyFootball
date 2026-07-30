@@ -15,25 +15,72 @@ This folder holds the C++ Drogon API for the project.
 ## Quick build hint
 With Drogon and dependencies available, configure and build using CMake into `build/`, or run through the provided Dockerfile for an isolated test run. Configure environment variables like `JWT_SECRET`, `DB_URL`, and `ALLOWED_ORIGINS` at runtime rather than hardcoding them.
 
-When `DB_URL` is set, auth and fantasy league data are persisted in Postgres. When `DB_URL` is not set, the API keeps the current local in-memory fallback for fast UI prototyping.
+When `DB_URL` is set, auth and fantasy league data are persisted in Postgres. When `DB_URL` is not set, the API keeps the current local in-memory fallback for fast UI prototyping unless `CFF_REQUIRE_DB=true` is set. Use `CFF_REQUIRE_DB=true` for production and Render.
 
 ## Render deployment
 The repo root includes `render.yaml` for a Docker web service and a managed Postgres database. The backend image includes `psql`, and Render runs:
 
 ```sh
-psql "$DB_URL" -f /srv/db/schema.sql
+sh /srv/db/migrate.sh
 ```
 
-as a pre-deploy migration step.
+as a pre-deploy migration step. The runner records applied versions in `schema_migrations`, applies `schema.sql` once as `001_schema_snapshot`, then applies future files from `backend/db/migrations/*.sql`.
+
+Runtime environment:
+- `PORT` - Render sets this; default is `8080`.
+- `DB_URL` - required for persistent auth, leagues, rosters, drafts, waivers, trades, scoring, and ingestion status.
+- `JWT_SECRET` - required for authenticated API access.
+- `ALLOWED_ORIGINS` - comma-separated frontend origins that can call the API.
+- `CFBD_API_KEY` - required for CollegeFootballData ingestion.
+- `CFBD_INGEST_ON_STARTUP` - optional; set to `true` only when you want ingest to run during service startup.
+- `CFF_REQUIRE_DB` - set to `true` in production to reject auth when Postgres is not configured.
+- `CFF_ALLOW_SHARED_SECRET_AUTH` - defaults off; only set `true` for legacy admin-token compatibility.
+- `CFF_REQUIRE_EMAIL_VERIFICATION` - blocks login until `/api/auth/verify-email` succeeds when set to `true`.
+- `CFF_EXPOSE_AUTH_TOKENS` - returns reset/verification tokens in responses for smoke tests only.
+- `CFF_LOG_AUTH_TOKENS` - logs reset/verification tokens for local debugging only. Keep `false` in hosted/open-source deployments.
+
+If the static frontend is hosted away from the API, set `window.CFF_API_BASE` in `frontend/config.js` to the API origin plus `/api`, for example:
+
+```js
+window.CFF_API_BASE = 'https://YOUR-RENDER-SERVICE.onrender.com/api';
+```
+
+Post-deploy smoke checks:
+```sh
+curl https://YOUR-RENDER-SERVICE.onrender.com/health
+curl https://YOUR-RENDER-SERVICE.onrender.com/api/health
+curl -X POST https://YOUR-RENDER-SERVICE.onrender.com/api/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"change-me-now"}'
+curl https://YOUR-RENDER-SERVICE.onrender.com/api/admin/ingest/cfbd/status \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+Automated smoke checks:
+```sh
+CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com python scripts/api_smoke_tests.py
+```
 
 ## CFBD ingestion (players)
 The backend can fetch player data directly from the CollegeFootballData API and persist it into Postgres.
 
 Triggers:
 - Admin HTTP: `POST /api/admin/ingest/cfbd` (requires the same bearer token used for other secure endpoints).
+- Admin status: `GET /api/admin/ingest/cfbd/status`.
+- Frontend: Players page, Data Ingestion panel.
 
 ## Fantasy league API
 All league and transaction routes require `Authorization: Bearer <token>`. The API enforces account ownership and a maximum of three leagues per account.
+
+Auth:
+- `POST /api/auth/signup`
+- `POST /api/auth/login`
+- `GET /api/auth/validate`
+- `POST /api/auth/logout`
+- `POST /api/auth/verify-email`
+- `POST /api/auth/resend-verification`
+- `POST /api/auth/request-password-reset`
+- `POST /api/auth/reset-password`
 
 League management:
 - `GET /api/leagues`
@@ -67,6 +114,10 @@ Waivers:
 - `POST /api/leagues/{leagueId}/waivers`
 - `POST /api/leagues/{leagueId}/waivers/process`
 - `POST /api/leagues/{leagueId}/waivers/{claimId}/process`
+- `POST /api/leagues/{leagueId}/waivers/{claimId}/status`
+- `POST /api/leagues/{leagueId}/waivers/reorder`
+- `GET /api/leagues/{leagueId}/waiver-priority`
+- `POST /api/leagues/{leagueId}/waiver-priority/reset`
 
 Trades:
 - `GET /api/leagues/{leagueId}/trades`

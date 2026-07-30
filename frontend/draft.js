@@ -204,7 +204,7 @@ function renderDraftPicks() {
   if (draftCurrentPick) {
     draftCurrentPick.textContent = meta.status === 'complete' ? 'Complete' : `Pick ${meta.currentPick || picks.length + 1}`;
   }
-  if (draftCurrentManager) draftCurrentManager.textContent = meta.status === 'complete' ? 'Draft complete' : manager || 'Manager TBD';
+  if (draftCurrentManager) draftCurrentManager.textContent = meta.status === 'complete' ? 'Draft complete' : managerDisplayName(manager) || 'Manager TBD';
   if (draftStatus) draftStatus.textContent = meta.status === 'complete' ? 'Complete' : isMyDraftTurn(meta) ? 'Your pick' : 'Waiting';
   renderDraftClock();
   if (!draftPickList) return;
@@ -218,7 +218,7 @@ function renderDraftPicks() {
       <div class="row">
         <div>
           <strong>${pick.pickNumber}. ${player.name || 'Unknown player'}</strong>
-          <div class="muted">${player.team || 'Team TBD'} ${player.position || ''} / ${pick.managerEmail || 'Manager'}</div>
+          <div class="muted">${player.team || 'Team TBD'} ${player.position || ''} / ${escapeHtml(managerDisplayName(pick.managerEmail))}</div>
         </div>
         <span class="badge">${Number(player.projection || 0).toFixed(1)}</span>
       </div>
@@ -317,6 +317,7 @@ document.getElementById('nav-logout')?.addEventListener('click', () => {
 });
 
 async function initDraftPage() {
+  await validateAuthSession();
   renderAll();
   await refreshDraftLeagueShell();
   renderAll();

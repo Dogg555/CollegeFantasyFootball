@@ -65,7 +65,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY --from=build /app/build/college_ff_server /srv/college_ff_server
-COPY --from=build /app/db/schema.sql /srv/db/schema.sql
+COPY --from=build /app/db /srv/db
 
 EXPOSE 8080
 ENV PORT=8080

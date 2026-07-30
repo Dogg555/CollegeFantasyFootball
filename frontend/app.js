@@ -1,4 +1,4 @@
-const apiBase = '/api';
+const apiBase = window.CFF_API_BASE || '/api';
 
 const modal = document.getElementById('league-modal');
 const modalBackdrop = modal?.querySelector('.modal__backdrop');
@@ -60,6 +60,10 @@ function updateAuthUi() {
 
 async function refreshState() {
   loadStoredAuth();
+  if (authState?.token) {
+    await validateAuthSession();
+    loadStoredAuth();
+  }
   if (authState?.token) {
     try {
       await syncLeaguesFromApi();

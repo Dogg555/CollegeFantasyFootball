@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: JavaScript syntax checks
+        run: |
+          node --check frontend/state.js
+          node --check frontend/auth.js
+          node --check frontend/league.js
+          node --check frontend/draft.js
+          node --check frontend/app.js
+          node --check frontend/players.js
+
+  api-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build backend Docker image
+        run: docker build -f backend/Dockerfile -t college-ff-api backend
+      - name: Run migrations
+        run: |
+          docker run --rm --network host \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            college-ff-api sh /srv/db/migrate.sh
+      - name: Start backend
+        run: |
+          docker run -d --name college-ff-api --network host \
+            -e PORT=8080 \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            -e JWT_SECRET=ci-secret \
+            -e CFF_REQUIRE_DB=true \
+            -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_EXPOSE_AUTH_TOKENS=true \
+            college-ff-api
+      - name: Wait for health
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/health; then exit 0; fi
+            sleep 2
+          done
+          docker logs college-ff-api
+          exit 1
+      - name: API smoke tests
+        env:
+          CFF_API_BASE_URL: http://127.0.0.1:8080
+        run: python scripts/api_smoke_tests.py
+      - name: Backend logs
+        if: always()
+        run: docker logs college-ff-api || true

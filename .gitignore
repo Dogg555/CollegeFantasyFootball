@@ -3,12 +3,9 @@
 ############################################
 
 # Local-only folders
-scripts/
-docs/
-db/
+/db/
 
 # Backend local DB / runtime data
-backend/db/
 backend/db_schema/
 
 # Environment variables

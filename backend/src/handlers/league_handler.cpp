@@ -402,7 +402,7 @@ std::string statusForUi(const std::string &status) {
 
 Json::Value membersForLeague(PGconn *conn, const std::string &leagueId) {
     auto result = execParams(conn,
-                             "SELECT email, role, status, COALESCE(invited_by_email, ''), "
+                             "SELECT email, role, status, COALESCE(invited_by_email, ''), COALESCE(team_name, ''), "
                              "COALESCE(to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
                              "FROM league_members WHERE league_id = $1 AND status <> 'removed' ORDER BY role, created_at",
                              {leagueId});
@@ -416,7 +416,8 @@ Json::Value membersForLeague(PGconn *conn, const std::string &leagueId) {
         member["role"] = cell(result.get(), row, 1);
         member["status"] = statusForUi(cell(result.get(), row, 2));
         member["invitedByEmail"] = cell(result.get(), row, 3);
-        member["createdAt"] = cell(result.get(), row, 4);
+        member["teamName"] = cell(result.get(), row, 4);
+        member["createdAt"] = cell(result.get(), row, 5);
         members.append(member);
     }
     return members;
@@ -484,20 +485,29 @@ bool dbIsCommissioner(const std::string &accountEmail, const std::string &league
     return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0;
 }
 
+bool dbIsActiveMember(PGconn *conn, const std::string &leagueId, const std::string &memberEmail) {
+    auto result = execParams(conn,
+                             "SELECT 1 FROM league_members WHERE league_id = $1 AND email = $2 AND status = 'active' LIMIT 1",
+                             {leagueId, memberEmail});
+    return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0;
+}
+
 bool dbUpsertMember(PGconn *conn,
                     const std::string &leagueId,
                     const std::string &email,
                     const std::string &role,
                     const std::string &status,
-                    const std::string &invitedByEmail) {
+                    const std::string &invitedByEmail,
+                    const std::string &teamName = "") {
     auto result = execParams(conn,
-                             "INSERT INTO league_members (league_id, email, role, status, invited_by_email, joined_at) "
-                             "VALUES ($1, $2, $3, $4, NULLIF($5, ''), CASE WHEN $4 = 'active' THEN NOW() ELSE NULL END) "
+                             "INSERT INTO league_members (league_id, email, role, status, invited_by_email, team_name, joined_at) "
+                             "VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, CASE WHEN $4 = 'active' THEN NOW() ELSE NULL END) "
                              "ON CONFLICT (league_id, email) DO UPDATE SET "
                              "role = EXCLUDED.role, status = EXCLUDED.status, invited_by_email = EXCLUDED.invited_by_email, "
+                             "team_name = CASE WHEN EXCLUDED.team_name <> '' THEN EXCLUDED.team_name ELSE league_members.team_name END, "
                              "joined_at = CASE WHEN EXCLUDED.status = 'active' AND league_members.joined_at IS NULL THEN NOW() ELSE league_members.joined_at END, "
                              "updated_at = NOW()",
-                             {leagueId, email, role, status, invitedByEmail});
+                             {leagueId, email, role, status, invitedByEmail, teamName});
     return resultOk(result.get(), PGRES_COMMAND_OK);
 }
 
@@ -629,6 +639,20 @@ bool canAccessLeagueLocked(const std::string &accountEmail, const std::string &l
     for (const auto &member : membersIt->second) {
         if (cff::getStringOrDefault(member, "email") == accountEmail
             && lowerString(cff::getStringOrDefault(member, "status", "Active")) != "removed") {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool isActiveMemberLocked(const std::string &accountEmail, const std::string &leagueId) {
+    const auto membersIt = membersByLeague.find(leagueId);
+    if (membersIt == membersByLeague.end()) {
+        return false;
+    }
+    for (const auto &member : membersIt->second) {
+        if (cff::getStringOrDefault(member, "email") == accountEmail
+            && lowerString(cff::getStringOrDefault(member, "status", "Active")) == "active") {
             return true;
         }
     }
@@ -954,7 +978,9 @@ std::optional<Json::Value> dbUpdateMember(const std::string &accountEmail,
                                           const std::string &leagueId,
                                           const std::string &memberEmail,
                                           const std::string &role,
-                                          const std::string &status) {
+                                          const std::string &status,
+                                          const std::string &teamName,
+                                          bool updateTeamName) {
     if (!dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
@@ -963,7 +989,13 @@ std::optional<Json::Value> dbUpdateMember(const std::string &accountEmail,
     if (!(safeStatus == "active" || safeStatus == "invited" || safeStatus == "removed")) {
         safeStatus = "invited";
     }
-    if (!dbUpsertMember(conn.get(), leagueId, memberEmail, safeRole, safeStatus, accountEmail)) return std::nullopt;
+    if (!dbUpsertMember(conn.get(), leagueId, memberEmail, safeRole, safeStatus, accountEmail, teamName)) return std::nullopt;
+    if (updateTeamName) {
+        auto nameUpdate = execParams(conn.get(),
+                                     "UPDATE league_members SET team_name = $3, updated_at = NOW() WHERE league_id = $1 AND email = $2",
+                                     {leagueId, memberEmail, teamName});
+        if (!resultOk(nameUpdate.get(), PGRES_COMMAND_OK)) return std::nullopt;
+    }
     if (safeStatus == "removed") {
         auto removedInvite = execParams(conn.get(),
                                         "UPDATE leagues SET invited_emails = array_remove(invited_emails, $3), updated_at = NOW() "
@@ -1056,6 +1088,17 @@ bool dbPlayerRosteredInLeague(PGconn *conn, const std::string &leagueId, const s
     return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0;
 }
 
+bool dbManagerHasPlayer(PGconn *conn,
+                        const std::string &leagueId,
+                        const std::string &managerEmail,
+                        const std::string &playerId) {
+    if (playerId.empty()) return false;
+    auto result = execParams(conn,
+                             "SELECT 1 FROM rosters WHERE league_id = $1 AND manager_email = $2 AND player_id = $3 LIMIT 1",
+                             {leagueId, managerEmail, playerId});
+    return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0;
+}
+
 std::optional<Json::Value> dbRosterRules(const std::string &leagueId) {
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
@@ -1112,6 +1155,20 @@ bool dbPlayerLockedInTrade(PGconn *conn,
                              "OR (offered_to_email = $2 AND $3 = ANY(requested_player_ids))) LIMIT 1",
                              {leagueId, managerEmail, playerId});
     return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0;
+}
+
+std::optional<Json::Value> dbRosterPlayer(PGconn *conn,
+                                          const std::string &leagueId,
+                                          const std::string &managerEmail,
+                                          const std::string &playerId) {
+    if (playerId.empty()) return std::nullopt;
+    auto result = execParams(conn,
+                             "SELECT player_snapshot::text FROM rosters WHERE league_id = $1 AND manager_email = $2 AND player_id = $3",
+                             {leagueId, managerEmail, playerId});
+    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return normalizePlayerJson(jsonFromString(cell(result.get(), 0, 0)));
 }
 
 std::optional<std::string> dbAssignRosterSlot(PGconn *conn,
@@ -1486,9 +1543,9 @@ std::optional<Json::Value> dbListWaivers(const std::string &accountEmail, const 
     auto result = execParams(conn.get(),
                              "SELECT id, add_player_id, add_player_snapshot::text, COALESCE(drop_player_id, ''), "
                              "status, COALESCE(to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
-                             "manager_email, priority "
+                             "manager_email, priority, claim_order "
                              "FROM waiver_claims WHERE league_id = $1 AND ($3 = 'true' OR manager_email = $2) "
-                             "ORDER BY status = 'pending' DESC, priority ASC, created_at ASC",
+                             "ORDER BY status = 'pending' DESC, priority ASC, claim_order ASC, created_at ASC",
                              {leagueId, accountEmail, commissioner ? "true" : "false"});
     if (!resultOk(result.get(), PGRES_TUPLES_OK)) return std::nullopt;
     Json::Value claims(Json::arrayValue);
@@ -1501,6 +1558,7 @@ std::optional<Json::Value> dbListWaivers(const std::string &accountEmail, const 
         claim["createdAt"] = cell(result.get(), row, 5);
         claim["managerEmail"] = cell(result.get(), row, 6);
         claim["priority"] = cellInt(result.get(), row, 7, 1);
+        claim["claimOrder"] = cellInt(result.get(), row, 8, row + 1);
         claims.append(claim);
     }
     return claims;
@@ -1533,7 +1591,7 @@ void dbMoveManagerToBackOfWaivers(PGconn *conn, const std::string &leagueId, con
 Json::Value dbListWaiverPriority(PGconn *conn, const std::string &leagueId) {
     auto seed = execParams(conn,
                            "INSERT INTO waiver_priorities (league_id, manager_email, priority) "
-                           "SELECT league_id, email, ROW_NUMBER() OVER (ORDER BY role, created_at)::int "
+                           "SELECT league_id, email, (ROW_NUMBER() OVER (ORDER BY role, created_at))::int "
                            "FROM league_members WHERE league_id = $1 AND status <> 'removed' "
                            "ON CONFLICT (league_id, manager_email) DO NOTHING",
                            {leagueId});
@@ -1573,7 +1631,7 @@ std::optional<Json::Value> dbResetWaiverPriority(const std::string &accountEmail
     (void)clear;
     auto seed = execParams(conn.get(),
                            "INSERT INTO waiver_priorities (league_id, manager_email, priority) "
-                           "SELECT league_id, email, ROW_NUMBER() OVER (ORDER BY role, created_at)::int "
+                           "SELECT league_id, email, (ROW_NUMBER() OVER (ORDER BY role, created_at))::int "
                            "FROM league_members WHERE league_id = $1 AND status <> 'removed'",
                            {leagueId});
     if (!resultOk(seed.get(), PGRES_COMMAND_OK)) return std::nullopt;
@@ -1590,14 +1648,21 @@ std::optional<Json::Value> dbCreateWaiver(const std::string &accountEmail,
     const auto player = normalizePlayerJson(body["addPlayer"]);
     const auto claimId = timestampId("waiver");
     const auto priority = dbPriorityForManager(conn.get(), leagueId, accountEmail);
+    auto orderResult = execParams(conn.get(),
+                                  "SELECT COALESCE(MAX(claim_order) + 1, 1) FROM waiver_claims WHERE league_id = $1 AND manager_email = $2 AND status = 'pending'",
+                                  {leagueId, accountEmail});
+    const auto claimOrder = resultOk(orderResult.get(), PGRES_TUPLES_OK) && PQntuples(orderResult.get()) > 0
+                                ? cellInt(orderResult.get(), 0, 0, 1)
+                                : 1;
     const auto dropPlayerId = jsonString(body, "dropPlayerId");
     if (dbPlayerRosteredInLeague(conn.get(), leagueId, jsonString(player, "id"))) return std::nullopt;
+    if (!dropPlayerId.empty() && !dbManagerHasPlayer(conn.get(), leagueId, accountEmail, dropPlayerId)) return std::nullopt;
     if (dropPlayerId.empty() && !dbRosterHasRoom(conn.get(), leagueId, accountEmail)) return std::nullopt;
     auto result = execParams(conn.get(),
                              "INSERT INTO waiver_claims "
-                             "(id, league_id, manager_email, add_player_id, add_player_snapshot, drop_player_id, priority) "
-                             "VALUES ($1, $2, $3, $4, $5::jsonb, NULLIF($6, ''), $7::int)",
-                             {claimId, leagueId, accountEmail, jsonString(player, "id"), jsonToString(player), dropPlayerId, std::to_string(priority)});
+                             "(id, league_id, manager_email, add_player_id, add_player_snapshot, drop_player_id, priority, claim_order) "
+                             "VALUES ($1, $2, $3, $4, $5::jsonb, NULLIF($6, ''), $7::int, $8::int)",
+                             {claimId, leagueId, accountEmail, jsonString(player, "id"), jsonToString(player), dropPlayerId, std::to_string(priority), std::to_string(claimOrder)});
     if (!resultOk(result.get(), PGRES_COMMAND_OK)) return std::nullopt;
     dbAddTransaction(conn.get(), leagueId, "Waiver Claim", "Claimed " + jsonString(player, "name"), accountEmail, player);
     auto claims = dbListWaivers(accountEmail, leagueId);
@@ -1622,8 +1687,20 @@ std::optional<Json::Value> dbProcessWaiver(const std::string &accountEmail,
     if (!resultOk(claim.get(), PGRES_TUPLES_OK) || PQntuples(claim.get()) == 0) return std::nullopt;
     const auto player = snapshotPlayer(jsonFromString(cell(claim.get(), 0, 1)), cell(claim.get(), 0, 0));
     const auto dropId = cell(claim.get(), 0, 2);
+    const auto addPlayerId = jsonString(player, "id");
+    if (dbPlayerRosteredInLeague(conn.get(), leagueId, addPlayerId)
+        || (!dropId.empty() && !dbManagerHasPlayer(conn.get(), leagueId, accountEmail, dropId))
+        || (dropId.empty() && !dbRosterHasRoom(conn.get(), leagueId, accountEmail))) {
+        auto cancel = execParams(conn.get(),
+                                 "UPDATE waiver_claims SET status = 'cancelled', processed_at = NOW() "
+                                 "WHERE league_id = $1 AND manager_email = $2 AND id = $3",
+                                 {leagueId, accountEmail, claimId});
+        (void)cancel;
+        return std::nullopt;
+    }
     if (!dropId.empty()) {
-        execParams(conn.get(), "DELETE FROM rosters WHERE league_id = $1 AND manager_email = $2 AND player_id = $3", {leagueId, accountEmail, dropId});
+        auto drop = execParams(conn.get(), "DELETE FROM rosters WHERE league_id = $1 AND manager_email = $2 AND player_id = $3", {leagueId, accountEmail, dropId});
+        if (!resultOk(drop.get(), PGRES_COMMAND_OK) || std::string{PQcmdTuples(drop.get())} != "1") return std::nullopt;
     }
     const auto slot = dbAssignRosterSlot(conn.get(), leagueId, accountEmail, player);
     if (!slot) return std::nullopt;
@@ -1646,6 +1723,42 @@ std::optional<Json::Value> dbProcessWaiver(const std::string &accountEmail,
     return response;
 }
 
+std::optional<Json::Value> dbUpdateWaiverStatus(const std::string &accountEmail,
+                                                const std::string &leagueId,
+                                                const std::string &claimId,
+                                                const std::string &status) {
+    if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
+    if (statusForDb(status) != "cancelled") return std::nullopt;
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    const bool commissioner = dbIsCommissioner(accountEmail, leagueId);
+    auto update = execParams(conn.get(),
+                             "UPDATE waiver_claims SET status = 'cancelled', processed_at = NOW() "
+                             "WHERE league_id = $1 AND id = $2 AND status = 'pending' AND ($4 = 'true' OR manager_email = $3)",
+                             {leagueId, claimId, accountEmail, commissioner ? "true" : "false"});
+    if (!resultOk(update.get(), PGRES_COMMAND_OK) || std::string{PQcmdTuples(update.get())} == "0") return std::nullopt;
+    dbAddTransaction(conn.get(), leagueId, "Waiver Cancelled", "Cancelled waiver claim", accountEmail, Json::Value{Json::objectValue});
+    return dbListWaivers(accountEmail, leagueId);
+}
+
+std::optional<Json::Value> dbReorderWaivers(const std::string &accountEmail,
+                                            const std::string &leagueId,
+                                            const Json::Value &claimIds) {
+    if (!dbCanAccessLeague(accountEmail, leagueId) || !claimIds.isArray()) return std::nullopt;
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    int order = 1;
+    for (const auto &claimId : claimIds) {
+        if (!claimId.isString() || claimId.asString().empty()) continue;
+        auto update = execParams(conn.get(),
+                                 "UPDATE waiver_claims SET claim_order = $4::int "
+                                 "WHERE league_id = $1 AND manager_email = $2 AND id = $3 AND status = 'pending'",
+                                 {leagueId, accountEmail, claimId.asString(), std::to_string(order++)});
+        if (!resultOk(update.get(), PGRES_COMMAND_OK)) return std::nullopt;
+    }
+    return dbListWaivers(accountEmail, leagueId);
+}
+
 std::optional<Json::Value> dbProcessWaivers(const std::string &accountEmail, const std::string &leagueId) {
     if (!dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
@@ -1655,7 +1768,7 @@ std::optional<Json::Value> dbProcessWaivers(const std::string &accountEmail, con
     auto claims = execParams(conn.get(),
                              "SELECT id, manager_email, add_player_id, add_player_snapshot::text, COALESCE(drop_player_id, '') "
                              "FROM waiver_claims WHERE league_id = $1 AND status = 'pending' "
-                             "ORDER BY priority ASC, created_at ASC",
+                             "ORDER BY priority ASC, claim_order ASC, created_at ASC",
                              {leagueId});
     if (!resultOk(claims.get(), PGRES_TUPLES_OK)) return std::nullopt;
 
@@ -1667,10 +1780,9 @@ std::optional<Json::Value> dbProcessWaivers(const std::string &accountEmail, con
         const auto addPlayerId = cell(claims.get(), row, 2);
         const auto player = snapshotPlayer(jsonFromString(cell(claims.get(), row, 3)), addPlayerId);
         const auto dropId = cell(claims.get(), row, 4);
-        auto alreadyRostered = execParams(conn.get(),
-                                          "SELECT 1 FROM rosters WHERE league_id = $1 AND player_id = $2 LIMIT 1",
-                                          {leagueId, addPlayerId});
-        if (resultOk(alreadyRostered.get(), PGRES_TUPLES_OK) && PQntuples(alreadyRostered.get()) > 0) {
+        if (dbPlayerRosteredInLeague(conn.get(), leagueId, addPlayerId)
+            || (!dropId.empty() && !dbManagerHasPlayer(conn.get(), leagueId, managerEmail, dropId))
+            || (dropId.empty() && !dbRosterHasRoom(conn.get(), leagueId, managerEmail))) {
             auto cancel = execParams(conn.get(),
                                      "UPDATE waiver_claims SET status = 'cancelled', processed_at = NOW() WHERE league_id = $1 AND id = $2",
                                      {leagueId, claimId});
@@ -1682,7 +1794,14 @@ std::optional<Json::Value> dbProcessWaivers(const std::string &accountEmail, con
             auto drop = execParams(conn.get(),
                                    "DELETE FROM rosters WHERE league_id = $1 AND manager_email = $2 AND player_id = $3",
                                    {leagueId, managerEmail, dropId});
-            (void)drop;
+            if (!resultOk(drop.get(), PGRES_COMMAND_OK) || std::string{PQcmdTuples(drop.get())} != "1") {
+                auto cancel = execParams(conn.get(),
+                                         "UPDATE waiver_claims SET status = 'cancelled', processed_at = NOW() WHERE league_id = $1 AND id = $2",
+                                         {leagueId, claimId});
+                (void)cancel;
+                cancelled.append(claimId);
+                continue;
+            }
         }
         const auto slot = dbAssignRosterSlot(conn.get(), leagueId, managerEmail, player);
         if (!slot) {
@@ -1758,27 +1877,33 @@ std::optional<Json::Value> dbCreateTrade(const std::string &accountEmail,
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
-    const auto offer = normalizePlayerJson(body["offerPlayer"]);
-    const auto requestPlayer = body.isMember("requestPlayer") && body["requestPlayer"].isObject()
-                                   ? normalizePlayerJson(body["requestPlayer"])
-                                   : Json::Value{Json::objectValue};
     const auto tradeId = timestampId("trade");
     const auto target = jsonString(body, "targetManager", jsonString(body, "targetManagerEmail"));
+    const auto offerId = jsonString(body["offerPlayer"], "id");
+    const auto requestedId = body.isMember("requestPlayer") && body["requestPlayer"].isObject()
+                                 ? jsonString(body["requestPlayer"], "id")
+                                 : "";
     const auto rules = dbTradeRules(leagueId).value_or(Json::Value{Json::objectValue});
     const auto requiresApproval = tradeApprovalRequired(rules);
     const auto expirationHours = tradeExpirationHours(rules);
-    if (dbPlayerLockedInTrade(conn.get(), leagueId, accountEmail, jsonString(offer, "id"))) return std::nullopt;
+    if (target.empty() || target == accountEmail) return std::nullopt;
+    if (!dbIsActiveMember(conn.get(), leagueId, accountEmail) || !dbIsActiveMember(conn.get(), leagueId, target)) return std::nullopt;
+    auto offer = dbRosterPlayer(conn.get(), leagueId, accountEmail, offerId);
+    auto requestPlayer = dbRosterPlayer(conn.get(), leagueId, target, requestedId);
+    if (!offer || !requestPlayer) return std::nullopt;
+    if (dbPlayerLockedInTrade(conn.get(), leagueId, accountEmail, offerId)) return std::nullopt;
+    if (dbPlayerLockedInTrade(conn.get(), leagueId, target, requestedId)) return std::nullopt;
     auto result = execParams(conn.get(),
                              "INSERT INTO trade_offers "
                              "(id, league_id, offered_by_email, offered_to_email, offered_player_ids, "
                              "requested_player_ids, offer_player_snapshot, request_player_snapshot, request_player_name, target_manager, note, requires_approval, expires_at) "
                              "VALUES ($1, $2, $3, $4, ARRAY[$5], ARRAY[$6], $7::jsonb, $8::jsonb, $9, $10, $11, $12::boolean, NOW() + ($13::int * INTERVAL '1 hour'))",
-                             {tradeId, leagueId, accountEmail, target.empty() ? accountEmail : target,
-                              jsonString(offer, "id"), jsonString(requestPlayer, "id"),
-                              jsonToString(offer), jsonToString(requestPlayer), jsonString(body, "requestPlayerName"), target,
+                             {tradeId, leagueId, accountEmail, target,
+                              offerId, requestedId,
+                              jsonToString(*offer), jsonToString(*requestPlayer), jsonString(body, "requestPlayerName"), target,
                               jsonString(body, "note"), requiresApproval ? "true" : "false", std::to_string(expirationHours)});
     if (!resultOk(result.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Trade Offer", "Offered " + jsonString(offer, "name"), accountEmail, offer);
+    dbAddTransaction(conn.get(), leagueId, "Trade Offer", "Offered " + jsonString(*offer, "name"), accountEmail, *offer);
     auto trades = dbListTrades(accountEmail, leagueId);
     if (trades && trades->size() > 0) {
         return (*trades)[0];
@@ -1827,6 +1952,10 @@ std::optional<Json::Value> dbUpdateTradeStatus(const std::string &accountEmail,
         if (jsonString(requestPlayer, "id").empty()) {
             return std::nullopt;
         }
+        if (!dbRosterPlayer(conn.get(), leagueId, offeredBy, jsonString(offer, "id"))
+            || !dbRosterPlayer(conn.get(), leagueId, offeredTo, jsonString(requestPlayer, "id"))) {
+            return std::nullopt;
+        }
         auto removeOffer = execParams(conn.get(),
                                       "DELETE FROM rosters WHERE league_id = $1 AND manager_email = $2 AND player_id = $3",
                                       {leagueId, offeredBy, jsonString(offer, "id")});
@@ -1849,6 +1978,7 @@ std::optional<Json::Value> dbUpdateTradeStatus(const std::string &accountEmail,
                                      "ON CONFLICT (league_id, manager_email, player_id) DO UPDATE SET player_snapshot = EXCLUDED.player_snapshot, roster_slot = EXCLUDED.roster_slot, acquired_via = 'trade'",
                                      {leagueId, offeredBy, jsonString(requestPlayer, "id"), jsonToString(requestPlayer), *requestSlot});
         if (!resultOk(removeOffer.get(), PGRES_COMMAND_OK) || !resultOk(removeRequest.get(), PGRES_COMMAND_OK)
+            || std::string{PQcmdTuples(removeOffer.get())} != "1" || std::string{PQcmdTuples(removeRequest.get())} != "1"
             || !resultOk(addOffer.get(), PGRES_COMMAND_OK) || !resultOk(addRequest.get(), PGRES_COMMAND_OK)) {
             return std::nullopt;
         }
@@ -2221,6 +2351,7 @@ void handleCreateLeague(const drogon::HttpRequestPtr &req,
     owner["email"] = accountEmail;
     owner["role"] = "commissioner";
     owner["status"] = "Active";
+    owner["teamName"] = "";
     members.append(owner);
     for (const auto &email : league.invitedEmails) {
         Json::Value member;
@@ -2403,6 +2534,7 @@ void handleListMembers(const drogon::HttpRequestPtr&,
         owner["email"] = accountEmail;
         owner["role"] = "commissioner";
         owner["status"] = "Active";
+        owner["teamName"] = "";
         members.append(owner);
     }
     callback(jsonResponse(members, drogon::k200OK));
@@ -2441,6 +2573,7 @@ void handleInviteMember(const drogon::HttpRequestPtr &req,
     member["email"] = email;
     member["role"] = role == "commissioner" ? "commissioner" : "member";
     member["status"] = "Invited";
+    member["teamName"] = "";
     members.append(member);
     callback(jsonResponse(members, drogon::k201Created));
 }
@@ -2453,10 +2586,12 @@ void handleUpdateMember(const drogon::HttpRequestPtr &req,
     const auto body = req->getJsonObject();
     const auto role = body ? jsonString(*body, "role", "member") : "member";
     const auto status = body ? jsonString(*body, "status", "Invited") : "Invited";
+    const auto teamName = body ? jsonString(*body, "teamName", "") : "";
+    const auto updateTeamName = body && body->isMember("teamName");
 
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
-        auto members = dbUpdateMember(accountEmail, leagueId, memberEmail, role, status);
+        auto members = dbUpdateMember(accountEmail, leagueId, memberEmail, role, status, teamName, updateTeamName);
         if (!members) {
             sendError(callback, drogon::k403Forbidden, "Commissioner access required");
             return;
@@ -2475,6 +2610,9 @@ void handleUpdateMember(const drogon::HttpRequestPtr &req,
         if (jsonString(members[i], "email") == memberEmail) {
             members[i]["role"] = role == "commissioner" ? "commissioner" : "member";
             members[i]["status"] = status;
+            if (body && body->isMember("teamName")) {
+                members[i]["teamName"] = teamName;
+            }
             callback(jsonResponse(members, drogon::k200OK));
             return;
         }
@@ -2521,6 +2659,7 @@ void handleJoinLeague(const drogon::HttpRequestPtr&,
         member["email"] = accountEmail;
         member["role"] = "member";
         member["status"] = "Active";
+        member["teamName"] = "";
         members.append(member);
     }
     auto league = it->second.league.toJson();
@@ -2943,13 +3082,34 @@ void handleCreateWaiver(const drogon::HttpRequestPtr &req,
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
         return;
     }
+    auto &roster = arrayForLeague(rostersByLeague, leagueId);
+    const auto addPlayer = normalizePlayerJson((*body)["addPlayer"]);
+    const auto addPlayerId = jsonString(addPlayer, "id");
+    const auto dropPlayerId = jsonString(*body, "dropPlayerId");
+    if (indexOfPlayer(roster, addPlayerId) >= 0) {
+        sendError(callback, drogon::k409Conflict, "Player is already rostered");
+        return;
+    }
+    if (!dropPlayerId.empty() && indexOfPlayer(roster, dropPlayerId) < 0) {
+        sendError(callback, drogon::k400BadRequest, "Drop player must be on your roster");
+        return;
+    }
     Json::Value claim;
     claim["id"] = timestampId("waiver");
-    claim["addPlayer"] = normalizePlayerJson((*body)["addPlayer"]);
-    claim["dropPlayerId"] = jsonString(*body, "dropPlayerId");
+    claim["addPlayer"] = addPlayer;
+    claim["dropPlayerId"] = dropPlayerId;
     claim["status"] = "Pending";
     claim["createdAt"] = timestampId("at");
+    claim["managerEmail"] = accountEmail;
     auto &claims = arrayForLeague(waiversByLeague, leagueId);
+    int claimOrder = 1;
+    for (const auto &existing : claims) {
+        if (jsonString(existing, "managerEmail") == accountEmail && jsonString(existing, "status") == "Pending") {
+            claimOrder = std::max(claimOrder, cff::getIntOrDefault(existing, "claimOrder", 1) + 1);
+        }
+    }
+    claim["priority"] = 1;
+    claim["claimOrder"] = claimOrder;
     claims.insert(0, claim);
     addTransactionLocked(leagueId, "Waiver Claim", "Claimed " + jsonString(claim["addPlayer"], "name"), accountEmail);
     callback(jsonResponse(claim, drogon::k201Created));
@@ -2986,10 +3146,16 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
     for (Json::ArrayIndex i = 0; i < claims.size(); ++i) {
         if (jsonString(claims[i], "id") == claimId) {
             const auto dropPlayerId = jsonString(claims[i], "dropPlayerId");
+            auto player = normalizePlayerJson(claims[i]["addPlayer"]);
+            if (indexOfPlayer(roster, jsonString(player, "id")) >= 0
+                || (!dropPlayerId.empty() && indexOfPlayer(roster, dropPlayerId) < 0)) {
+                claims[i]["status"] = "Cancelled";
+                callback(jsonResponse(claims[i], drogon::k409Conflict));
+                return;
+            }
             if (!dropPlayerId.empty()) {
                 removePlayer(roster, dropPlayerId);
             }
-            auto player = normalizePlayerJson(claims[i]["addPlayer"]);
             if (indexOfPlayer(roster, jsonString(player, "id")) < 0) {
                 roster.append(player);
             }
@@ -3000,6 +3166,93 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
         }
     }
     sendError(callback, drogon::k404NotFound, "Waiver claim not found");
+}
+
+void handleUpdateWaiverStatus(const drogon::HttpRequestPtr &req,
+                              std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                              const std::string &accountEmail,
+                              const std::string &leagueId,
+                              const std::string &claimId) {
+    const auto body = req->getJsonObject();
+    const auto status = body ? jsonString(*body, "status") : "";
+    if (status != "Cancelled") {
+        sendError(callback, drogon::k400BadRequest, "status must be Cancelled");
+        return;
+    }
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        auto claims = dbUpdateWaiverStatus(accountEmail, leagueId, claimId, status);
+        if (!claims) {
+            sendError(callback, drogon::k404NotFound, "Waiver claim not found");
+            return;
+        }
+        callback(jsonResponse(*claims, drogon::k200OK));
+        return;
+    }
+#endif
+
+    std::lock_guard<std::mutex> lock(storeMutex);
+    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    const bool commissioner = isCommissionerLocked(accountEmail, leagueId);
+    auto &claims = arrayForLeague(waiversByLeague, leagueId);
+    for (auto &claim : claims) {
+        if (jsonString(claim, "id") != claimId || jsonString(claim, "status") != "Pending") continue;
+        const auto managerEmail = jsonString(claim, "managerEmail", accountEmail);
+        if (!commissioner && managerEmail != accountEmail) {
+            sendError(callback, drogon::k403Forbidden, "Only claim owners can cancel waiver claims");
+            return;
+        }
+        claim["status"] = "Cancelled";
+        addTransactionLocked(leagueId, "Waiver Cancelled", "Cancelled waiver claim", accountEmail);
+        callback(jsonResponse(claims, drogon::k200OK));
+        return;
+    }
+    sendError(callback, drogon::k404NotFound, "Waiver claim not found");
+}
+
+void handleReorderWaivers(const drogon::HttpRequestPtr &req,
+                          std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                          const std::string &accountEmail,
+                          const std::string &leagueId) {
+    const auto body = req->getJsonObject();
+    const auto claimIds = body && body->isMember("claimIds") && (*body)["claimIds"].isArray()
+                              ? (*body)["claimIds"]
+                              : Json::Value{Json::arrayValue};
+    if (!claimIds.size()) {
+        sendError(callback, drogon::k400BadRequest, "claimIds are required");
+        return;
+    }
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        auto claims = dbReorderWaivers(accountEmail, leagueId, claimIds);
+        if (!claims) {
+            sendError(callback, drogon::k404NotFound, "Waiver claims not found");
+            return;
+        }
+        callback(jsonResponse(*claims, drogon::k200OK));
+        return;
+    }
+#endif
+
+    std::lock_guard<std::mutex> lock(storeMutex);
+    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    auto &claims = arrayForLeague(waiversByLeague, leagueId);
+    int order = 1;
+    for (const auto &claimIdValue : claimIds) {
+        if (!claimIdValue.isString()) continue;
+        for (auto &claim : claims) {
+            if (jsonString(claim, "id") == claimIdValue.asString()
+                && jsonString(claim, "status") == "Pending"
+                && jsonString(claim, "managerEmail", accountEmail) == accountEmail) {
+                claim["claimOrder"] = order++;
+            }
+        }
+    }
+    callback(jsonResponse(claims, drogon::k200OK));
 }
 
 void handleProcessWaivers(const drogon::HttpRequestPtr&,
@@ -3034,15 +3287,32 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
     auto &claims = arrayForLeague(waiversByLeague, leagueId);
     auto &roster = arrayForLeague(rostersByLeague, leagueId);
     Json::Value processed(Json::arrayValue);
+    Json::Value cancelled(Json::arrayValue);
+    std::vector<Json::ArrayIndex> claimIndexes;
     for (Json::ArrayIndex i = 0; i < claims.size(); ++i) {
+        claimIndexes.push_back(i);
+    }
+    std::sort(claimIndexes.begin(), claimIndexes.end(), [&claims](Json::ArrayIndex left, Json::ArrayIndex right) {
+        const auto leftPriority = cff::getIntOrDefault(claims[left], "priority", 999);
+        const auto rightPriority = cff::getIntOrDefault(claims[right], "priority", 999);
+        if (leftPriority != rightPriority) return leftPriority < rightPriority;
+        return cff::getIntOrDefault(claims[left], "claimOrder", 999) < cff::getIntOrDefault(claims[right], "claimOrder", 999);
+    });
+    for (const auto i : claimIndexes) {
         if (jsonString(claims[i], "status") != "Pending") {
             continue;
         }
         const auto dropPlayerId = jsonString(claims[i], "dropPlayerId");
+        auto player = normalizePlayerJson(claims[i]["addPlayer"]);
+        if (indexOfPlayer(roster, jsonString(player, "id")) >= 0
+            || (!dropPlayerId.empty() && indexOfPlayer(roster, dropPlayerId) < 0)) {
+            claims[i]["status"] = "Cancelled";
+            cancelled.append(jsonString(claims[i], "id"));
+            continue;
+        }
         if (!dropPlayerId.empty()) {
             removePlayer(roster, dropPlayerId);
         }
-        auto player = normalizePlayerJson(claims[i]["addPlayer"]);
         if (indexOfPlayer(roster, jsonString(player, "id")) < 0) {
             roster.append(player);
         }
@@ -3052,7 +3322,7 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
     }
     Json::Value payload;
     payload["processed"] = processed;
-    payload["cancelled"] = Json::Value{Json::arrayValue};
+    payload["cancelled"] = cancelled;
     payload["claims"] = claims;
     callback(jsonResponse(payload, drogon::k200OK));
 }
@@ -3158,11 +3428,16 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
         sendError(callback, drogon::k400BadRequest, "offerPlayer is required");
         return;
     }
+    const auto requestedTarget = jsonString(*body, "targetManager", jsonString(*body, "targetManagerEmail"));
+    if (requestedTarget.empty() || requestedTarget == accountEmail) {
+        sendError(callback, drogon::k400BadRequest, "Trade target must be another active league manager");
+        return;
+    }
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
         auto trade = dbCreateTrade(accountEmail, leagueId, *body);
         if (!trade) {
-            sendError(callback, drogon::k404NotFound, "League not found");
+            sendError(callback, drogon::k403Forbidden, "Trade target must be an active league manager");
             return;
         }
         callback(jsonResponse(*trade, drogon::k201Created));
@@ -3173,8 +3448,30 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
         return;
     }
+    const auto targetManager = jsonString(*body, "targetManager");
+    if (targetManager.empty() || targetManager == accountEmail) {
+        sendError(callback, drogon::k400BadRequest, "Trade target must be another active league manager");
+        return;
+    }
+    if (!isActiveMemberLocked(accountEmail, leagueId) || !isActiveMemberLocked(targetManager, leagueId)) {
+        sendError(callback, drogon::k403Forbidden, "Trade target must be an active league manager");
+        return;
+    }
     if (playerLockedInTradeLocked(leagueId, accountEmail, jsonString((*body)["offerPlayer"], "id"))) {
         sendError(callback, drogon::k409Conflict, "Player is locked in a pending trade");
+        return;
+    }
+    auto &roster = arrayForLeague(rostersByLeague, leagueId);
+    const auto offerId = jsonString((*body)["offerPlayer"], "id");
+    const auto requestedId = body->isMember("requestPlayer") && (*body)["requestPlayer"].isObject()
+                                 ? jsonString((*body)["requestPlayer"], "id")
+                                 : "";
+    if (offerId.empty() || indexOfPlayer(roster, offerId) < 0) {
+        sendError(callback, drogon::k400BadRequest, "Offered player must be on your roster");
+        return;
+    }
+    if (requestedId.empty() || requestedId == offerId) {
+        sendError(callback, drogon::k400BadRequest, "Requested player must be selected from the target roster");
         return;
     }
     Json::Value trade;
@@ -3184,10 +3481,10 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
         trade["requestPlayer"] = normalizePlayerJson((*body)["requestPlayer"]);
     }
     trade["requestPlayerName"] = jsonString(*body, "requestPlayerName");
-    trade["targetManager"] = jsonString(*body, "targetManager");
+    trade["targetManager"] = targetManager;
     trade["note"] = jsonString(*body, "note");
     trade["offeredByEmail"] = accountEmail;
-    trade["offeredToEmail"] = jsonString(*body, "targetManager", accountEmail);
+    trade["offeredToEmail"] = targetManager;
     const auto rules = tradeRulesForLeagueLocked(leagueId);
     trade["requiresApproval"] = tradeApprovalRequired(rules);
     trade["status"] = "Pending";
@@ -3249,8 +3546,17 @@ void handleUpdateTradeStatus(const drogon::HttpRequestPtr &req,
             } else {
                 offers[i]["status"] = status;
             }
+            if (executeTrade && !offers[i].isMember("requestPlayer")) {
+                sendError(callback, drogon::k409Conflict, "Trade players are no longer available");
+                return;
+            }
             if (executeTrade && offers[i].isMember("requestPlayer")) {
                 auto &roster = arrayForLeague(rostersByLeague, leagueId);
+                if (indexOfPlayer(roster, jsonString(offers[i]["offerPlayer"], "id")) < 0
+                    || jsonString(offers[i]["requestPlayer"], "id").empty()) {
+                    sendError(callback, drogon::k409Conflict, "Trade players are no longer available");
+                    return;
+                }
                 removePlayer(roster, jsonString(offers[i]["offerPlayer"], "id"));
                 if (indexOfPlayer(roster, jsonString(offers[i]["requestPlayer"], "id")) < 0) {
                     roster.append(normalizePlayerJson(offers[i]["requestPlayer"]));
