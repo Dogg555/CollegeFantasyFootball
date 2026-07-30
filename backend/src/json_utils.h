@@ -14,7 +14,7 @@ std::optional<std::string> getString(const Json::Value &json, std::string_view k
 std::optional<int> getInt(const Json::Value &json, std::string_view key);
 
 // Convenience wrappers with defaults.
-std::string getStringOrDefault(const Json::Value &json, std::string_view key, std::string_view fallback);
+std::string getStringOrDefault(const Json::Value &json, std::string_view key, std::string_view fallback = "");
 int getIntOrDefault(const Json::Value &json, std::string_view key, int fallback);
 
 } // namespace cff
