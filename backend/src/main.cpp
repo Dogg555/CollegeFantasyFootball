@@ -73,7 +73,7 @@ bool persistentDbRequired() {
     return envFlagEnabled("CFF_REQUIRE_DB");
 }
 
-void logIngestResult(const std::string &label, const cff::CfbdIngestResult &ingestResult) {
+void logIngestResult(const std::string &label, const cff::IngestResult &ingestResult) {
     std::cout << "[cfbd] " << label << " complete. inserted=" << ingestResult.ingested
               << " updated=" << ingestResult.updated
               << " api_calls=" << ingestResult.apiCalls << std::endl;
