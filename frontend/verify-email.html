@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Verify email - College Fantasy Football</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand__logo">CF</div>
+      <div>
+        <div class="brand__title">College Fantasy</div>
+        <div class="brand__subtitle">Modern manager hub</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a class="nav__link" data-page="home" href="index.html">Home</a>
+      <a class="nav__link" data-page="league" href="league.html">Leagues</a>
+      <a class="nav__link" data-page="players" href="players.html">Players</a>
+    </nav>
+    <div class="nav__actions">
+      <a class="button button--ghost" href="signin.html">Sign in</a>
+    </div>
+  </div>
+
+  <main class="auth-layout">
+    <section class="card card--accent auth-card">
+      <div class="card__header">
+        <h2>Verify email</h2>
+        <span class="pill pill--muted">Account</span>
+      </div>
+      <form id="verify-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+        <label class="field">
+          <span>Verification token</span>
+          <input id="verify-token" type="text" name="token" placeholder="Paste verification token" autocomplete="one-time-code" />
+        </label>
+        <div class="actions">
+          <button class="button button--primary" type="submit">Verify email</button>
+        </div>
+        <div id="verify-status" class="muted small" role="status"></div>
+      </form>
+    </section>
+
+    <section class="card auth-sidecar">
+      <h2>Need a new token?</h2>
+      <form id="resend-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+        <label class="field">
+          <span>Email</span>
+          <input id="resend-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" />
+        </label>
+        <div class="actions">
+          <button class="button" type="submit">Resend verification</button>
+        </div>
+        <div id="resend-status" class="muted small" role="status"></div>
+      </form>
+    </section>
+  </main>
+
+  <footer class="footer">Built for college fantasy managers.</footer>
+  <script src="config.js"></script>
+  <script src="state.js"></script>
+  <script src="auth.js"></script>
+</body>
+</html>

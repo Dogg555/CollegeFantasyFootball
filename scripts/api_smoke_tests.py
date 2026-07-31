@@ -97,6 +97,8 @@ def main():
     draft = request("GET", f"/api/leagues/{league_id}/draft", token=token)
     assert_true("status" in draft, f"draft state missing status: {draft}")
 
+    request("GET", "/api/admin/ingest/cfbd/status", token=token, expected=(403,))
+
     transactions = request("GET", f"/api/leagues/{league_id}/transactions", token=token)
     assert_true(isinstance(transactions, list), f"transactions response is not a list: {transactions}")
 

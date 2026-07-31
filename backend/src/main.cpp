@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdlib>
 #include <chrono>
 #include <fstream>
@@ -8,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -54,12 +56,75 @@ bool envFlagEnabled(const std::string &key) {
     return value && (*value == "1" || *value == "true" || *value == "TRUE" || *value == "yes" || *value == "YES");
 }
 
+std::optional<int> readPositiveIntEnv(const std::string &key) {
+    const auto value = readEnv(key);
+    if (!value || value->empty()) {
+        return std::nullopt;
+    }
+    char *end = nullptr;
+    const long parsed = std::strtol(value->c_str(), &end, 10);
+    if (end == value->c_str() || parsed <= 0 || parsed > 24 * 30) {
+        return std::nullopt;
+    }
+    return static_cast<int>(parsed);
+}
+
 bool persistentDbRequired() {
     return envFlagEnabled("CFF_REQUIRE_DB");
 }
 
+void logIngestResult(const std::string &label, const cff::CfbdIngestResult &ingestResult) {
+    std::cout << "[cfbd] " << label << " complete. inserted=" << ingestResult.ingested
+              << " updated=" << ingestResult.updated
+              << " api_calls=" << ingestResult.apiCalls << std::endl;
+    for (const auto &err : ingestResult.errors) {
+        std::cerr << "[cfbd] " << label << " error: " << err << std::endl;
+    }
+}
+
+void startBackgroundCfbdIngest(int intervalHours) {
+    std::thread([intervalHours]() {
+        std::cout << "[cfbd] background ingest enabled every " << intervalHours << " hour(s)." << std::endl;
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::hours(intervalHours));
+            std::cout << "[cfbd] background ingest starting..." << std::endl;
+            logIngestResult("background ingest", cff::runCfbdIngestOnce());
+        }
+    }).detach();
+}
+
 bool sharedSecretAuthAllowed() {
     return envFlagEnabled("CFF_ALLOW_SHARED_SECRET_AUTH");
+}
+
+std::string lowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+std::unordered_set<std::string> csvEmailSetFromEnv(const std::string &key) {
+    std::unordered_set<std::string> values;
+    const auto raw = readEnv(key);
+    if (!raw) return values;
+    std::size_t start = 0;
+    while (start <= raw->size()) {
+        const auto pos = raw->find(',', start);
+        auto item = raw->substr(start, pos == std::string::npos ? std::string::npos : pos - start);
+        item.erase(item.begin(), std::find_if(item.begin(), item.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+        item.erase(std::find_if(item.rbegin(), item.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }).base(), item.end());
+        if (!item.empty()) {
+            values.insert(lowerAscii(item));
+        }
+        if (pos == std::string::npos) break;
+        start = pos + 1;
+    }
+    return values;
 }
 
 bool emailVerificationRequired() {
@@ -133,7 +198,7 @@ bool sendEmail(const std::string &to,
 bool sendVerificationEmail(const std::string &email, const std::string &token) {
     const auto baseUrl = frontendBaseUrl();
     if (!baseUrl) return false;
-    const auto link = *baseUrl + "/signin.html?verify=" + token;
+    const auto link = *baseUrl + "/verify-email.html?token=" + token;
     return sendEmail(email,
                      "Verify your College Fantasy account",
                      "Verify your account: " + link,
@@ -143,7 +208,7 @@ bool sendVerificationEmail(const std::string &email, const std::string &token) {
 bool sendPasswordResetEmail(const std::string &email, const std::string &token) {
     const auto baseUrl = frontendBaseUrl();
     if (!baseUrl) return false;
-    const auto link = *baseUrl + "/signin.html?reset=" + token;
+    const auto link = *baseUrl + "/reset-password.html?token=" + token;
     return sendEmail(email,
                      "Reset your College Fantasy password",
                      "Reset your password: " + link,
@@ -1016,6 +1081,167 @@ bool requireAccount(const drogon::HttpRequestPtr &req,
     accountEmail = *email;
     return true;
 }
+
+bool isAdminRequest(const drogon::HttpRequestPtr &req,
+                    const std::optional<std::string> &secret,
+                    std::string &adminIdentity) {
+    std::string token;
+    if (!hasBearerToken(req, token)) {
+        return false;
+    }
+
+    const auto opsToken = readEnv("CFF_ADMIN_API_TOKEN");
+    if (opsToken && !opsToken->empty() && token == *opsToken) {
+        adminIdentity = "ops-token";
+        return true;
+    }
+
+    const auto email = accountEmailForRequest(req, secret);
+    if (!email) {
+        return false;
+    }
+    const auto admins = csvEmailSetFromEnv("CFF_ADMIN_EMAILS");
+    if (!admins.empty() && admins.find(lowerAscii(*email)) != admins.end()) {
+        adminIdentity = *email;
+        return true;
+    }
+    adminIdentity = *email;
+    return false;
+}
+
+bool requireAdmin(const drogon::HttpRequestPtr &req,
+                  std::function<void (const drogon::HttpResponsePtr &)> &callback,
+                  const std::optional<std::string> &secret,
+                  std::string &adminIdentity) {
+    std::string token;
+    if (!hasBearerToken(req, token)) {
+        Json::Value error;
+        error["error"] = "Unauthorized";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k401Unauthorized);
+        callback(resp);
+        return false;
+    }
+    if (!isAdminRequest(req, secret, adminIdentity)) {
+        Json::Value error;
+        error["error"] = "Admin access required";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k403Forbidden);
+        callback(resp);
+        return false;
+    }
+    return true;
+}
+
+Json::Value fallbackScoreboardPayload() {
+    Json::Value payload(Json::arrayValue);
+    Json::Value game;
+    game["away"] = "Oregon";
+    game["home"] = "Ohio State";
+    game["quarter"] = 2;
+    game["clock"] = "07:18";
+    game["awayScore"] = 17;
+    game["homeScore"] = 14;
+    game["source"] = "fallback";
+    payload.append(game);
+
+    game.clear();
+    game["away"] = "LSU";
+    game["home"] = "Alabama";
+    game["quarter"] = 3;
+    game["clock"] = "11:02";
+    game["awayScore"] = 24;
+    game["homeScore"] = 24;
+    game["source"] = "fallback";
+    payload.append(game);
+    return payload;
+}
+
+std::string jsonStringAt(const Json::Value &value,
+                         std::initializer_list<std::string> keys,
+                         const std::string &fallback = "") {
+    for (const auto &key : keys) {
+        if (!value.isMember(key) || value[key].isNull()) continue;
+        const auto &item = value[key];
+        if (item.isString()) return item.asString();
+        if (item.isInt()) return std::to_string(item.asInt());
+        if (item.isUInt()) return std::to_string(item.asUInt());
+    }
+    return fallback;
+}
+
+int jsonIntAt(const Json::Value &value,
+              std::initializer_list<std::string> keys,
+              int fallback = 0) {
+    for (const auto &key : keys) {
+        if (!value.isMember(key) || value[key].isNull()) continue;
+        const auto &item = value[key];
+        if (item.isInt()) return item.asInt();
+        if (item.isUInt()) return static_cast<int>(item.asUInt());
+        if (item.isString()) {
+            char *end = nullptr;
+            const auto parsed = std::strtol(item.asCString(), &end, 10);
+            if (end != item.asCString()) return static_cast<int>(parsed);
+        }
+    }
+    return fallback;
+}
+
+std::string teamNameFromScoreboardSide(const Json::Value &game,
+                                       const std::string &side,
+                                       const std::string &fallback) {
+    const auto direct = jsonStringAt(game, {side + "Team", side + "_team", side});
+    if (!direct.empty()) return direct;
+    if (game.isMember(side + "Team") && game[side + "Team"].isObject()) {
+        return jsonStringAt(game[side + "Team"], {"school", "name", "team"}, fallback);
+    }
+    if (game.isMember(side) && game[side].isObject()) {
+        return jsonStringAt(game[side], {"school", "name", "team"}, fallback);
+    }
+    return fallback;
+}
+
+Json::Value fetchCfbdScoreboardPayload() {
+    const auto apiKey = readEnv("CFBD_API_KEY");
+    if (!apiKey || apiKey->empty()) {
+        return fallbackScoreboardPayload();
+    }
+    const auto baseUrl = readEnv("CFBD_API_BASE_URL").value_or("https://api.collegefootballdata.com");
+    auto resp = cpr::Get(
+        cpr::Url{baseUrl + "/scoreboard"},
+        cpr::Header{{"Authorization", "Bearer " + *apiKey}},
+        cpr::Parameters{{"classification", "fbs"}}
+    );
+    if (resp.error || resp.status_code < 200 || resp.status_code >= 300) {
+        std::cerr << "[cfbd] scoreboard fetch failed: status=" << resp.status_code
+                  << " error=" << resp.error.message << std::endl;
+        return fallbackScoreboardPayload();
+    }
+
+    Json::CharReaderBuilder builder;
+    Json::Value root;
+    std::string errors;
+    std::istringstream stream(resp.text);
+    if (!Json::parseFromStream(builder, stream, &root, &errors) || !root.isArray()) {
+        std::cerr << "[cfbd] scoreboard parse failed: " << errors << std::endl;
+        return fallbackScoreboardPayload();
+    }
+
+    Json::Value payload(Json::arrayValue);
+    for (const auto &game : root) {
+        Json::Value out;
+        out["away"] = teamNameFromScoreboardSide(game, "away", "Away");
+        out["home"] = teamNameFromScoreboardSide(game, "home", "Home");
+        out["awayScore"] = jsonIntAt(game, {"awayScore", "awayPoints", "away_score", "away_points"});
+        out["homeScore"] = jsonIntAt(game, {"homeScore", "homePoints", "home_score", "home_points"});
+        out["quarter"] = jsonIntAt(game, {"period", "quarter"}, 0);
+        out["clock"] = jsonStringAt(game, {"clock", "displayClock"}, "");
+        out["status"] = jsonStringAt(game, {"status", "gameStatus"}, "scheduled");
+        out["source"] = "cfbd";
+        payload.append(out);
+    }
+    return payload.empty() ? fallbackScoreboardPayload() : payload;
+}
 } // namespace
 #endif
 
@@ -1030,6 +1256,7 @@ int main(int argc, char* argv[]) {
     const auto sslKey = readEnv("SSL_KEY_FILE");
     const auto allowedOriginEnv = readEnv("ALLOWED_ORIGINS");
     const auto ingestOnStartupEnv = readEnv("CFBD_INGEST_ON_STARTUP");
+    const auto ingestIntervalHours = readPositiveIntEnv("CFBD_INGEST_INTERVAL_HOURS");
 
     if (!jwtSecret.has_value()) {
         std::cerr << "[security] JWT_SECRET is not set; secure endpoints will reject all requests." << std::endl;
@@ -1098,13 +1325,11 @@ int main(int argc, char* argv[]) {
 
     if (ingestOnStartup) {
         std::cout << "[cfbd] CFBD_INGEST_ON_STARTUP enabled; starting ingest..." << std::endl;
-        const auto ingestResult = cff::runCfbdIngestOnce();
-        std::cout << "[cfbd] ingest complete. inserted=" << ingestResult.ingested
-                  << " updated=" << ingestResult.updated
-                  << " api_calls=" << ingestResult.apiCalls << std::endl;
-        for (const auto &err : ingestResult.errors) {
-            std::cerr << "[cfbd] ingest error: " << err << std::endl;
-        }
+        logIngestResult("startup ingest", cff::runCfbdIngestOnce());
+    }
+
+    if (ingestIntervalHours) {
+        startBackgroundCfbdIngest(*ingestIntervalHours);
     }
 
     app.addListener("0.0.0.0", static_cast<unsigned short>(std::stoi(port)), useSsl)
@@ -1182,12 +1407,8 @@ int main(int argc, char* argv[]) {
                          {drogon::Post})
         .registerHandler("/api/admin/ingest/cfbd",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             if (!isAuthorized(req, jwtSecret)) {
-                                 Json::Value error;
-                                 error["error"] = "Unauthorized";
-                                 auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-                                 resp->setStatusCode(drogon::k401Unauthorized);
-                                 callback(resp);
+                             std::string adminIdentity;
+                             if (!requireAdmin(req, callback, jwtSecret, adminIdentity)) {
                                  return;
                              }
 
@@ -1212,12 +1433,8 @@ int main(int argc, char* argv[]) {
                          {drogon::Post})
         .registerHandler("/api/admin/ingest/cfbd/status",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             if (!isAuthorized(req, jwtSecret)) {
-                                 Json::Value error;
-                                 error["error"] = "Unauthorized";
-                                 auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-                                 resp->setStatusCode(drogon::k401Unauthorized);
-                                 callback(resp);
+                             std::string adminIdentity;
+                             if (!requireAdmin(req, callback, jwtSecret, adminIdentity)) {
                                  return;
                              }
 #ifndef CFF_HAS_POSTGRES
@@ -1637,26 +1854,7 @@ int main(int argc, char* argv[]) {
                          {drogon::Get})
         .registerHandler("/api/scores/live",
                          [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             Json::Value payload(Json::arrayValue);
-                             Json::Value game;
-                             game["away"] = "Oregon";
-                             game["home"] = "Ohio State";
-                             game["quarter"] = 2;
-                             game["clock"] = "07:18";
-                             game["awayScore"] = 17;
-                             game["homeScore"] = 14;
-                             payload.append(game);
-
-                             game.clear();
-                             game["away"] = "LSU";
-                             game["home"] = "Alabama";
-                             game["quarter"] = 3;
-                             game["clock"] = "11:02";
-                             game["awayScore"] = 24;
-                             game["homeScore"] = 24;
-                             payload.append(game);
-
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(fetchCfbdScoreboardPayload());
                              resp->setStatusCode(drogon::k200OK);
                              callback(resp);
                          },

@@ -17,6 +17,14 @@ services:
         sync: false
       - key: CFBD_API_KEY
         sync: false
+      - key: CFF_ADMIN_API_TOKEN
+        sync: false
+      - key: CFF_ADMIN_EMAILS
+        sync: false
+      - key: CFBD_INGEST_ON_STARTUP
+        value: "true"
+      - key: CFBD_INGEST_INTERVAL_HOURS
+        value: "24"
       - key: RESEND_API_KEY
         sync: false
       - key: CFF_EMAIL_FROM

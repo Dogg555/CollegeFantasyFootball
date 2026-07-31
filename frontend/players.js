@@ -6,12 +6,6 @@ const positionFilter = document.getElementById('position-filter');
 const searchResultsEl = document.getElementById('search-results');
 const queueList = document.getElementById('queue-list');
 const queueCount = document.getElementById('queue-count');
-const ingestStatusPill = document.getElementById('ingest-status-pill');
-const ingestCounts = document.getElementById('ingest-counts');
-const ingestStatus = document.getElementById('ingest-status');
-const ingestRuns = document.getElementById('ingest-runs');
-const refreshIngestStatusBtn = document.getElementById('refresh-ingest-status');
-const runIngestBtn = document.getElementById('run-ingest');
 
 function refreshAuthState() {
   updateSharedNav('players');
@@ -21,7 +15,6 @@ document.getElementById('nav-logout')?.addEventListener('click', () => {
   clearSessionState();
   refreshAuthState();
   renderQueue();
-  renderIngestSignedOut();
 });
 
 searchForm?.addEventListener('submit', async (event) => {
@@ -113,98 +106,6 @@ function renderQueue() {
   });
 }
 
-function renderIngestSignedOut() {
-  if (ingestStatusPill) ingestStatusPill.textContent = 'Sign in';
-  if (ingestStatus) ingestStatus.textContent = 'Sign in to view ingestion status.';
-  if (ingestRuns) ingestRuns.textContent = 'Sign in to view ingestion status.';
-  if (runIngestBtn) runIngestBtn.disabled = true;
-  if (refreshIngestStatusBtn) refreshIngestStatusBtn.disabled = true;
-}
-
-function renderIngestStatus(payload = {}) {
-  if (ingestStatusPill) ingestStatusPill.textContent = payload.status || 'Unknown';
-  if (ingestCounts) {
-    const counts = payload.counts || {};
-    ingestCounts.innerHTML = `
-      <div>
-        <div class="label">Players</div>
-        <div class="value">${counts.players ?? '--'}</div>
-      </div>
-      <div>
-        <div class="label">Teams</div>
-        <div class="value">${counts.teams ?? '--'}</div>
-      </div>
-      <div>
-        <div class="label">Stats</div>
-        <div class="value">${counts.playerStats ?? '--'}</div>
-      </div>
-    `;
-  }
-  if (ingestStatus) {
-    ingestStatus.textContent = payload.configured === false
-      ? 'Postgres ingestion status is unavailable for this backend build.'
-      : `Recent ingestion status: ${payload.status || 'unknown'}.`;
-  }
-  const runs = payload.runs || [];
-  if (!ingestRuns) return;
-  if (!runs.length) {
-    ingestRuns.textContent = 'No ingestion runs recorded yet.';
-    return;
-  }
-  ingestRuns.innerHTML = runs.map((run) => `
-    <div class="row">
-      <div>
-        <strong>${run.resource || 'resource'} / ${run.status || 'unknown'}</strong>
-        <div class="muted">${run.startedAt || 'Not started'}${run.finishedAt ? ` / Finished ${new Date(run.finishedAt).toLocaleString()}` : ''}</div>
-        ${run.error ? `<div class="muted small">${run.error}</div>` : ''}
-      </div>
-      <span class="badge">${run.rowCount || 0} rows</span>
-    </div>
-  `).join('');
-}
-
-async function refreshIngestStatus() {
-  if (!getAuthState()?.token) {
-    renderIngestSignedOut();
-    return;
-  }
-  if (refreshIngestStatusBtn) refreshIngestStatusBtn.disabled = true;
-  if (runIngestBtn) runIngestBtn.disabled = false;
-  if (ingestStatus) ingestStatus.textContent = 'Loading ingestion status...';
-  try {
-    renderIngestStatus(await apiRequest('/admin/ingest/cfbd/status'));
-  } catch (error) {
-    if (ingestStatusPill) ingestStatusPill.textContent = 'Unavailable';
-    if (ingestStatus) ingestStatus.textContent = error.message || 'Could not load ingestion status.';
-    if (ingestRuns) ingestRuns.textContent = 'Ingestion status endpoint is unavailable.';
-  } finally {
-    if (refreshIngestStatusBtn) refreshIngestStatusBtn.disabled = false;
-  }
-}
-
-async function runCfbdIngest() {
-  if (!getAuthState()?.token) {
-    renderIngestSignedOut();
-    return;
-  }
-  if (runIngestBtn) runIngestBtn.disabled = true;
-  if (ingestStatus) ingestStatus.textContent = 'Running CFBD ingest...';
-  try {
-    const result = await apiRequest('/admin/ingest/cfbd', { method: 'POST' });
-    if (ingestStatus) {
-      ingestStatus.textContent = `Ingest ${result.status || 'complete'}: ${result.ingested || 0} inserted, ${result.updated || 0} updated, ${result.apiCalls || 0} API calls.`;
-    }
-    await refreshIngestStatus();
-  } catch (error) {
-    if (ingestStatus) ingestStatus.textContent = error.message || 'Could not run CFBD ingest.';
-  } finally {
-    if (runIngestBtn) runIngestBtn.disabled = false;
-  }
-}
-
-refreshIngestStatusBtn?.addEventListener('click', refreshIngestStatus);
-runIngestBtn?.addEventListener('click', runCfbdIngest);
-
 async function initPlayersPage() {
   await validateAuthSession();
   refreshAuthState();
@@ -216,7 +117,6 @@ async function initPlayersPage() {
   }
   renderQueue();
   renderSearchResults(samplePlayers.slice(0, 6));
-  await refreshIngestStatus();
 }
 
 initPlayersPage();

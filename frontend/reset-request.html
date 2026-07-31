@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sign in - College Fantasy Football</title>
+  <title>Reset password - College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -21,41 +21,33 @@
       <a class="nav__link" data-page="players" href="players.html">Players</a>
     </nav>
     <div class="nav__actions">
-      <a class="button button--ghost" href="signup.html">Create account</a>
-      <button class="button button--ghost" id="signout-btn" type="button" hidden>Sign out</button>
+      <a class="button button--ghost" href="signin.html">Sign in</a>
     </div>
   </div>
 
   <main class="auth-layout">
     <section class="card card--accent auth-card">
       <div class="card__header">
-        <h2>Sign in</h2>
-        <span class="pill pill--muted">Returning</span>
+        <h2>Request password reset</h2>
+        <span class="pill pill--muted">Recovery</span>
       </div>
-      <form id="login-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+      <form id="reset-request-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
         <label class="field">
           <span>Email</span>
-          <input id="login-email" type="email" name="email" placeholder="you@example.com" required autocomplete="email" />
-        </label>
-        <label class="field">
-          <span>Password</span>
-          <input id="login-password" type="password" name="password" placeholder="Your password" required autocomplete="current-password" />
+          <input id="reset-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" />
         </label>
         <div class="actions">
-          <button class="button button--primary" type="submit">Sign in</button>
-          <a class="button button--ghost" href="reset-request.html">Forgot password</a>
+          <button class="button button--primary" type="submit">Send reset link</button>
         </div>
-        <div id="login-status" class="muted small" role="status"></div>
+        <div id="reset-request-status" class="muted small" role="status"></div>
       </form>
     </section>
 
     <section class="card auth-sidecar">
-      <h2>New here?</h2>
-      <p class="muted">Create an account, verify your email, then come back here to manage leagues.</p>
-      <div id="auth-note" class="muted small"></div>
+      <h2>Already have a token?</h2>
+      <p class="muted">Use the reset token from your email to choose a new password.</p>
       <div class="cta-row">
-        <a class="button button--primary" href="signup.html">Create account</a>
-        <a class="button" href="verify-email.html">Verify email</a>
+        <a class="button" href="reset-password.html">Enter reset token</a>
       </div>
     </section>
   </main>

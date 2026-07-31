@@ -8,6 +8,10 @@ Backend service:
 - `JWT_SECRET` is set.
 - `ALLOWED_ORIGINS` includes the deployed frontend origin.
 - `CFBD_API_KEY` is set before running ingestion.
+- `CFF_ADMIN_API_TOKEN` is set to a high-entropy private token.
+- `CFF_ADMIN_EMAILS` lists any signed-in accounts allowed to use admin endpoints.
+- `CFBD_INGEST_ON_STARTUP` is `true` if data should refresh on API startup.
+- `CFBD_INGEST_INTERVAL_HOURS` is set to the desired background refresh interval, for example `24`.
 - `CFF_REQUIRE_DB` is `true`.
 - `RESEND_API_KEY` is set if password reset/email verification should send real email.
 - `CFF_EMAIL_FROM` is a verified sender.
@@ -51,27 +55,35 @@ curl https://YOUR-RENDER-SERVICE.onrender.com/api/admin/ingest/cfbd/status \
 ```
 
 ## Data Ingestion
-Run this only after `CFBD_API_KEY` is configured:
+Ingestion is not exposed in the public frontend. For normal hosted operation, let the API run it behind the scenes with `CFBD_INGEST_ON_STARTUP` and `CFBD_INGEST_INTERVAL_HOURS`.
+
+Run this manually only from a trusted operational terminal after `CFBD_API_KEY` is configured:
 ```sh
-curl -X POST https://YOUR-RENDER-SERVICE.onrender.com/api/admin/ingest/cfbd \
-  -H "Authorization: Bearer YOUR_TOKEN"
+CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com \
+CFF_ADMIN_API_TOKEN=YOUR_ADMIN_TOKEN \
+python scripts/ops_ingest.py --run
 ```
 
 Then refresh:
 ```sh
-curl https://YOUR-RENDER-SERVICE.onrender.com/api/admin/ingest/cfbd/status \
-  -H "Authorization: Bearer YOUR_TOKEN"
+CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com \
+CFF_ADMIN_API_TOKEN=YOUR_ADMIN_TOKEN \
+python scripts/ops_ingest.py
 ```
 
 Expected:
 - `status` is `ok` or `partial`.
 - `counts.players` increases after a successful player import.
-- Recent runs are visible in the Players page Data Ingestion panel.
+- Recent runs are visible through the admin status endpoint.
+- A normal signed-in user not listed in `CFF_ADMIN_EMAILS` receives `403` from `/api/admin/ingest/cfbd/status`.
 
 ## Frontend Flow
 - Open the deployed frontend static service URL.
 - In browser dev tools, confirm `window.CFF_API_BASE` points to the deployed API service.
-- Sign up or sign in.
+- Create an account on `signup.html`.
+- Verify email on `verify-email.html` if required.
+- Sign in on `signin.html`.
+- Use `reset-request.html` and `reset-password.html` for password recovery.
 - Create a league.
 - Invite a manager.
 - Open league settings as commissioner.

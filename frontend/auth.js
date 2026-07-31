@@ -28,8 +28,8 @@ const resetCompleteStatus = document.getElementById('reset-complete-status');
 let storedAuth = null;
 const urlParams = new URLSearchParams(window.location.search);
 const pendingInvite = urlParams.get('invite');
-const verificationTokenParam = urlParams.get('verify');
-const resetTokenParam = urlParams.get('reset');
+const verificationTokenParam = urlParams.get('verify') || urlParams.get('token');
+const resetTokenParam = urlParams.get('reset') || urlParams.get('token');
 
 function setStatus(el, message, isError = false) {
   if (!el) return;
@@ -100,10 +100,17 @@ async function submitAuthForm(path, email, password, statusEl, redirectTo) {
       saveAuth(data.email || email, data.token);
       authenticated = true;
     }
-    const verifyCopy = data.emailVerificationRequired && !data.emailVerified
+    const verifyRequired = data.emailVerificationRequired && !data.emailVerified;
+    const verifyCopy = verifyRequired
       ? data.emailSent ? ' Check your email to verify before signing in.' : ' Email verification is required, but email delivery is not configured.'
       : '';
     setStatus(statusEl, `${data.message || 'Success'}${verifyCopy}`, data.emailVerificationRequired && !data.emailSent);
+    if (verifyRequired && !authenticated) {
+      const next = new URL('verify-email.html', window.location.href);
+      next.searchParams.set('email', email);
+      setTimeout(() => { window.location.href = next.pathname + next.search; }, 600);
+      return;
+    }
   } catch (error) {
     if (error.status) {
       setStatus(statusEl, error.data?.error || error.message, true);
@@ -131,7 +138,7 @@ function stripUrlParams() {
 
 signupForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
-  await submitAuthForm('/auth/signup', signupEmail.value.trim(), signupPassword.value, signupStatus, pendingInvite ? 'league.html' : 'index.html');
+  await submitAuthForm('/auth/signup', signupEmail.value.trim(), signupPassword.value, signupStatus, pendingInvite ? 'league.html' : 'signin.html');
 });
 
 loginForm?.addEventListener('submit', async (event) => {
@@ -168,6 +175,11 @@ resetRequestForm?.addEventListener('submit', async (event) => {
   try {
     const data = await postJson('/auth/request-password-reset', { email: resetEmail.value.trim() });
     setStatus(resetRequestStatus, data.message || 'If the account exists, a reset email will be sent.');
+    if (data.passwordResetToken) {
+      const next = new URL('reset-password.html', window.location.href);
+      next.searchParams.set('token', data.passwordResetToken);
+      setTimeout(() => { window.location.href = next.pathname + next.search; }, 600);
+    }
   } catch (error) {
     setStatus(resetRequestStatus, error.data?.error || error.message || 'Could not request password reset.', true);
   }
@@ -183,6 +195,7 @@ resetCompleteForm?.addEventListener('submit', async (event) => {
     });
     setStatus(resetCompleteStatus, data.message || 'Password reset. Sign in with your new password.');
     resetPassword.value = '';
+    setTimeout(() => { window.location.href = 'signin.html'; }, 800);
   } catch (error) {
     setStatus(resetCompleteStatus, error.data?.error || error.message || 'Could not reset password.', true);
   }
@@ -204,6 +217,10 @@ signOutBtn?.addEventListener('click', async () => {
 async function initAuthPage() {
   if (verifyToken && verificationTokenParam) verifyToken.value = verificationTokenParam;
   if (resetToken && resetTokenParam) resetToken.value = resetTokenParam;
+  const emailParam = urlParams.get('email') || '';
+  if (resendEmail && emailParam) resendEmail.value = emailParam;
+  if (resetEmail && emailParam) resetEmail.value = emailParam;
+  if (loginEmail && emailParam) loginEmail.value = emailParam;
   if (resendEmail && signupEmail?.value) resendEmail.value = signupEmail.value;
   loadStoredAuth();
   updateAuthUi();

@@ -143,6 +143,21 @@ h1 { font-size: 2.4rem; margin: 6px 0; }
   margin: 0 auto;
 }
 
+.auth-layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(320px, 520px) minmax(260px, 360px);
+  align-items: start;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 40px 24px;
+}
+
+.auth-card,
+.auth-sidecar {
+  min-height: 100%;
+}
+
 .layout--wide {
   max-width: 1180px;
   grid-template-columns: 1fr 1.15fr 1fr;
@@ -496,7 +511,8 @@ a { color: var(--accent); }
   }
 
   .layout--wide,
-  .layout {
+  .layout,
+  .auth-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -506,7 +522,8 @@ a { color: var(--accent); }
     padding: 42px 16px 24px;
   }
 
-  .layout {
+  .layout,
+  .auth-layout {
     padding: 16px;
   }
 
