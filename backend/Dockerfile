@@ -2,8 +2,6 @@
 FROM debian:bookworm AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
-# Render Free and Starter builds have limited memory. Keep all C++ builds
-# serial by default; callers can override this build argument on larger builders.
 ARG BUILD_JOBS=1
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 
@@ -28,9 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Build only the Drogon components used by this application. The backend uses
-# libpq directly, so Drogon's database backends, ORM manager, examples, and CLI
-# are unnecessary. -O1 also reduces compiler peak memory versus Release's -O3.
 RUN git config --global http.version HTTP/1.1 \
  && git clone --branch v1.9.7 --depth 1 https://github.com/drogonframework/drogon.git /tmp/drogon \
  && cd /tmp/drogon \
@@ -49,8 +44,6 @@ RUN git config --global http.version HTTP/1.1 \
  && ldconfig \
  && rm -rf /tmp/drogon
 
-# Build CPR from source (not available in Bookworm repos) with the same
-# memory-conscious settings.
 RUN git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/cpr \
  && cmake -S /tmp/cpr -B /tmp/cpr/build \
         -DCMAKE_BUILD_TYPE=Release \
@@ -86,11 +79,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
     libpqxx-6.4 \
     libcurl4 \
- && rm -rf /var/lib/apt/lists/*
-WORKDIR /srv
-COPY --from=build /app/build/college_ff_server /srv/college_ff_server
-COPY --from=build /app/db /srv/db
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 10001 cff \
+ && useradd --system --uid 10001 --gid cff --home-dir /srv --shell /usr/sbin/nologin cff
 
+WORKDIR /srv
+COPY --from=build --chown=cff:cff /app/build/college_ff_server /srv/college_ff_server
+COPY --from=build --chown=cff:cff /app/db /srv/db
+
+USER 10001:10001
 EXPOSE 8080
 ENV PORT=8080
 CMD ["/srv/college_ff_server"]
