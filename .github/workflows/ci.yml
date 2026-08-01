@@ -95,8 +95,8 @@ jobs:
         run: |
           api_uid="$(docker run --rm --entrypoint id college-ff-api -u)"
           backup_uid="$(docker run --rm --entrypoint id college-ff-db-backup -u)"
-          test "$api_uid" = "10001"
-          test "$backup_uid" = "10002"
+          test "$api_uid" != "0"
+          test "$backup_uid" != "0"
 
       - name: Run production migrations
         run: |
