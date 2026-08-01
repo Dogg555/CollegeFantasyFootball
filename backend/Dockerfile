@@ -61,9 +61,10 @@ COPY . /app
 
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG" \
+        -DCMAKE_CXX_FLAGS_RELEASE="-O0 -g0 -DNDEBUG" \
+        -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
         -DCMAKE_PREFIX_PATH=/usr/local \
- && cmake --build build --target college_ff_server --parallel "${BUILD_JOBS}"
+ && cmake --build build --target college_ff_server --parallel "${BUILD_JOBS}" --verbose
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \

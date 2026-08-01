@@ -38,6 +38,11 @@ Automated run:
 CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com python scripts/api_smoke_tests.py
 ```
 
+Or run the same smoke coverage with Node:
+```sh
+CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com node scripts/api_smoke_tests.mjs
+```
+
 Create or sign in:
 ```sh
 curl -X POST https://YOUR-RENDER-SERVICE.onrender.com/api/auth/signup \
@@ -83,6 +88,7 @@ Expected:
 - In browser dev tools, confirm `window.CFF_API_BASE` points to the deployed API service.
 - Create an account on `signup.html`.
 - Verify email on `verify-email.html` if required.
+- Request a new verification email on `resend-verification.html`.
 - Sign in on `signin.html`.
 - Use `reset-request.html` and `reset-password.html` for password recovery.
 - Create a league.

@@ -588,6 +588,10 @@ function lineupValid(roster = getRoster(), league = getLeagueState()) {
   return lineupErrors(roster, league).length === 0;
 }
 
+function lineupLocked(matchups = getMatchups()) {
+  return matchups.some((matchup) => String(matchup.status || '').toLowerCase() === 'final');
+}
+
 function canMoveToSlot(playerId, slot, roster = getRoster(), league = getLeagueState()) {
   const player = roster.find((item) => item.id === playerId);
   if (!player) return false;
@@ -1195,6 +1199,7 @@ async function dropPlayerApi(playerId) {
 
 async function submitWaiverClaimApi(addPlayer, dropPlayerId = '') {
   const league = getLeagueState();
+  if (lineupLocked()) return false;
   if (!getAuthState()?.token || !league?.id) {
     submitWaiverClaim(addPlayer, dropPlayerId);
     return true;
@@ -1209,6 +1214,7 @@ async function submitWaiverClaimApi(addPlayer, dropPlayerId = '') {
 
 async function processWaiverClaimApi(claimId) {
   const league = getLeagueState();
+  if (lineupLocked()) return false;
   if (!getAuthState()?.token || !league?.id) {
     processWaiverClaim(claimId);
     return true;
@@ -1256,6 +1262,9 @@ async function reorderWaiverClaimsApi(claimIds = []) {
 
 async function processWaiversApi() {
   const league = getLeagueState();
+  if (lineupLocked()) {
+    return { processed: [], cancelled: [], claims: getWaiverClaims() };
+  }
   if (!getAuthState()?.token || !league?.id) {
     processAllWaiverClaims();
     return true;
@@ -1314,7 +1323,7 @@ async function submitTradeOfferApi(offerPlayerId, requestPlayerName, targetManag
   const league = getLeagueState();
   const player = getRoster().find((item) => item.id === offerPlayerId);
   if (!getAuthState()?.token || !league?.id) return submitTradeOffer(offerPlayerId, requestPlayerName, targetManager, requestPlayer, note);
-  if (!player || !requestPlayer?.id || !isActiveTradeTarget(targetManager, league)) return false;
+  if (lineupLocked() || !player || !requestPlayer?.id || !isActiveTradeTarget(targetManager, league)) return false;
   await apiRequest(`/leagues/${encodeURIComponent(league.id)}/trades`, {
     method: 'POST',
     body: JSON.stringify({ offerPlayer: player, requestPlayer: requestPlayer ? normalizePlayer(requestPlayer) : null, requestPlayerName, targetManager, note })
@@ -1347,7 +1356,7 @@ async function getManagerRosterApi(managerEmail) {
 }
 
 function addFreeAgent(player) {
-  if (freeAgencyLocked()) return false;
+  if (freeAgencyLocked() || lineupLocked()) return false;
   const normalized = normalizePlayer(player);
   const roster = getRoster();
   if (roster.some((item) => item.id === normalized.id)) {
@@ -1364,7 +1373,7 @@ function addFreeAgent(player) {
 }
 
 function dropPlayer(playerId) {
-  if (playerLockedInTrade(playerId)) return false;
+  if (lineupLocked() || playerLockedInTrade(playerId)) return false;
   const roster = getRoster();
   const player = roster.find((item) => item.id === playerId);
   if (!player) return false;
@@ -1377,6 +1386,7 @@ async function updateRosterSlotApi(playerId, slot) {
   const league = getLeagueState();
   const requestedSlot = String(slot || '').toLowerCase();
   if (!getAuthState()?.token || !league?.id) {
+    if (lineupLocked()) return false;
     return setRosterSlot(playerId, requestedSlot);
   }
   const roster = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/roster/${encodeURIComponent(playerId)}/slot`, {
@@ -1457,6 +1467,7 @@ async function finalizeWeekApi(week = 1) {
 }
 
 function submitWaiverClaim(addPlayer, dropPlayerId = '') {
+  if (lineupLocked()) return false;
   const player = normalizePlayer(addPlayer);
   const claims = getWaiverClaims();
   const auth = getAuthState();
@@ -1475,6 +1486,7 @@ function submitWaiverClaim(addPlayer, dropPlayerId = '') {
   });
   saveWaiverClaims(claims);
   addTransaction('Waiver Claim', `Claimed ${player.name}`);
+  return true;
 }
 
 function cancelWaiverClaim(claimId) {
@@ -1512,6 +1524,7 @@ function reorderWaiverClaims(claimIds = []) {
 }
 
 function processWaiverClaim(claimId) {
+  if (lineupLocked()) return false;
   if (!waiverDeadlinePassed()) return false;
   const claims = getWaiverClaims();
   const claim = claims.find((item) => item.id === claimId);
@@ -1531,6 +1544,9 @@ function processWaiverClaim(claimId) {
 }
 
 function processAllWaiverClaims() {
+  if (lineupLocked()) {
+    return { processed: [], cancelled: [], claims: getWaiverClaims() };
+  }
   if (!waiverDeadlinePassed()) {
     return { processed: [], cancelled: [], claims: getWaiverClaims() };
   }
@@ -1550,7 +1566,7 @@ function processAllWaiverClaims() {
 
 function submitTradeOffer(offerPlayerId, requestPlayerName, targetManager, requestPlayer = null, note = '') {
   const player = getRoster().find((item) => item.id === offerPlayerId);
-  if (!player || !requestPlayer?.id || playerLockedInTrade(offerPlayerId) || !isActiveTradeTarget(targetManager)) return false;
+  if (lineupLocked() || !player || !requestPlayer?.id || playerLockedInTrade(offerPlayerId) || !isActiveTradeTarget(targetManager)) return false;
   const rules = tradeRules();
   const auth = getAuthState();
   const offers = getTradeOffers();
@@ -1584,6 +1600,7 @@ function updateTradeStatus(tradeId, status) {
   if (status === 'Cancelled' && trade.offeredByEmail && trade.offeredByEmail !== authEmail && !commissioner) return;
   if ((status === 'Approved' || status === 'Vetoed') && !commissioner) return;
   const executeTrade = status === 'Approved' || (status === 'Accepted' && !trade.requiresApproval);
+  if (executeTrade && lineupLocked()) return;
   trade.status = executeTrade ? 'Approved' : status;
   if (executeTrade && trade.requestPlayer?.id) {
     const roster = getRoster();

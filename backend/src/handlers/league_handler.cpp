@@ -219,6 +219,15 @@ bool playerLockedInTradeLocked(const std::string &leagueId,
     return false;
 }
 
+bool lineupLockedLocked(const std::string &leagueId) {
+    for (const auto &matchup : arrayForLeague(matchupsByLeague, leagueId)) {
+        if (lowerString(jsonString(matchup, "status", "scheduled")) == "final") {
+            return true;
+        }
+    }
+    return false;
+}
+
 Json::Value activeMembers(const Json::Value &members) {
     Json::Value active(Json::arrayValue);
     for (const auto &member : members) {
@@ -1316,6 +1325,13 @@ bool dbDraftLobbyOpen(PGconn *conn, const std::string &leagueId) {
     return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0 && cellBool(result.get(), 0, 0);
 }
 
+bool dbLineupLocked(PGconn *conn, const std::string &leagueId) {
+    auto result = execParams(conn,
+                             "SELECT 1 FROM league_matchups WHERE league_id = $1 AND status = 'final' LIMIT 1",
+                             {leagueId});
+    return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0;
+}
+
 std::optional<Json::Value> dbGetDraftState(const std::string &accountEmail, const std::string &leagueId) {
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
@@ -1559,6 +1575,7 @@ std::optional<Json::Value> dbAddRosterPlayer(const std::string &accountEmail,
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
+    if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     const auto normalized = normalizePlayerJson(player);
     const auto playerId = jsonString(normalized, "id");
     if (dbPlayerRosteredInLeague(conn.get(), leagueId, playerId)) return std::nullopt;
@@ -1585,6 +1602,7 @@ std::optional<Json::Value> dbDropRosterPlayer(const std::string &accountEmail,
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
+    if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     if (dbPlayerLockedInTrade(conn.get(), leagueId, accountEmail, playerId)) return std::nullopt;
     auto result = execParams(conn.get(),
                              "DELETE FROM rosters "
@@ -1606,6 +1624,7 @@ std::optional<Json::Value> dbUpdateRosterSlot(const std::string &accountEmail,
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
+    if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     auto rosterResult = execParams(conn.get(),
                                    "SELECT player_id, player_snapshot::text, roster_slot "
                                    "FROM rosters WHERE league_id = $1 AND manager_email = $2 "
@@ -1764,6 +1783,7 @@ std::optional<Json::Value> dbCreateWaiver(const std::string &accountEmail,
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
+    if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     const auto player = normalizePlayerJson(body["addPlayer"]);
     const auto claimId = timestampId("waiver");
     const auto priority = dbPriorityForManager(conn.get(), leagueId, accountEmail);
@@ -1797,6 +1817,7 @@ std::optional<Json::Value> dbProcessWaiver(const std::string &accountEmail,
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
+    if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
     if (!waiverDeadlinePassed(waiverRules)) return std::nullopt;
     auto claim = execParams(conn.get(),
@@ -1882,6 +1903,7 @@ std::optional<Json::Value> dbProcessWaivers(const std::string &accountEmail, con
     if (!dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
+    if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
     if (!waiverDeadlinePassed(waiverRules)) return std::nullopt;
     auto claims = execParams(conn.get(),
@@ -1996,6 +2018,7 @@ std::optional<Json::Value> dbCreateTrade(const std::string &accountEmail,
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
+    if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     const auto tradeId = timestampId("trade");
     const auto target = jsonString(body, "targetManager", jsonString(body, "targetManagerEmail"));
     const auto offerId = jsonString(body["offerPlayer"], "id");
@@ -2068,6 +2091,7 @@ std::optional<Json::Value> dbUpdateTradeStatus(const std::string &accountEmail,
         return std::nullopt;
     }
     if (executeTrade) {
+        if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
         if (jsonString(requestPlayer, "id").empty()) {
             return std::nullopt;
         }
@@ -2846,6 +2870,11 @@ void handleAddRosterPlayer(const drogon::HttpRequestPtr &req,
     auto playerPayload = normalizePlayerJson(body->isMember("player") ? (*body)["player"] : *body);
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
+        auto conn = connectToDb();
+        if (conn && dbLineupLocked(conn.get(), leagueId)) {
+            sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
+            return;
+        }
         const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
         if (waiverModeActive(waiverRules)) {
             sendError(callback, drogon::k409Conflict, "Free agency is locked. Submit a waiver claim.");
@@ -2863,6 +2892,10 @@ void handleAddRosterPlayer(const drogon::HttpRequestPtr &req,
 
     std::lock_guard<std::mutex> lock(storeMutex);
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    if (lineupLockedLocked(leagueId)) {
+        sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
         return;
     }
     if (waiverModeActive(waiverRulesForLeagueLocked(leagueId))) {
@@ -2891,6 +2924,10 @@ void handleDropRosterPlayer(const drogon::HttpRequestPtr &req,
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
         auto conn = connectToDb();
+        if (conn && dbLineupLocked(conn.get(), leagueId)) {
+            sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
+            return;
+        }
         if (conn && dbPlayerLockedInTrade(conn.get(), leagueId, accountEmail, playerId)) {
             sendError(callback, drogon::k409Conflict, "Player is locked in a pending trade");
             return;
@@ -2906,6 +2943,10 @@ void handleDropRosterPlayer(const drogon::HttpRequestPtr &req,
 #endif
     std::lock_guard<std::mutex> lock(storeMutex);
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    if (lineupLockedLocked(leagueId)) {
+        sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
         return;
     }
     if (playerLockedInTradeLocked(leagueId, accountEmail, playerId)) {
@@ -2933,6 +2974,11 @@ void handleUpdateRosterSlot(const drogon::HttpRequestPtr &req,
     }
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
+        auto conn = connectToDb();
+        if (conn && dbLineupLocked(conn.get(), leagueId)) {
+            sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
+            return;
+        }
         auto roster = dbUpdateRosterSlot(accountEmail, leagueId, playerId, requestedSlot);
         if (!roster) {
             sendError(callback, drogon::k404NotFound, "Player roster entry not found");
@@ -2949,6 +2995,10 @@ void handleUpdateRosterSlot(const drogon::HttpRequestPtr &req,
 
     std::lock_guard<std::mutex> lock(storeMutex);
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    if (lineupLockedLocked(leagueId)) {
+        sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
         return;
     }
     if (waiverModeActive(waiverRulesForLeagueLocked(leagueId))) {
@@ -3291,6 +3341,11 @@ void handleCreateWaiver(const drogon::HttpRequestPtr &req,
     }
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
+        auto conn = connectToDb();
+        if (conn && dbCanAccessLeague(accountEmail, leagueId) && dbLineupLocked(conn.get(), leagueId)) {
+            sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
+            return;
+        }
         auto claim = dbCreateWaiver(accountEmail, leagueId, *body);
         if (!claim) {
             sendError(callback, drogon::k404NotFound, "League not found");
@@ -3302,6 +3357,10 @@ void handleCreateWaiver(const drogon::HttpRequestPtr &req,
 #endif
     std::lock_guard<std::mutex> lock(storeMutex);
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    if (lineupLockedLocked(leagueId)) {
+        sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
         return;
     }
     auto &roster = arrayForLeague(rostersByLeague, leagueId);
@@ -3344,6 +3403,11 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
                          const std::string &claimId) {
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
+        auto conn = connectToDb();
+        if (conn && dbCanAccessLeague(accountEmail, leagueId) && dbLineupLocked(conn.get(), leagueId)) {
+            sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
+            return;
+        }
         const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
         if (!waiverDeadlinePassed(waiverRules)) {
             sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
@@ -3361,6 +3425,14 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
 
     std::lock_guard<std::mutex> lock(storeMutex);
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    if (lineupLockedLocked(leagueId)) {
+        sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
+        return;
+    }
+    if (!waiverDeadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
+        sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
         return;
     }
     auto &claims = arrayForLeague(waiversByLeague, leagueId);
@@ -3483,6 +3555,11 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
                           const std::string &leagueId) {
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
+        auto conn = connectToDb();
+        if (conn && dbCanAccessLeague(accountEmail, leagueId) && dbLineupLocked(conn.get(), leagueId)) {
+            sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
+            return;
+        }
         const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
         if (!waiverDeadlinePassed(waiverRules)) {
             sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
@@ -3499,7 +3576,11 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    if (lineupLockedLocked(leagueId)) {
+        sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
         return;
     }
     if (!waiverDeadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
@@ -3657,6 +3738,11 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
     }
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
+        auto conn = connectToDb();
+        if (conn && dbLineupLocked(conn.get(), leagueId)) {
+            sendError(callback, drogon::k409Conflict, "Trades are locked after finalized matchups");
+            return;
+        }
         auto trade = dbCreateTrade(accountEmail, leagueId, *body);
         if (!trade) {
             sendError(callback, drogon::k403Forbidden, "Trade target must be an active league manager");
@@ -3668,6 +3754,10 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
 #endif
     std::lock_guard<std::mutex> lock(storeMutex);
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    if (lineupLockedLocked(leagueId)) {
+        sendError(callback, drogon::k409Conflict, "Trades are locked after finalized matchups");
         return;
     }
     const auto targetManager = jsonString(*body, "targetManager");
@@ -3731,6 +3821,14 @@ void handleUpdateTradeStatus(const drogon::HttpRequestPtr &req,
     }
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
+        const auto dbStatus = statusForDb(status);
+        if ((dbStatus == "accepted" || dbStatus == "approved")) {
+            auto conn = connectToDb();
+            if (conn && dbLineupLocked(conn.get(), leagueId)) {
+                sendError(callback, drogon::k409Conflict, "Trades are locked after finalized matchups");
+                return;
+            }
+        }
         auto trade = dbUpdateTradeStatus(accountEmail, leagueId, tradeId, status);
         if (!trade) {
             sendError(callback, drogon::k404NotFound, "Trade offer not found");
@@ -3767,6 +3865,10 @@ void handleUpdateTradeStatus(const drogon::HttpRequestPtr &req,
                 offers[i]["status"] = status;
             } else {
                 offers[i]["status"] = status;
+            }
+            if (executeTrade && lineupLockedLocked(leagueId)) {
+                sendError(callback, drogon::k409Conflict, "Trades are locked after finalized matchups");
+                return;
             }
             if (executeTrade && !offers[i].isMember("requestPlayer")) {
                 sendError(callback, drogon::k409Conflict, "Trade players are no longer available");

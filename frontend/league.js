@@ -30,6 +30,7 @@ const waiverStatus = document.getElementById('waiver-status');
 const waiverList = document.getElementById('waiver-list');
 const waiverPriorityList = document.getElementById('waiver-priority-list');
 const resetWaiverPriorityBtn = document.getElementById('reset-waiver-priority');
+const waiverSubmitButton = waiverForm?.querySelector('button[type="submit"]');
 const tradeForm = document.getElementById('trade-form');
 const tradeOfferPlayer = document.getElementById('trade-offer-player');
 const tradeTargetManager = document.getElementById('trade-target-manager');
@@ -206,12 +207,17 @@ function renderFreeAgency() {
   const available = getAvailablePlayers();
   const leagueState = getLeagueState();
   const hasRoom = rosterHasRoom(leagueState);
-  const locked = freeAgencyLocked(leagueState);
+  const waiverLocked = freeAgencyLocked(leagueState);
+  const lineupIsLocked = lineupLocked();
   if (freeAgentList) {
     if (!available.length) {
       freeAgentList.textContent = 'No free agents available.';
     } else {
-      const lockMessage = locked ? ' / free agency locked; submit waiver claims' : '';
+      const lockMessage = lineupIsLocked
+        ? ' / lineups locked after finalized matchups'
+        : waiverLocked
+          ? ' / free agency locked; submit waiver claims'
+          : '';
       const capacityRow = `<div class="row"><div><strong>Roster capacity</strong><div class="muted">${getRoster().length} / ${rosterLimit(leagueState)} spots filled${hasRoom ? '' : ' / submit a waiver with a drop to add players'}${lockMessage}</div></div></div>`;
       freeAgentList.innerHTML = available.map((player) => `
         <div class="row">
@@ -219,7 +225,7 @@ function renderFreeAgency() {
             <strong>${player.name}</strong>
             <div class="muted">${player.team} ${player.position} / ${player.availability || 'Free Agent'} / ${Number(player.projection).toFixed(1)} proj</div>
           </div>
-          <button class="button button--primary" data-add-free-agent="${player.id}" type="button" ${hasRoom && !locked ? '' : 'disabled'}>${locked ? 'Waivers' : hasRoom ? 'Add' : 'Roster full'}</button>
+          <button class="button button--primary" data-add-free-agent="${player.id}" type="button" ${hasRoom && !waiverLocked && !lineupIsLocked ? '' : 'disabled'}>${lineupIsLocked ? 'Locked' : waiverLocked ? 'Waivers' : hasRoom ? 'Add' : 'Roster full'}</button>
         </div>
       `).join('');
       freeAgentList.innerHTML = capacityRow + freeAgentList.innerHTML;
@@ -246,14 +252,14 @@ function renderFreeAgency() {
       dropPlayerList.textContent = 'No players on roster.';
     } else {
       dropPlayerList.innerHTML = roster.map((player) => {
-        const locked = playerLockedInTrade(player.id);
+        const tradeLocked = playerLockedInTrade(player.id);
         return `
         <div class="row">
           <div>
             <strong>${player.name}</strong>
-            <div class="muted">${player.team} ${player.position}${locked ? ' / locked in open trade' : ''}</div>
+            <div class="muted">${player.team} ${player.position}${lineupIsLocked ? ' / lineup locked' : tradeLocked ? ' / locked in open trade' : ''}</div>
           </div>
-          <button class="button button--ghost" data-drop-player="${player.id}" type="button" ${locked ? 'disabled' : ''}>Drop</button>
+          <button class="button button--ghost" data-drop-player="${player.id}" type="button" ${lineupIsLocked || tradeLocked ? 'disabled' : ''}>Drop</button>
         </div>
       `;
       }).join('');
@@ -276,11 +282,20 @@ function renderWaivers() {
   const roster = getRoster();
   const deadlinePassed = waiverDeadlinePassed();
   const rules = waiverRules();
+  const waiverIsLocked = lineupLocked();
   if (waiverAddPlayer) {
     waiverAddPlayer.innerHTML = available.map((player) => `<option value="${player.id}">${player.name} (${player.position})</option>`).join('');
+    waiverAddPlayer.disabled = waiverIsLocked || !available.length;
   }
   if (waiverDropPlayer) {
     waiverDropPlayer.innerHTML = `<option value="">No drop</option>${roster.map((player) => `<option value="${player.id}">${player.name}</option>`).join('')}`;
+    waiverDropPlayer.disabled = waiverIsLocked;
+  }
+  if (waiverSubmitButton) {
+    waiverSubmitButton.disabled = waiverIsLocked || !available.length;
+  }
+  if (waiverStatus && waiverIsLocked) {
+    waiverStatus.textContent = 'Waivers are locked after finalized matchups.';
   }
   const claims = getWaiverClaims();
   if (!waiverList) return;
@@ -298,7 +313,7 @@ function renderWaivers() {
     .filter((claim) => claim.status === 'Pending' && (!claim.managerEmail || claim.managerEmail === authEmail))
     .map((claim) => claim.id);
   const processAll = isCurrentCommissioner()
-    ? `<div class="row"><div><strong>Pending waiver run</strong><div class="muted">${deadlinePassed ? 'Process claims by priority, claim order, then submitted time.' : `Claims process after ${new Date(rules.claimDeadline).toLocaleString()}.`}</div></div><button class="button button--primary" data-process-all-waivers type="button" ${deadlinePassed ? '' : 'disabled'}>Process all</button></div>`
+    ? `<div class="row"><div><strong>Pending waiver run</strong><div class="muted">${waiverIsLocked ? 'Waivers are locked after finalized matchups.' : deadlinePassed ? 'Process claims by priority, claim order, then submitted time.' : `Claims process after ${new Date(rules.claimDeadline).toLocaleString()}.`}</div></div><button class="button button--primary" data-process-all-waivers type="button" ${deadlinePassed && !waiverIsLocked ? '' : 'disabled'}>Process all</button></div>`
     : '';
   waiverList.innerHTML = processAll + orderedClaims.map((claim) => {
     const mine = !claim.managerEmail || claim.managerEmail === authEmail;
@@ -314,7 +329,7 @@ function renderWaivers() {
         ${pending && mine ? `<button class="button button--ghost" data-waiver-up="${claim.id}" type="button" ${myIndex > 0 ? '' : 'disabled'}>Up</button>` : ''}
         ${pending && mine ? `<button class="button button--ghost" data-waiver-down="${claim.id}" type="button" ${myIndex >= 0 && myIndex < myPendingIds.length - 1 ? '' : 'disabled'}>Down</button>` : ''}
         ${pending && (mine || isCurrentCommissioner()) ? `<button class="button button--ghost" data-cancel-waiver="${claim.id}" type="button">Cancel</button>` : ''}
-        ${pending && isCurrentCommissioner() ? `<button class="button" data-process-waiver="${claim.id}" type="button" ${deadlinePassed ? '' : 'disabled'}>Process</button>` : !pending ? `<span class="badge">Done</span>` : ''}
+        ${pending && isCurrentCommissioner() ? `<button class="button" data-process-waiver="${claim.id}" type="button" ${deadlinePassed && !waiverIsLocked ? '' : 'disabled'}>Process</button>` : !pending ? `<span class="badge">Done</span>` : ''}
       </div>
     </div>
   `;
@@ -381,6 +396,7 @@ function renderWaivers() {
 function renderTrades(leagueState) {
   const roster = getRoster();
   const canManage = isCurrentCommissioner(leagueState);
+  const lineupIsLocked = lineupLocked();
   const managers = (leagueState?.members || [])
     .filter((member) => isActiveTradeTarget(member.email, leagueState))
     .map((member) => ({ email: member.email, label: managerDisplayName(member.email, leagueState) }));
@@ -389,17 +405,20 @@ function renderTrades(leagueState) {
     tradeOfferPlayer.innerHTML = unlocked.length
       ? unlocked.map((player) => `<option value="${player.id}">${player.name} (${player.position})</option>`).join('')
       : '<option value="">No tradeable players</option>';
+    tradeOfferPlayer.disabled = lineupIsLocked || !unlocked.length;
   }
   if (tradeTargetManager) {
     tradeTargetManager.innerHTML = managers.length
       ? managers.map((manager) => `<option value="${escapeHtml(manager.email)}">${escapeHtml(manager.label)}</option>`).join('')
       : '<option value="">Invite another manager first</option>';
-    tradeTargetManager.disabled = !managers.length;
+    tradeTargetManager.disabled = lineupIsLocked || !managers.length;
   }
   if (tradeSubmitButton) {
-    tradeSubmitButton.disabled = !managers.length || !roster.some((player) => !playerLockedInTrade(player.id));
+    tradeSubmitButton.disabled = lineupIsLocked || !managers.length || !roster.some((player) => !playerLockedInTrade(player.id));
   }
-  if (tradeStatus && !managers.length) {
+  if (tradeStatus && lineupIsLocked) {
+    tradeStatus.textContent = 'Trades are locked after finalized matchups.';
+  } else if (tradeStatus && !managers.length) {
     tradeStatus.textContent = 'Invite and confirm another manager before sending trade offers.';
   }
   if (tradeRequestPlayerId) {
@@ -426,10 +445,10 @@ function renderTrades(leagueState) {
         ${note}
       </div>
       <div class="actions">
-        ${open && target && offer.status === 'Pending' ? `<button class="button" data-trade-accept="${offer.id}" type="button">Accept</button>` : ''}
+        ${open && target && offer.status === 'Pending' ? `<button class="button" data-trade-accept="${offer.id}" type="button" ${lineupIsLocked ? 'disabled' : ''}>Accept</button>` : ''}
         ${open && target ? `<button class="button button--ghost" data-trade-decline="${offer.id}" type="button">Decline</button>` : ''}
         ${open && mine ? `<button class="button button--ghost" data-trade-cancel="${offer.id}" type="button">Cancel</button>` : ''}
-        ${needsApproval && canManage ? `<button class="button button--primary" data-trade-approve="${offer.id}" type="button">Approve</button><button class="button button--ghost" data-trade-veto="${offer.id}" type="button">Veto</button>` : ''}
+        ${needsApproval && canManage ? `<button class="button button--primary" data-trade-approve="${offer.id}" type="button" ${lineupIsLocked ? 'disabled' : ''}>Approve</button><button class="button button--ghost" data-trade-veto="${offer.id}" type="button">Veto</button>` : ''}
       </div>
     </div>
   `;
@@ -532,6 +551,7 @@ function renderTransactions() {
 function renderTeamPanel(leagueState) {
   const roster = getRoster();
   const errors = lineupErrors(roster, leagueState);
+  const locked = lineupLocked();
   if (teamRoster) {
     if (!roster.length) {
       teamRoster.textContent = 'No players drafted yet.';
@@ -560,9 +580,14 @@ function renderTeamPanel(leagueState) {
       `;
       }).join('');
       teamRoster.querySelectorAll('[data-roster-slot]').forEach((select) => {
+        select.disabled = locked;
         select.addEventListener('change', async () => {
           const previousPlayer = roster.find((player) => player.id === select.dataset.rosterSlot);
           const previousSlot = String(previousPlayer?.rosterSlot || previousPlayer?.position || 'bench').toLowerCase();
+          if (lineupLocked()) {
+            select.value = previousSlot;
+            return;
+          }
           select.disabled = true;
           try {
             const updated = await updateRosterSlotApi(select.dataset.rosterSlot, select.value);
@@ -589,6 +614,8 @@ function renderTeamPanel(leagueState) {
     }, {});
     const status = errors.length
       ? `<div class="row grid-full"><div><strong>Lineup incomplete</strong><div class="muted">${errors.map((error) => error.message).join(' / ')}</div></div><span class="badge">Fix</span></div>`
+      : locked
+        ? `<div class="row grid-full"><div><strong>Lineup locked</strong><div class="muted">A matchup has been finalized, so roster slots are locked.</div></div><span class="badge">Locked</span></div>`
       : `<div class="row grid-full"><div><strong>Lineup ready</strong><div class="muted">All required starter slots are filled.</div></div><span class="badge">Ready</span></div>`;
     teamSlots.innerHTML = status + ['qb', 'rb', 'wr', 'te', 'flex', 'bench'].map((slot) => `
       <div>
@@ -1003,6 +1030,10 @@ settingsForm?.addEventListener('submit', async (event) => {
 
 waiverForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (lineupLocked()) {
+    if (waiverStatus) waiverStatus.textContent = 'Waivers are locked after finalized matchups.';
+    return;
+  }
   const player = samplePlayers.find((item) => item.id === waiverAddPlayer.value);
   if (!player) {
     if (waiverStatus) waiverStatus.textContent = 'No player selected.';
@@ -1037,7 +1068,13 @@ tradeForm?.addEventListener('submit', async (event) => {
   } catch {
     ok = submitTradeOffer(tradeOfferPlayer.value, tradeRequestPlayer.value.trim(), tradeTargetManager.value, requestPlayer, tradeNote?.value.trim() || '');
   }
-  if (tradeStatus) tradeStatus.textContent = ok ? 'Trade offer sent.' : 'Select a roster player, target manager, and requested player before proposing a trade.';
+  if (tradeStatus) {
+    tradeStatus.textContent = ok
+      ? 'Trade offer sent.'
+      : lineupLocked()
+        ? 'Trades are locked after finalized matchups.'
+        : 'Select a roster player, target manager, and requested player before proposing a trade.';
+  }
   if (ok) tradeRequestPlayer.value = '';
   if (ok && tradeNote) tradeNote.value = '';
   renderLeague();

@@ -79,6 +79,16 @@ def main():
         "scoring": "ppr",
         "draftType": "snake",
         "invitedEmails": [manager_email],
+        "rosterRules": {"qb": 0, "rb": 0, "wr": 0, "te": 0, "flex": 0, "bench": 8},
+        "waiverRules": {
+            "mode": "waivers",
+            "claimDeadline": "2000-01-01T00:00:00Z",
+            "freeAgencyLocked": True,
+        },
+        "tradeRules": {
+            "commissionerApproval": False,
+            "expirationHours": 48,
+        },
     }
     league = request("POST", "/api/leagues", league_payload, token=token, expected=(201,))
     league_id = league.get("id")
@@ -172,6 +182,68 @@ def main():
     assert_true(len(undo_state.get("picks", [])) == 2, f"draft undo did not remove only the last pick: {undo_state}")
     assert_true(undo_state.get("currentPick") == 3, f"draft undo did not restore current pick 3: {undo_state}")
     assert_true(undo_state.get("currentManager") == manager_email, f"undo should put pick 3 back on manager: {undo_state}")
+
+    pending_waiver_player = {
+        "id": f"smoke-waiver-pending-{suffix}",
+        "name": "Smoke Pending Waiver",
+        "team": "Test State",
+        "position": "QB",
+        "conference": "Smoke",
+        "projection": 9.8,
+        "rank": 50,
+    }
+    pending_waiver = request(
+        "POST",
+        f"/api/leagues/{league_id}/waivers",
+        {"addPlayer": pending_waiver_player, "dropPlayerId": smoke_player_1["id"]},
+        token=token,
+        expected=(201,),
+    )
+    assert_true(pending_waiver.get("id"), f"pending waiver missing id: {pending_waiver}")
+
+    request("POST", f"/api/leagues/{league_id}/score/week/1", {"season": 2026}, token=token)
+    finalized = request("POST", f"/api/leagues/{league_id}/score/week/1/finalize", token=token)
+    assert_true(
+        any(str(matchup.get("status", "")).lower() == "final" for matchup in finalized),
+        f"week was not finalized: {finalized}",
+    )
+
+    request("POST", f"/api/leagues/{league_id}/roster", {"player": {
+        "id": f"smoke-locked-add-{suffix}",
+        "name": "Smoke Locked Add",
+        "team": "Test State",
+        "position": "TE",
+        "conference": "Smoke",
+        "projection": 7.0,
+        "rank": 51,
+    }}, token=token, expected=(409,))
+    request("POST", f"/api/leagues/{league_id}/roster/drop", {"playerId": smoke_player_1["id"]}, token=token, expected=(409,))
+    request("POST", f"/api/leagues/{league_id}/roster/{smoke_player_1['id']}/slot", {"slot": "bench"}, token=token, expected=(409,))
+    request("POST", f"/api/leagues/{league_id}/waivers", {"addPlayer": {
+        "id": f"smoke-locked-waiver-{suffix}",
+        "name": "Smoke Locked Waiver",
+        "team": "Test State",
+        "position": "TE",
+        "conference": "Smoke",
+        "projection": 7.2,
+        "rank": 52,
+    }, "dropPlayerId": smoke_player_1["id"]}, token=token, expected=(409,))
+    request("POST", f"/api/leagues/{league_id}/waivers/{pending_waiver['id']}/process", token=token, expected=(409,))
+    request("POST", f"/api/leagues/{league_id}/waivers/{pending_waiver['id']}/status", {"status": "Cancelled"}, token=token)
+    request("POST", f"/api/leagues/{league_id}/trades", {
+        "offerPlayer": smoke_player_1,
+        "requestPlayer": {
+            "id": f"smoke-player-2-{suffix}",
+            "name": "Smoke Test WR",
+            "team": "Test State",
+            "position": "WR",
+            "conference": "Smoke",
+            "projection": 17.2,
+            "rank": 2,
+        },
+        "requestPlayerName": "Smoke Test WR",
+        "targetManager": manager_email,
+    }, token=token, expected=(409,))
 
     request("GET", "/api/admin/ingest/cfbd/status", token=token, expected=(403,))
 

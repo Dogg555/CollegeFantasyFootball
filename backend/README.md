@@ -66,6 +66,11 @@ Automated smoke checks:
 CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com python scripts/api_smoke_tests.py
 ```
 
+Node smoke runner for machines without Python:
+```sh
+CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com node scripts/api_smoke_tests.mjs
+```
+
 ## CFBD ingestion (players)
 The backend can fetch player data directly from the CollegeFootballData API and persist it into Postgres.
 
