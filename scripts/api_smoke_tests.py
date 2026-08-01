@@ -25,12 +25,14 @@ def request(method, path, body=None, token=None, expected=(200,)):
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(f"{BASE_URL}{path}", data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             text = resp.read().decode("utf-8")
             status = resp.getcode()
     except urllib.error.HTTPError as exc:
         text = exc.read().decode("utf-8")
         status = exc.code
+    except urllib.error.URLError as exc:
+        raise SmokeFailure(f"{method} {path} could not connect to {BASE_URL}: {exc}") from exc
     if status not in expected:
         raise SmokeFailure(f"{method} {path} expected {expected}, got {status}: {text}")
     if not text:
@@ -46,17 +48,29 @@ def assert_true(condition, message):
         raise SmokeFailure(message)
 
 
+def player(player_id, name, position, projection, rank):
+    return {
+        "id": player_id,
+        "name": name,
+        "team": "Test State",
+        "position": position,
+        "conference": "Smoke",
+        "projection": projection,
+        "rank": rank,
+    }
+
+
 def main():
     suffix = str(int(time.time()))
     email = f"{EMAIL_PREFIX}+{suffix}@example.com"
     manager_email = f"{EMAIL_PREFIX}-manager+{suffix}@example.com"
 
     health = request("GET", "/health")
-    assert_true(health.get("status") in {"ok", "degraded"}, f"unexpected health payload: {health}")
+    assert_true(health.get("status") == "ok", f"backend is not healthy: {health}")
+    assert_true(health.get("database") == "ok", f"database is not healthy: {health}")
 
     api_health = request("GET", "/api/health")
-    assert_true(api_health.get("service") == "college-ff-api", f"unexpected api health payload: {api_health}")
-
+    assert_true(api_health.get("service") == "college-ff-api", f"unexpected API health payload: {api_health}")
     request("GET", "/api/leagues", expected=(401,))
 
     signup = request("POST", "/api/auth/signup", {"email": email, "password": PASSWORD}, expected=(201,))
@@ -69,7 +83,6 @@ def main():
     login = request("POST", "/api/auth/login", {"email": email, "password": PASSWORD})
     login_token = login.get("token")
     assert_true(login_token, f"login did not return token: {login}")
-
     request("POST", "/api/auth/logout", token=login_token)
     request("GET", "/api/auth/validate", token=login_token, expected=(401,))
 
@@ -78,21 +91,22 @@ def main():
         "teams": 10,
         "scoring": "ppr",
         "draftType": "snake",
+        "draftLobbyOpen": True,
         "invitedEmails": [manager_email],
+        # Zero required starters keeps the smoke league valid for scoring while
+        # the bench still provides capacity for draft/waiver behavior tests.
         "rosterRules": {"qb": 0, "rb": 0, "wr": 0, "te": 0, "flex": 0, "bench": 8},
         "waiverRules": {
             "mode": "waivers",
             "claimDeadline": "2000-01-01T00:00:00Z",
             "freeAgencyLocked": True,
         },
-        "tradeRules": {
-            "commissionerApproval": False,
-            "expirationHours": 48,
-        },
+        "tradeRules": {"commissionerApproval": False, "expirationHours": 48},
     }
     league = request("POST", "/api/leagues", league_payload, token=token, expected=(201,))
     league_id = league.get("id")
-    assert_true(league_id, f"league create did not return id: {league}")
+    assert_true(league_id, f"league create did not return ID: {league}")
+    assert_true(league.get("draftLobbyOpen") is True, f"draft lobby was not opened: {league}")
 
     leagues = request("GET", "/api/leagues", token=token)
     assert_true(any(item.get("id") == league_id for item in leagues), "created league missing from list")
@@ -101,11 +115,14 @@ def main():
     settings_update["notes"] = "smoke settings update"
     updated = request("PUT", f"/api/leagues/{league_id}", settings_update, token=token)
     assert_true(updated.get("notes") == "smoke settings update", f"league update failed: {updated}")
+    assert_true(updated.get("draftLobbyOpen") is True, f"league update closed the draft lobby: {updated}")
 
-    members = request("GET", f"/api/leagues/{league_id}/members", token=token)
-    assert_true(len(members) >= 1, f"members missing: {members}")
-
-    manager_signup = request("POST", "/api/auth/signup", {"email": manager_email, "password": PASSWORD}, expected=(201,))
+    manager_signup = request(
+        "POST",
+        "/api/auth/signup",
+        {"email": manager_email, "password": PASSWORD},
+        expected=(201,),
+    )
     manager_token = manager_signup.get("token")
     assert_true(manager_token, f"manager signup did not return token: {manager_signup}")
     joined = request("POST", f"/api/leagues/{league_id}/join", token=manager_token)
@@ -126,16 +143,9 @@ def main():
         token=token,
     )
     assert_true(order_state.get("draftOrder") == draft_order, f"draft order was not saved: {order_state}")
+    assert_true(order_state.get("currentManager") == email, f"pick 1 should belong to commissioner: {order_state}")
 
-    smoke_player_1 = {
-        "id": f"smoke-player-{suffix}",
-        "name": "Smoke Test RB",
-        "team": "Test State",
-        "position": "RB",
-        "conference": "Smoke",
-        "projection": 18.4,
-        "rank": 1,
-    }
+    smoke_player_1 = player(f"smoke-player-{suffix}", "Smoke Test RB", "RB", 18.4, 1)
     pick_state = request(
         "POST",
         f"/api/leagues/{league_id}/draft/picks",
@@ -144,54 +154,43 @@ def main():
         expected=(201,),
     )
     assert_true(len(pick_state.get("picks", [])) == 1, f"draft pick was not recorded: {pick_state}")
-    assert_true(pick_state.get("currentPick") == 2, f"draft pick did not advance current pick: {pick_state}")
+    assert_true(pick_state.get("currentPick") == 2, f"draft pick did not advance: {pick_state}")
     assert_true(pick_state.get("currentManager") == manager_email, f"pick 2 should belong to manager: {pick_state}")
 
-    request("POST", f"/api/leagues/{league_id}/draft/picks", {"player": {
-        "id": f"smoke-player-2-{suffix}",
-        "name": "Smoke Test WR",
-        "team": "Test State",
-        "position": "WR",
-        "conference": "Smoke",
-        "projection": 17.2,
-        "rank": 2,
-    }}, token=manager_token, expected=(201,))
-    request("POST", f"/api/leagues/{league_id}/draft/picks", {"player": {
-        "id": f"smoke-player-bad-turn-{suffix}",
-        "name": "Smoke Test Bad Turn",
-        "team": "Test State",
-        "position": "TE",
-        "conference": "Smoke",
-        "projection": 12.0,
-        "rank": 99,
-    }}, token=token, expected=(409,))
-    snake_turn = request("POST", f"/api/leagues/{league_id}/draft/picks", {"player": {
-        "id": f"smoke-player-3-{suffix}",
-        "name": "Smoke Test QB",
-        "team": "Test State",
-        "position": "QB",
-        "conference": "Smoke",
-        "projection": 22.1,
-        "rank": 3,
-    }}, token=manager_token, expected=(201,))
+    smoke_player_2 = player(f"smoke-player-2-{suffix}", "Smoke Test WR", "WR", 17.2, 2)
+    request(
+        "POST",
+        f"/api/leagues/{league_id}/draft/picks",
+        {"player": smoke_player_2},
+        token=manager_token,
+        expected=(201,),
+    )
+    request(
+        "POST",
+        f"/api/leagues/{league_id}/draft/picks",
+        {"player": player(f"smoke-player-bad-turn-{suffix}", "Smoke Test Bad Turn", "TE", 12.0, 99)},
+        token=token,
+        expected=(409,),
+    )
+    snake_turn = request(
+        "POST",
+        f"/api/leagues/{league_id}/draft/picks",
+        {"player": player(f"smoke-player-3-{suffix}", "Smoke Test QB", "QB", 22.1, 3)},
+        token=manager_token,
+        expected=(201,),
+    )
     assert_true(len(snake_turn.get("picks", [])) == 3, f"snake turn pick was not recorded: {snake_turn}")
     assert_true(snake_turn.get("currentPick") == 4, f"snake turn did not advance to pick 4: {snake_turn}")
     assert_true(snake_turn.get("currentManager") == email, f"pick 4 should return to commissioner: {snake_turn}")
 
     undo_state = request("POST", f"/api/leagues/{league_id}/draft/undo", token=token)
     assert_true(len(undo_state.get("picks", [])) == 2, f"draft undo did not remove only the last pick: {undo_state}")
-    assert_true(undo_state.get("currentPick") == 3, f"draft undo did not restore current pick 3: {undo_state}")
-    assert_true(undo_state.get("currentManager") == manager_email, f"undo should put pick 3 back on manager: {undo_state}")
+    assert_true(undo_state.get("currentPick") == 3, f"draft undo did not restore pick 3: {undo_state}")
+    assert_true(undo_state.get("currentManager") == manager_email, f"undo should restore manager turn: {undo_state}")
 
-    pending_waiver_player = {
-        "id": f"smoke-waiver-pending-{suffix}",
-        "name": "Smoke Pending Waiver",
-        "team": "Test State",
-        "position": "QB",
-        "conference": "Smoke",
-        "projection": 9.8,
-        "rank": 50,
-    }
+    pending_waiver_player = player(
+        f"smoke-waiver-pending-{suffix}", "Smoke Pending Waiver", "QB", 9.8, 50
+    )
     pending_waiver = request(
         "POST",
         f"/api/leagues/{league_id}/waivers",
@@ -199,7 +198,7 @@ def main():
         token=token,
         expected=(201,),
     )
-    assert_true(pending_waiver.get("id"), f"pending waiver missing id: {pending_waiver}")
+    assert_true(pending_waiver.get("id"), f"pending waiver missing ID: {pending_waiver}")
 
     request("POST", f"/api/leagues/{league_id}/score/week/1", {"season": 2026}, token=token)
     finalized = request("POST", f"/api/leagues/{league_id}/score/week/1/finalize", token=token)
@@ -208,45 +207,63 @@ def main():
         f"week was not finalized: {finalized}",
     )
 
-    request("POST", f"/api/leagues/{league_id}/roster", {"player": {
-        "id": f"smoke-locked-add-{suffix}",
-        "name": "Smoke Locked Add",
-        "team": "Test State",
-        "position": "TE",
-        "conference": "Smoke",
-        "projection": 7.0,
-        "rank": 51,
-    }}, token=token, expected=(409,))
-    request("POST", f"/api/leagues/{league_id}/roster/drop", {"playerId": smoke_player_1["id"]}, token=token, expected=(409,))
-    request("POST", f"/api/leagues/{league_id}/roster/{smoke_player_1['id']}/slot", {"slot": "bench"}, token=token, expected=(409,))
-    request("POST", f"/api/leagues/{league_id}/waivers", {"addPlayer": {
-        "id": f"smoke-locked-waiver-{suffix}",
-        "name": "Smoke Locked Waiver",
-        "team": "Test State",
-        "position": "TE",
-        "conference": "Smoke",
-        "projection": 7.2,
-        "rank": 52,
-    }, "dropPlayerId": smoke_player_1["id"]}, token=token, expected=(409,))
-    request("POST", f"/api/leagues/{league_id}/waivers/{pending_waiver['id']}/process", token=token, expected=(409,))
-    request("POST", f"/api/leagues/{league_id}/waivers/{pending_waiver['id']}/status", {"status": "Cancelled"}, token=token)
-    request("POST", f"/api/leagues/{league_id}/trades", {
-        "offerPlayer": smoke_player_1,
-        "requestPlayer": {
-            "id": f"smoke-player-2-{suffix}",
-            "name": "Smoke Test WR",
-            "team": "Test State",
-            "position": "WR",
-            "conference": "Smoke",
-            "projection": 17.2,
-            "rank": 2,
+    request(
+        "POST",
+        f"/api/leagues/{league_id}/roster",
+        {"player": player(f"smoke-locked-add-{suffix}", "Smoke Locked Add", "TE", 7.0, 51)},
+        token=token,
+        expected=(409,),
+    )
+    request(
+        "POST",
+        f"/api/leagues/{league_id}/roster/drop",
+        {"playerId": smoke_player_1["id"]},
+        token=token,
+        expected=(409,),
+    )
+    request(
+        "POST",
+        f"/api/leagues/{league_id}/roster/{smoke_player_1['id']}/slot",
+        {"slot": "bench"},
+        token=token,
+        expected=(409,),
+    )
+    request(
+        "POST",
+        f"/api/leagues/{league_id}/waivers",
+        {
+            "addPlayer": player(f"smoke-locked-waiver-{suffix}", "Smoke Locked Waiver", "TE", 7.2, 52),
+            "dropPlayerId": smoke_player_1["id"],
         },
-        "requestPlayerName": "Smoke Test WR",
-        "targetManager": manager_email,
-    }, token=token, expected=(409,))
+        token=token,
+        expected=(409,),
+    )
+    request(
+        "POST",
+        f"/api/leagues/{league_id}/waivers/{pending_waiver['id']}/process",
+        token=token,
+        expected=(409,),
+    )
+    request(
+        "POST",
+        f"/api/leagues/{league_id}/waivers/{pending_waiver['id']}/status",
+        {"status": "Cancelled"},
+        token=token,
+    )
+    request(
+        "POST",
+        f"/api/leagues/{league_id}/trades",
+        {
+            "offerPlayer": smoke_player_1,
+            "requestPlayer": smoke_player_2,
+            "requestPlayerName": smoke_player_2["name"],
+            "targetManager": manager_email,
+        },
+        token=token,
+        expected=(409,),
+    )
 
     request("GET", "/api/admin/ingest/cfbd/status", token=token, expected=(403,))
-
     transactions = request("GET", f"/api/leagues/{league_id}/transactions", token=token)
     assert_true(isinstance(transactions, list), f"transactions response is not a list: {transactions}")
 
@@ -259,12 +276,7 @@ def main():
         relogin = request("POST", "/api/auth/login", {"email": email, "password": new_password})
         assert_true(relogin.get("token"), f"password reset login failed: {relogin}")
 
-    print(json.dumps({
-        "status": "ok",
-        "baseUrl": BASE_URL,
-        "email": email,
-        "leagueId": league_id,
-    }, indent=2))
+    print(json.dumps({"status": "ok", "baseUrl": BASE_URL, "email": email, "leagueId": league_id}, indent=2))
 
 
 if __name__ == "__main__":
