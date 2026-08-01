@@ -41,6 +41,18 @@ services:
         value: "false"
       - key: CFF_LOG_AUTH_TOKENS
         value: "false"
+      - key: CFF_SECURITY_ENFORCE_PRODUCTION
+        value: "true"
+      - key: CFF_TRUST_PROXY_HEADERS
+        value: "true"
+      - key: CFF_TRUSTED_CLIENT_IP_HEADER
+        value: "x-forwarded-for"
+      - key: CFF_MIN_PASSWORD_LENGTH
+        value: "12"
+      - key: CFF_MAX_REQUEST_BODY_BYTES
+        value: "262144"
+      - key: CFF_AUTH_REQUEST_BODY_BYTES
+        value: "8192"
 
   - type: web
     name: college-ff-frontend

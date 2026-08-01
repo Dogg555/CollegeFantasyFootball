@@ -4,6 +4,7 @@
 
 # Local-only folders
 /db/
+/backups/
 
 # Backend local DB / runtime data
 backend/db_schema/
@@ -22,6 +23,7 @@ render-env-checklist.local.txt
 *.sqlite
 *.sqlite3
 *.dump
+*.dump.sha256
 *.sql.bak
 *.bak
 *.log

@@ -1,0 +1,158 @@
+name: Security hardening
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "41 7 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-hardening-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api-security:
+    name: API security controls
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build production backend image
+        run: docker build -f backend/Dockerfile -t college-ff-api-security ./backend
+
+      - name: Scan production image
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.70.0 \
+            image \
+            --scanners vuln,secret,misconfig \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            college-ff-api-security
+
+      - name: Run production migrations
+        run: |
+          docker run --rm --network host \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            college-ff-api-security sh /srv/db/migrate.sh
+
+      - name: Start hardened API
+        run: |
+          docker run -d --name college-ff-api-security --network host \
+            -e PORT=8080 \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            -e JWT_SECRET=ci-security-jwt-secret-2026-at-least-32-characters \
+            -e ALLOWED_ORIGINS=https://frontend.example.test \
+            -e CFF_ADMIN_API_TOKEN=ci-security-admin-token-2026-at-least-32-characters \
+            -e CFF_REQUIRE_DB=true \
+            -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION=false \
+            -e CFF_EXPOSE_AUTH_TOKENS=false \
+            -e CFF_LOG_AUTH_TOKENS=false \
+            -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
+            -e CFF_TRUST_PROXY_HEADERS=false \
+            -e CFF_MIN_PASSWORD_LENGTH=12 \
+            -e CFF_MAX_REQUEST_BODY_BYTES=262144 \
+            -e CFF_AUTH_REQUEST_BODY_BYTES=8192 \
+            college-ff-api-security
+
+      - name: Run focused security smoke tests
+        env:
+          CFF_API_BASE_URL: http://127.0.0.1:8080
+          CFF_SECURITY_TEST_ORIGIN: https://frontend.example.test
+        run: python scripts/security_smoke_tests.py
+
+      - name: Backend logs
+        if: always()
+        run: docker logs college-ff-api-security || true
+
+  database-recovery:
+    name: Database backup and restore drill
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+      BACKUP_FILE: ${{ github.workspace }}/recovery-test.dump
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Apply migrations transactionally
+        run: sh backend/db/migrate.sh
+
+      - name: Seed recovery markers
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO users (email, password_hash, email_verified)
+          VALUES ('restore-test@example.test', '$2b$12$restoretestplaceholder', true)
+          ON CONFLICT (email) DO NOTHING;
+
+          INSERT INTO leagues (id, account_email, name, team_count, scoring, draft_type)
+          VALUES ('restore-test-league', 'restore-test@example.test', 'Restore Test League', 8, 'ppr', 'snake')
+          ON CONFLICT (id) DO NOTHING;
+          SQL
+
+      - name: Create protected backup
+        run: sh scripts/db-backup.sh
+
+      - name: Create disposable restore database
+        run: psql postgresql://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE cff_restore_test'
+
+      - name: Restore and validate backup
+        env:
+          RESTORE_DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff_restore_test
+          CFF_ALLOW_DESTRUCTIVE_RESTORE_TEST: "true"
+        run: sh scripts/db-restore-test.sh
+
+      - name: Verify restored records
+        run: |
+          restored_users="$(psql postgresql://postgres:postgres@127.0.0.1:5432/cff_restore_test -tAc "SELECT COUNT(*) FROM users WHERE email = 'restore-test@example.test'")"
+          restored_leagues="$(psql postgresql://postgres:postgres@127.0.0.1:5432/cff_restore_test -tAc "SELECT COUNT(*) FROM leagues WHERE id = 'restore-test-league'")"
+          test "$restored_users" = "1"
+          test "$restored_leagues" = "1"
