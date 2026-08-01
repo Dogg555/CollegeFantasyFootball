@@ -7,6 +7,7 @@ if [ -z "${DB_URL:-}" ]; then
 fi
 
 DB_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+LOCK_NAME="college-fantasy-football-schema-migrations"
 
 psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -15,20 +16,35 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 "
 
-if ! psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM schema_migrations WHERE version = '001_schema_snapshot'" | grep -q 1; then
-  echo "Applying 001_schema_snapshot"
-  psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$DB_DIR/schema.sql"
-  psql "$DB_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations (version) VALUES ('001_schema_snapshot') ON CONFLICT DO NOTHING;"
-fi
+apply_migration() {
+  version="$1"
+  migration="$2"
+
+  case "$version" in
+    *[!A-Za-z0-9_.-]*|'')
+      echo "Unsafe migration version: $version" >&2
+      exit 1
+      ;;
+  esac
+
+  echo "Checking $version"
+  {
+    printf "SELECT pg_advisory_xact_lock(hashtext('%s'));\n" "$LOCK_NAME"
+    printf "SELECT NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '%s') AS apply_migration \\gset\n" "$version"
+    printf "\\if :apply_migration\n"
+    printf "\\echo Applying %s\n" "$version"
+    cat "$migration"
+    printf "\nINSERT INTO schema_migrations (version) VALUES ('%s');\n" "$version"
+    printf "\\else\n"
+    printf "\\echo Skipping %s\n" "$version"
+    printf "\\endif\n"
+  } | psql "$DB_URL" -v ON_ERROR_STOP=1 --single-transaction
+}
+
+apply_migration "001_schema_snapshot" "$DB_DIR/schema.sql"
 
 for migration in "$DB_DIR"/migrations/*.sql; do
   [ -e "$migration" ] || continue
   version="$(basename "$migration" .sql)"
-  if psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM schema_migrations WHERE version = '$version'" | grep -q 1; then
-    echo "Skipping $version"
-    continue
-  fi
-  echo "Applying $version"
-  psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$migration"
-  psql "$DB_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations (version) VALUES ('$version');"
+  apply_migration "$version" "$migration"
 done
