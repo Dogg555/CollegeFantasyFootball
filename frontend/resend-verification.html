@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Verify email - College Fantasy Football</title>
+  <title>Resend verification - College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -28,27 +28,27 @@
   <main class="auth-layout">
     <section class="card card--accent auth-card">
       <div class="card__header">
-        <h2>Verify email</h2>
+        <h2>Resend verification</h2>
         <span class="pill pill--muted">Account</span>
       </div>
-      <form id="verify-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+      <form id="resend-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
         <label class="field">
-          <span>Verification token</span>
-          <input id="verify-token" type="text" name="token" placeholder="Paste verification token" autocomplete="one-time-code" />
+          <span>Email</span>
+          <input id="resend-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" />
         </label>
         <div class="actions">
-          <button class="button button--primary" type="submit">Verify email</button>
+          <button class="button button--primary" type="submit">Send verification</button>
         </div>
-        <div id="verify-status" class="muted small" role="status"></div>
+        <div id="resend-status" class="muted small" role="status"></div>
       </form>
     </section>
 
     <section class="card auth-sidecar">
-      <h2>Need a new token?</h2>
-      <p class="muted">Request a fresh verification email from the resend page.</p>
+      <h2>Have a token?</h2>
+      <p class="muted">Use the verification page after the email arrives.</p>
       <div class="cta-row">
-        <a class="button" href="resend-verification.html">Resend verification</a>
-        <a class="button button--ghost" href="signin.html">Sign in</a>
+        <a class="button" href="verify-email.html">Verify email</a>
+        <a class="button button--ghost" href="signup.html">Create account</a>
       </div>
     </section>
   </main>

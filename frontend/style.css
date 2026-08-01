@@ -479,6 +479,13 @@ a { color: var(--accent); }
 
 .row:last-child { border-bottom: none; }
 
+.row--active {
+  background: rgba(44, 211, 166, 0.08);
+  border-radius: 8px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
 .badge {
   background: rgba(108, 139, 255, 0.18);
   color: var(--text);

@@ -61,9 +61,10 @@ COPY . /app
 
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG" \
+        -DCMAKE_CXX_FLAGS_RELEASE="-O0 -g0 -DNDEBUG" \
+        -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
         -DCMAKE_PREFIX_PATH=/usr/local \
- && cmake --build build --target college_ff_server --parallel "${BUILD_JOBS}"
+ && cmake --build build --target college_ff_server --parallel "${BUILD_JOBS}" --verbose
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -81,7 +82,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4 \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system --gid 10001 cff \
- && useradd --system --uid 10001 --gid cff --home-dir /srv --shell /usr/sbin/nologin cff
+ && useradd --system --uid 10001 --gid cff --home-dir /srv --shell /usr/sbin/nologin cff \
+ && install -d -o cff -g cff -m 0750 /srv/uploads
 
 WORKDIR /srv
 COPY --from=build --chown=cff:cff /app/build/college_ff_server /srv/college_ff_server

@@ -38,6 +38,11 @@ Automated run:
 CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com python scripts/api_smoke_tests.py
 ```
 
+Or run the same smoke coverage with Node:
+```sh
+CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com node scripts/api_smoke_tests.mjs
+```
+
 Create or sign in:
 ```sh
 curl -X POST https://YOUR-RENDER-SERVICE.onrender.com/api/auth/signup \
@@ -72,6 +77,7 @@ python scripts/ops_ingest.py
 ```
 
 Expected:
+- Public `/health` and `/api/health` checks succeed in the helper output.
 - `status` is `ok` or `partial`.
 - `counts.players` increases after a successful player import.
 - Recent runs are visible through the admin status endpoint.
@@ -82,13 +88,16 @@ Expected:
 - In browser dev tools, confirm `window.CFF_API_BASE` points to the deployed API service.
 - Create an account on `signup.html`.
 - Verify email on `verify-email.html` if required.
+- Request a new verification email on `resend-verification.html`.
 - Sign in on `signin.html`.
 - Use `reset-request.html` and `reset-password.html` for password recovery.
 - Create a league.
 - Invite a manager.
 - Open league settings as commissioner.
 - Open draft lobby.
+- In Draft Room, randomize or reset draft order before the first pick.
 - Queue a player from Players.
 - Enter draft room and make a pick.
+- As commissioner, undo the last draft pick and confirm the player leaves the roster and the draft returns to that pick.
 - Submit a waiver claim.
 - Send and cancel a trade offer.

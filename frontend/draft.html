@@ -92,6 +92,13 @@
             </div>
             <span class="badge" id="draft-clock">--</span>
           </div>
+          <div class="summary__row">
+            <div>
+              <div class="label">Round</div>
+              <div class="value" id="draft-round-label">Round 1</div>
+            </div>
+            <span class="badge" id="draft-next-pick-label">Pick 1</span>
+          </div>
           <a class="button button--primary full" href="players.html">Search players</a>
         </div>
       </div>
@@ -115,8 +122,23 @@
       <div id="roster-list" class="list">No players drafted yet.</div>
       <div id="roster-balance" class="grid compact-grid"></div>
       <div class="cta-row" style="margin-top: 12px">
+        <button class="button" id="refresh-draft" type="button">Refresh</button>
+        <button class="button button--ghost" id="undo-last-pick" type="button">Undo last pick</button>
         <button class="button button--ghost" id="clear-draft" type="button">Reset draft</button>
       </div>
+    </section>
+
+    <section class="card">
+      <div class="card__header">
+        <h2>Draft Order</h2>
+        <span class="pill pill--muted" id="draft-order-count">0 managers</span>
+      </div>
+      <div id="draft-order-list" class="list">Draft order will appear when managers join.</div>
+      <div class="cta-row" style="margin-top: 12px">
+        <button class="button" id="randomize-draft-order" type="button">Randomize</button>
+        <button class="button button--ghost" id="reset-draft-order" type="button">Reset order</button>
+      </div>
+      <div id="draft-order-status" class="muted small" role="status"></div>
     </section>
 
     <section class="card">
@@ -125,6 +147,14 @@
         <span class="pill pill--muted" id="draft-current-pick">Pick 1</span>
       </div>
       <div id="draft-pick-list" class="list">No picks made yet.</div>
+    </section>
+
+    <section class="card">
+      <div class="card__header">
+        <h2>Upcoming Picks</h2>
+        <span class="pill pill--muted" id="upcoming-pick-count">Next 5</span>
+      </div>
+      <div id="upcoming-pick-list" class="list">Upcoming picks will appear when draft order is set.</div>
     </section>
 
     <section class="card">

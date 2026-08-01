@@ -89,6 +89,7 @@ def trigger_deploy():
 def wait_for_deploy(deploy_id):
     deadline = time.monotonic() + TIMEOUT_SECONDS
     last_status = None
+    failure_states = {"build_failed", "update_failed", "canceled", "cancelled", "deactivated", "failed"}
     failure_states = {
         "build_failed",
         "update_failed",

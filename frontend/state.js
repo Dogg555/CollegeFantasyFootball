@@ -588,6 +588,10 @@ function lineupValid(roster = getRoster(), league = getLeagueState()) {
   return lineupErrors(roster, league).length === 0;
 }
 
+function lineupLocked(matchups = getMatchups()) {
+  return matchups.some((matchup) => String(matchup.status || '').toLowerCase() === 'final');
+}
+
 function canMoveToSlot(playerId, slot, roster = getRoster(), league = getLeagueState()) {
   const player = roster.find((item) => item.id === playerId);
   if (!player) return false;
@@ -637,7 +641,19 @@ function draftPlayer(player) {
     setRoster(roster);
   }
   setQueue(getQueue().filter((item) => item.id !== normalized.id));
-  const nextPick = Number(meta.currentPick || getDraftPicks().length + 1) + 1;
+  const picks = getDraftPicks();
+  const pickNumber = Number(meta.currentPick || picks.length + 1);
+  saveDraftPicks([
+    ...picks,
+    {
+      id: `pick-${Date.now()}`,
+      managerEmail: currentDraftManager(meta) || getAuthState()?.email || '',
+      pickNumber,
+      player: normalized,
+      createdAt: new Date().toISOString()
+    }
+  ]);
+  const nextPick = pickNumber + 1;
   const complete = rosterHasRoom(getLeagueState(), getRoster()) === false;
   saveDraftMeta({
     ...meta,
@@ -647,6 +663,26 @@ function draftPlayer(player) {
     pickDeadline: complete ? '' : new Date(Date.now() + Number(meta.pickClockSeconds || 90) * 1000).toISOString()
   });
   return roster;
+}
+
+function undoLastDraftPick() {
+  const picks = getDraftPicks();
+  const lastPick = picks[picks.length - 1];
+  if (!lastPick) return false;
+  const player = normalizePlayer(lastPick.player || {});
+  saveDraftPicks(picks.slice(0, -1));
+  setRoster(getRoster().filter((item) => item.id !== player.id));
+  addPlayerToQueue(player);
+  const meta = getDraftMeta();
+  const pickNumber = Number(lastPick.pickNumber || picks.length);
+  saveDraftMeta({
+    ...meta,
+    status: 'open',
+    currentPick: pickNumber,
+    currentManager: currentDraftManager({ ...meta, currentPick: pickNumber, currentManager: '' }),
+    pickDeadline: new Date(Date.now() + Number(meta.pickClockSeconds || 90) * 1000).toISOString()
+  });
+  return true;
 }
 
 async function draftPlayerApi(player) {
@@ -659,7 +695,11 @@ async function draftPlayerApi(player) {
     body: JSON.stringify({ player: normalizePlayer(player) })
   });
   applyDraftState(state);
-  await syncActiveLeagueCollectionsFromApi();
+  try {
+    await syncActiveLeagueCollectionsFromApi();
+  } catch {
+    // The draft state is already applied; keep the pick from being replayed locally.
+  }
   return getRoster();
 }
 
@@ -718,11 +758,12 @@ function getDraftMeta() {
       status: 'open',
       currentPick: 1,
       draftOrder: [],
+      draftType: league.draftType || 'snake',
       currentManager: getAuthState()?.email || '',
       pickClockSeconds: 90,
       pickDeadline: new Date(Date.now() + 90000).toISOString()
     }
-    : { status: 'open', currentPick: 1, draftOrder: [], pickClockSeconds: 90, pickDeadline: new Date(Date.now() + 90000).toISOString() };
+    : { status: 'open', currentPick: 1, draftOrder: [], draftType: 'snake', pickClockSeconds: 90, pickDeadline: new Date(Date.now() + 90000).toISOString() };
 }
 
 function saveDraftMeta(meta = {}) {
@@ -733,6 +774,7 @@ function saveDraftMeta(meta = {}) {
     status: meta.status || 'open',
     currentPick: Number(meta.currentPick || 1),
     draftOrder: Array.isArray(meta.draftOrder) ? meta.draftOrder : [],
+    draftType: meta.draftType || league.draftType || 'snake',
     currentManager: meta.currentManager || '',
     pickClockSeconds: Number(meta.pickClockSeconds || 90),
     pickDeadline: meta.pickDeadline || ''
@@ -740,11 +782,34 @@ function saveDraftMeta(meta = {}) {
   writeJson(CFF_DRAFT_META_KEY, store);
 }
 
+function saveDraftOrder(draftOrder = []) {
+  const meta = getDraftMeta();
+  const currentPick = Number(meta.currentPick || 1);
+  saveDraftMeta({
+    ...meta,
+    status: meta.status || 'open',
+    currentPick,
+    draftOrder,
+    currentManager: draftManagerForPick(draftOrder, currentPick, meta.draftType || getLeagueState()?.draftType || 'snake'),
+    pickDeadline: meta.pickDeadline || new Date(Date.now() + Number(meta.pickClockSeconds || 90) * 1000).toISOString()
+  });
+}
+
+function draftManagerForPick(order = [], currentPick = 1, draftType = 'snake') {
+  if (!Array.isArray(order) || !order.length) return '';
+  const pickIndex = Math.max(1, Number(currentPick || 1)) - 1;
+  const round = Math.floor(pickIndex / order.length);
+  let offset = pickIndex % order.length;
+  if (String(draftType || 'snake').toLowerCase() === 'snake' && round % 2 === 1) {
+    offset = order.length - 1 - offset;
+  }
+  return order[offset] || '';
+}
+
 function currentDraftManager(meta = getDraftMeta()) {
-  if (meta.currentManager) return meta.currentManager;
   const order = Array.isArray(meta.draftOrder) ? meta.draftOrder : [];
-  if (!order.length) return getAuthState()?.email || '';
-  return order[(Number(meta.currentPick || 1) - 1) % order.length] || '';
+  if (!order.length) return meta.currentManager || getAuthState()?.email || '';
+  return draftManagerForPick(order, meta.currentPick, meta.draftType || getLeagueState()?.draftType || 'snake') || meta.currentManager || '';
 }
 
 function isMyDraftTurn(meta = getDraftMeta()) {
@@ -877,7 +942,10 @@ function standingsFromMatchups(league = getLeagueState(), matchups = getMatchups
     wins: 0,
     losses: 0,
     ties: 0,
-    pointsFor: 0
+    pointsFor: 0,
+    pointsAgainst: 0,
+    gamesPlayed: 0,
+    winPct: 0
   }));
   const byEmail = new Map(rows.map((row) => [row.email, row]));
   matchups.forEach((matchup) => {
@@ -887,7 +955,13 @@ function standingsFromMatchups(league = getLeagueState(), matchups = getMatchups
     const awayScore = Number(matchup.awayScore || 0);
     if (home) home.pointsFor += homeScore;
     if (away) away.pointsFor += awayScore;
+    if (home && away) {
+      home.pointsAgainst += awayScore;
+      away.pointsAgainst += homeScore;
+    }
     if (!away || matchup.status !== 'final') return;
+    if (home) home.gamesPlayed += 1;
+    away.gamesPlayed += 1;
     if (homeScore > awayScore) {
       home.wins += 1;
       away.losses += 1;
@@ -899,7 +973,10 @@ function standingsFromMatchups(league = getLeagueState(), matchups = getMatchups
       away.ties += 1;
     }
   });
-  return rows.sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.pointsFor - a.pointsFor);
+  rows.forEach((row) => {
+    row.winPct = row.gamesPlayed ? (row.wins + row.ties * 0.5) / row.gamesPlayed : 0;
+  });
+  return rows.sort((a, b) => b.winPct - a.winPct || b.wins - a.wins || a.losses - b.losses || b.pointsFor - a.pointsFor);
 }
 
 function addTransaction(type, summary) {
@@ -973,6 +1050,20 @@ async function saveDraftQueueApi(queue = getQueue()) {
   return state;
 }
 
+async function saveDraftOrderApi(draftOrder = []) {
+  const league = getLeagueState();
+  if (!getAuthState()?.token || !league?.id) {
+    saveDraftOrder(draftOrder);
+    return null;
+  }
+  const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/order`, {
+    method: 'PUT',
+    body: JSON.stringify({ draftOrder })
+  });
+  applyDraftState(state);
+  return state;
+}
+
 async function resetDraftApi() {
   const league = getLeagueState();
   if (!getAuthState()?.token || !league?.id) {
@@ -983,7 +1074,29 @@ async function resetDraftApi() {
     method: 'POST'
   });
   applyDraftState(state);
-  await syncActiveLeagueCollectionsFromApi();
+  try {
+    await syncActiveLeagueCollectionsFromApi();
+  } catch {
+    // The draft reset response is authoritative enough to keep the UI moving.
+  }
+  return state;
+}
+
+async function undoLastDraftPickApi() {
+  const league = getLeagueState();
+  if (!getAuthState()?.token || !league?.id) {
+    undoLastDraftPick();
+    return null;
+  }
+  const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/undo`, {
+    method: 'POST'
+  });
+  applyDraftState(state);
+  try {
+    await syncActiveLeagueCollectionsFromApi();
+  } catch {
+    // The undo response already contains the updated draft board.
+  }
   return state;
 }
 
@@ -1086,6 +1199,7 @@ async function dropPlayerApi(playerId) {
 
 async function submitWaiverClaimApi(addPlayer, dropPlayerId = '') {
   const league = getLeagueState();
+  if (lineupLocked()) return false;
   if (!getAuthState()?.token || !league?.id) {
     submitWaiverClaim(addPlayer, dropPlayerId);
     return true;
@@ -1100,6 +1214,7 @@ async function submitWaiverClaimApi(addPlayer, dropPlayerId = '') {
 
 async function processWaiverClaimApi(claimId) {
   const league = getLeagueState();
+  if (lineupLocked()) return false;
   if (!getAuthState()?.token || !league?.id) {
     processWaiverClaim(claimId);
     return true;
@@ -1147,6 +1262,9 @@ async function reorderWaiverClaimsApi(claimIds = []) {
 
 async function processWaiversApi() {
   const league = getLeagueState();
+  if (lineupLocked()) {
+    return { processed: [], cancelled: [], claims: getWaiverClaims() };
+  }
   if (!getAuthState()?.token || !league?.id) {
     processAllWaiverClaims();
     return true;
@@ -1205,7 +1323,7 @@ async function submitTradeOfferApi(offerPlayerId, requestPlayerName, targetManag
   const league = getLeagueState();
   const player = getRoster().find((item) => item.id === offerPlayerId);
   if (!getAuthState()?.token || !league?.id) return submitTradeOffer(offerPlayerId, requestPlayerName, targetManager, requestPlayer, note);
-  if (!player || !requestPlayer?.id || !isActiveTradeTarget(targetManager, league)) return false;
+  if (lineupLocked() || !player || !requestPlayer?.id || !isActiveTradeTarget(targetManager, league)) return false;
   await apiRequest(`/leagues/${encodeURIComponent(league.id)}/trades`, {
     method: 'POST',
     body: JSON.stringify({ offerPlayer: player, requestPlayer: requestPlayer ? normalizePlayer(requestPlayer) : null, requestPlayerName, targetManager, note })
@@ -1238,7 +1356,7 @@ async function getManagerRosterApi(managerEmail) {
 }
 
 function addFreeAgent(player) {
-  if (freeAgencyLocked()) return false;
+  if (freeAgencyLocked() || lineupLocked()) return false;
   const normalized = normalizePlayer(player);
   const roster = getRoster();
   if (roster.some((item) => item.id === normalized.id)) {
@@ -1255,7 +1373,7 @@ function addFreeAgent(player) {
 }
 
 function dropPlayer(playerId) {
-  if (playerLockedInTrade(playerId)) return false;
+  if (lineupLocked() || playerLockedInTrade(playerId)) return false;
   const roster = getRoster();
   const player = roster.find((item) => item.id === playerId);
   if (!player) return false;
@@ -1268,6 +1386,7 @@ async function updateRosterSlotApi(playerId, slot) {
   const league = getLeagueState();
   const requestedSlot = String(slot || '').toLowerCase();
   if (!getAuthState()?.token || !league?.id) {
+    if (lineupLocked()) return false;
     return setRosterSlot(playerId, requestedSlot);
   }
   const roster = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/roster/${encodeURIComponent(playerId)}/slot`, {
@@ -1348,6 +1467,7 @@ async function finalizeWeekApi(week = 1) {
 }
 
 function submitWaiverClaim(addPlayer, dropPlayerId = '') {
+  if (lineupLocked()) return false;
   const player = normalizePlayer(addPlayer);
   const claims = getWaiverClaims();
   const auth = getAuthState();
@@ -1366,6 +1486,7 @@ function submitWaiverClaim(addPlayer, dropPlayerId = '') {
   });
   saveWaiverClaims(claims);
   addTransaction('Waiver Claim', `Claimed ${player.name}`);
+  return true;
 }
 
 function cancelWaiverClaim(claimId) {
@@ -1403,6 +1524,7 @@ function reorderWaiverClaims(claimIds = []) {
 }
 
 function processWaiverClaim(claimId) {
+  if (lineupLocked()) return false;
   if (!waiverDeadlinePassed()) return false;
   const claims = getWaiverClaims();
   const claim = claims.find((item) => item.id === claimId);
@@ -1422,6 +1544,9 @@ function processWaiverClaim(claimId) {
 }
 
 function processAllWaiverClaims() {
+  if (lineupLocked()) {
+    return { processed: [], cancelled: [], claims: getWaiverClaims() };
+  }
   if (!waiverDeadlinePassed()) {
     return { processed: [], cancelled: [], claims: getWaiverClaims() };
   }
@@ -1441,7 +1566,7 @@ function processAllWaiverClaims() {
 
 function submitTradeOffer(offerPlayerId, requestPlayerName, targetManager, requestPlayer = null, note = '') {
   const player = getRoster().find((item) => item.id === offerPlayerId);
-  if (!player || !requestPlayer?.id || playerLockedInTrade(offerPlayerId) || !isActiveTradeTarget(targetManager)) return false;
+  if (lineupLocked() || !player || !requestPlayer?.id || playerLockedInTrade(offerPlayerId) || !isActiveTradeTarget(targetManager)) return false;
   const rules = tradeRules();
   const auth = getAuthState();
   const offers = getTradeOffers();
@@ -1475,6 +1600,7 @@ function updateTradeStatus(tradeId, status) {
   if (status === 'Cancelled' && trade.offeredByEmail && trade.offeredByEmail !== authEmail && !commissioner) return;
   if ((status === 'Approved' || status === 'Vetoed') && !commissioner) return;
   const executeTrade = status === 'Approved' || (status === 'Accepted' && !trade.requiresApproval);
+  if (executeTrade && lineupLocked()) return;
   trade.status = executeTrade ? 'Approved' : status;
   if (executeTrade && trade.requestPlayer?.id) {
     const roster = getRoster();

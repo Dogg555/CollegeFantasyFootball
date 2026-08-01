@@ -57,7 +57,7 @@ Deploy sequence:
 4. Confirm `CFBD_API_KEY` is set on the API service before ingestion.
 5. Render runs `sh /srv/db/migrate.sh` before deploy and records applied versions in `schema_migrations`.
 6. Open `/health`; expected JSON includes `"status":"ok"` and `"database":"ok"`.
-7. Open the frontend URL, create an account on `signup.html`, verify email if required, sign in on `signin.html`, then create a league.
+7. Open the frontend URL, create an account on `signup.html`, verify email on `verify-email.html` if required, request a fresh verification email on `resend-verification.html` if needed, sign in on `signin.html`, then create a league.
 
 Helper script:
 ```powershell
@@ -89,6 +89,8 @@ CFF_ADMIN_API_TOKEN=YOUR_ADMIN_TOKEN \
 python scripts/ops_ingest.py
 ```
 
+The helper checks `/health` and `/api/health` before reading the private ingestion status. Add `--skip-health` if you only want the admin ingestion endpoint response.
+
 Trigger a one-off ingest from a trusted terminal:
 ```sh
 CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com \
@@ -102,6 +104,11 @@ python scripts/api_smoke_tests.py
 ```
 
 Set `CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com` to run it against Render.
+
+Node smoke runner for machines without Python:
+```sh
+CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com node scripts/api_smoke_tests.mjs
+```
 
 ## What to keep out of git
 - Environment files: `.env`, `.env.local`, and any machine-specific variants.
