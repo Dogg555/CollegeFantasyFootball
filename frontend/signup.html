@@ -34,11 +34,12 @@
       <form id="signup-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
         <label class="field">
           <span>Email</span>
-          <input id="signup-email" type="email" name="email" placeholder="you@example.com" required autocomplete="email" />
+          <input id="signup-email" type="email" name="email" placeholder="you@example.com" required maxlength="254" autocomplete="email" />
         </label>
         <label class="field">
           <span>Password</span>
-          <input id="signup-password" type="password" name="password" placeholder="Choose a password" required autocomplete="new-password" />
+          <input id="signup-password" type="password" name="password" placeholder="Choose a password" required minlength="12" maxlength="72" autocomplete="new-password" aria-describedby="signup-password-help" />
+          <span id="signup-password-help" class="muted small">Use 12–72 characters and avoid common passwords or your email name.</span>
         </label>
         <div class="actions">
           <button class="button button--primary" type="submit">Create account</button>
