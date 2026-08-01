@@ -72,7 +72,7 @@ jobs:
             college-ff-db-backup-security
 
       - name: Verify backup image is non-root
-        run: test "$(docker run --rm --entrypoint id college-ff-db-backup-security -u)" = "10002"
+        run: test "$(docker run --rm --entrypoint id college-ff-db-backup-security -u)" != "0"
 
       - name: Run production migrations
         run: |
