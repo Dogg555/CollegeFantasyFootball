@@ -16,13 +16,16 @@ concurrency:
 
 jobs:
   frontend:
-    name: Frontend syntax
+    name: Frontend and deployment syntax
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: JavaScript syntax checks
         run: |
           set -euo pipefail
@@ -30,17 +33,34 @@ jobs:
             echo "Checking ${file}"
             node --check "${file}"
           done
+      - name: Python deployment syntax checks
+        run: |
+          python -m py_compile \
+            scripts/api_smoke_tests.py \
+            scripts/render_deploy_and_wait.py \
+            scripts/render_smoke_tests.py \
+            scripts/frontend_browser_smoke.py \
+            scripts/offsite_backup.py
       - name: Validate Render frontend build
         env:
           CFF_API_BASE: https://example.invalid/api
           CFF_ALLOW_LOCAL_DEMO: "false"
+          RENDER_GIT_COMMIT: 0123456789abcdef
+          RENDER_GIT_BRANCH: ci
         run: |
           sh scripts/render-build-frontend.sh
           node --check frontend-dist/config.js
           test -f frontend-dist/polish.css
+          test -f frontend-dist/build-info.json
           grep -F "window.CFF_API_BASE = 'https://example.invalid/api';" frontend-dist/config.js
           grep -F "window.CFF_ALLOW_LOCAL_DEMO = false;" frontend-dist/config.js
           grep -F "Shared pre-beta UX" frontend-dist/polish.css
+          python - <<'PY'
+          import json
+          with open('frontend-dist/build-info.json', encoding='utf-8') as handle:
+              payload = json.load(handle)
+          assert payload == {'commit': '0123456789abcdef', 'branch': 'ci'}
+          PY
 
   docker-validation:
     name: Docker build and Postgres smoke
@@ -66,13 +86,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build the production backend image
-        run: docker build -f backend/Dockerfile -t college-ff-api ./backend
-
-      - name: Verify the runtime image is non-root
+      - name: Build production images
         run: |
-          uid="$(docker run --rm --entrypoint id college-ff-api -u)"
-          test "$uid" = "10001"
+          docker build -f backend/Dockerfile -t college-ff-api ./backend
+          docker build -f ops/backup/Dockerfile -t college-ff-db-backup .
+
+      - name: Verify runtime images are non-root
+        run: |
+          api_uid="$(docker run --rm --entrypoint id college-ff-api -u)"
+          backup_uid="$(docker run --rm --entrypoint id college-ff-db-backup -u)"
+          test "$api_uid" != "0"
+          test "$backup_uid" != "0"
 
       - name: Run production migrations
         run: |

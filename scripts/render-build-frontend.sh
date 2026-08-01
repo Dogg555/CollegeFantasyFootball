@@ -7,6 +7,8 @@ if [ -z "${CFF_API_BASE:-}" ]; then
 fi
 
 ALLOW_LOCAL_DEMO="${CFF_ALLOW_LOCAL_DEMO:-false}"
+BUILD_COMMIT="${RENDER_GIT_COMMIT:-local}"
+BUILD_BRANCH="${RENDER_GIT_BRANCH:-local}"
 
 rm -rf frontend-dist
 mkdir -p frontend-dist
@@ -19,4 +21,8 @@ window.CFF_ALLOW_LOCAL_DEMO = ${ALLOW_LOCAL_DEMO};
 EOF_CONFIG
 cat frontend/config.js >> frontend-dist/config.js
 
-echo "Frontend build ready in frontend-dist"
+cat > frontend-dist/build-info.json <<EOF_BUILD
+{"commit":"${BUILD_COMMIT}","branch":"${BUILD_BRANCH}"}
+EOF_BUILD
+
+echo "Frontend build ready in frontend-dist for commit ${BUILD_COMMIT}"
