@@ -15,23 +15,94 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze C++ and JavaScript
-    runs-on: ubuntu-latest
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        language: [cpp, javascript-typescript]
+        include:
+          - language: cpp
+            build_mode: manual
+          - language: javascript-typescript
+            build_mode: none
+
     steps:
       - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v4.37.3
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4.37.3
         with:
           languages: ${{ matrix.language }}
-      - name: Install C++ build dependencies
+          build-mode: ${{ matrix.build_mode }}
+
+      - name: Install C++ system dependencies
         if: matrix.language == 'cpp'
         run: |
+          set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential libjsoncpp-dev libcrypt-dev uuid-dev zlib1g-dev libssl-dev libpq-dev libbrotli-dev libsqlite3-dev libpqxx-dev libcurl4-openssl-dev nlohmann-json3-dev
-      - uses: github/codeql-action/autobuild@v4.37.3
-      - uses: github/codeql-action/analyze@v4.37.3
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential cmake pkg-config \
+            libjsoncpp-dev libcrypt-dev uuid-dev zlib1g-dev libssl-dev \
+            libpq-dev libbrotli-dev libsqlite3-dev libpqxx-dev \
+            libcurl4-openssl-dev nlohmann-json3-dev
+
+      - name: Build Drogon for CodeQL
+        if: matrix.language == 'cpp'
+        run: |
+          set -euxo pipefail
+          git clone --branch v1.9.7 --depth 1 https://github.com/drogonframework/drogon.git /tmp/drogon
+          git -C /tmp/drogon submodule update --init --recursive --depth 1
+          cmake -S /tmp/drogon -B /tmp/drogon/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG" \
+            -DBUILD_CTL=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_ORM=OFF \
+            -DBUILD_DOC=OFF \
+            -DBUILD_BROTLI=OFF \
+            -DBUILD_YAML_CONFIG=OFF \
+            -DBUILD_TESTING=OFF
+          cmake --build /tmp/drogon/build --parallel 2
+          sudo cmake --install /tmp/drogon/build
+
+      - name: Build CPR for CodeQL
+        if: matrix.language == 'cpp'
+        run: |
+          set -euxo pipefail
+          git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/cpr
+          cmake -S /tmp/cpr -B /tmp/cpr/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG" \
+            -DCPR_BUILD_TESTS=OFF \
+            -DCPR_BUILD_EXAMPLES=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCPR_FORCE_USE_SYSTEM_CURL=ON
+          cmake --build /tmp/cpr/build --parallel 2
+          sudo cmake --install /tmp/cpr/build
+          sudo ldconfig
+
+      - name: Build backend under CodeQL tracing
+        if: matrix.language == 'cpp'
+        run: |
+          set -euxo pipefail
+          cmake -S backend -B backend/build-codeql \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG" \
+            -DCMAKE_PREFIX_PATH=/usr/local
+          cmake --build backend/build-codeql --target college_ff_server --parallel 2
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4.37.3
         with:
           category: /language:${{ matrix.language }}
+          # GitHub default setup is still enabled. Generate and preserve SARIF
+          # without uploading until an administrator disables default setup.
+          upload: never
+          output: codeql-results
+
+      - name: Preserve CodeQL SARIF
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-${{ matrix.language }}-sarif
+          path: codeql-results
+          if-no-files-found: error
