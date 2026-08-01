@@ -49,6 +49,7 @@ def assert_true(condition, message):
 def main():
     suffix = str(int(time.time()))
     email = f"{EMAIL_PREFIX}+{suffix}@example.com"
+    manager_email = f"{EMAIL_PREFIX}-manager+{suffix}@example.com"
 
     health = request("GET", "/health")
     assert_true(health.get("status") in {"ok", "degraded"}, f"unexpected health payload: {health}")
@@ -77,7 +78,7 @@ def main():
         "teams": 10,
         "scoring": "ppr",
         "draftType": "snake",
-        "invitedEmails": [f"smoke-manager-{suffix}@example.com"],
+        "invitedEmails": [manager_email],
     }
     league = request("POST", "/api/leagues", league_payload, token=token, expected=(201,))
     league_id = league.get("id")
@@ -94,8 +95,83 @@ def main():
     members = request("GET", f"/api/leagues/{league_id}/members", token=token)
     assert_true(len(members) >= 1, f"members missing: {members}")
 
+    manager_signup = request("POST", "/api/auth/signup", {"email": manager_email, "password": PASSWORD}, expected=(201,))
+    manager_token = manager_signup.get("token")
+    assert_true(manager_token, f"manager signup did not return token: {manager_signup}")
+    joined = request("POST", f"/api/leagues/{league_id}/join", token=manager_token)
+    assert_true(joined.get("id") == league_id, f"manager could not join invited league: {joined}")
+
+    members = request("GET", f"/api/leagues/{league_id}/members", token=token)
+    member_emails = {member.get("email") for member in members}
+    assert_true({email, manager_email}.issubset(member_emails), f"joined members missing: {members}")
+
     draft = request("GET", f"/api/leagues/{league_id}/draft", token=token)
     assert_true("status" in draft, f"draft state missing status: {draft}")
+
+    draft_order = [email, manager_email]
+    order_state = request(
+        "PUT",
+        f"/api/leagues/{league_id}/draft/order",
+        {"draftOrder": draft_order},
+        token=token,
+    )
+    assert_true(order_state.get("draftOrder") == draft_order, f"draft order was not saved: {order_state}")
+
+    smoke_player_1 = {
+        "id": f"smoke-player-{suffix}",
+        "name": "Smoke Test RB",
+        "team": "Test State",
+        "position": "RB",
+        "conference": "Smoke",
+        "projection": 18.4,
+        "rank": 1,
+    }
+    pick_state = request(
+        "POST",
+        f"/api/leagues/{league_id}/draft/picks",
+        {"player": smoke_player_1},
+        token=token,
+        expected=(201,),
+    )
+    assert_true(len(pick_state.get("picks", [])) == 1, f"draft pick was not recorded: {pick_state}")
+    assert_true(pick_state.get("currentPick") == 2, f"draft pick did not advance current pick: {pick_state}")
+    assert_true(pick_state.get("currentManager") == manager_email, f"pick 2 should belong to manager: {pick_state}")
+
+    request("POST", f"/api/leagues/{league_id}/draft/picks", {"player": {
+        "id": f"smoke-player-2-{suffix}",
+        "name": "Smoke Test WR",
+        "team": "Test State",
+        "position": "WR",
+        "conference": "Smoke",
+        "projection": 17.2,
+        "rank": 2,
+    }}, token=manager_token, expected=(201,))
+    request("POST", f"/api/leagues/{league_id}/draft/picks", {"player": {
+        "id": f"smoke-player-bad-turn-{suffix}",
+        "name": "Smoke Test Bad Turn",
+        "team": "Test State",
+        "position": "TE",
+        "conference": "Smoke",
+        "projection": 12.0,
+        "rank": 99,
+    }}, token=token, expected=(409,))
+    snake_turn = request("POST", f"/api/leagues/{league_id}/draft/picks", {"player": {
+        "id": f"smoke-player-3-{suffix}",
+        "name": "Smoke Test QB",
+        "team": "Test State",
+        "position": "QB",
+        "conference": "Smoke",
+        "projection": 22.1,
+        "rank": 3,
+    }}, token=manager_token, expected=(201,))
+    assert_true(len(snake_turn.get("picks", [])) == 3, f"snake turn pick was not recorded: {snake_turn}")
+    assert_true(snake_turn.get("currentPick") == 4, f"snake turn did not advance to pick 4: {snake_turn}")
+    assert_true(snake_turn.get("currentManager") == email, f"pick 4 should return to commissioner: {snake_turn}")
+
+    undo_state = request("POST", f"/api/leagues/{league_id}/draft/undo", token=token)
+    assert_true(len(undo_state.get("picks", [])) == 2, f"draft undo did not remove only the last pick: {undo_state}")
+    assert_true(undo_state.get("currentPick") == 3, f"draft undo did not restore current pick 3: {undo_state}")
+    assert_true(undo_state.get("currentManager") == manager_email, f"undo should put pick 3 back on manager: {undo_state}")
 
     request("GET", "/api/admin/ingest/cfbd/status", token=token, expected=(403,))
 

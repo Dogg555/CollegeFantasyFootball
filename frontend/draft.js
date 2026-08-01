@@ -7,11 +7,18 @@ const rosterList = document.getElementById('roster-list');
 const rosterBalance = document.getElementById('roster-balance');
 const recommendedList = document.getElementById('recommended-list');
 const clearDraftBtn = document.getElementById('clear-draft');
+const undoLastPickBtn = document.getElementById('undo-last-pick');
+const refreshDraftBtn = document.getElementById('refresh-draft');
+const randomizeDraftOrderBtn = document.getElementById('randomize-draft-order');
+const resetDraftOrderBtn = document.getElementById('reset-draft-order');
+const draftOrderStatus = document.getElementById('draft-order-status');
 const draftPickList = document.getElementById('draft-pick-list');
 const draftCurrentPick = document.getElementById('draft-current-pick');
 const draftCurrentManager = document.getElementById('draft-current-manager');
 const draftClock = document.getElementById('draft-clock');
 const draftStatus = document.getElementById('draft-status');
+const draftOrderList = document.getElementById('draft-order-list');
+const draftOrderCount = document.getElementById('draft-order-count');
 const draftLocked = document.getElementById('draft-locked');
 const draftLockedMessage = document.getElementById('draft-locked-message');
 const draftLockedPrimary = document.getElementById('draft-locked-primary');
@@ -40,7 +47,12 @@ function renderDraftAccess() {
     draftLockedPrimary.textContent = getAuthState() ? 'League settings' : 'Sign in';
     draftLockedPrimary.href = getAuthState() ? 'league.html#settings' : 'signin.html';
   }
-  if (clearDraftBtn) clearDraftBtn.disabled = !isCurrentCommissioner(league);
+  const commissioner = isCurrentCommissioner(league);
+  if (clearDraftBtn) clearDraftBtn.disabled = !commissioner;
+  if (undoLastPickBtn) undoLastPickBtn.disabled = !commissioner || !getDraftPicks().length;
+  const orderLocked = getDraftPicks().length > 0 || getDraftMeta().status === 'complete';
+  if (randomizeDraftOrderBtn) randomizeDraftOrderBtn.disabled = !commissioner || orderLocked;
+  if (resetDraftOrderBtn) resetDraftOrderBtn.disabled = !commissioner || orderLocked;
   return canEnter;
 }
 
@@ -214,16 +226,78 @@ function renderDraftPicks() {
   }
   draftPickList.innerHTML = picks.map((pick) => {
     const player = pick.player || {};
+    const last = Number(pick.pickNumber) === Number(picks[picks.length - 1]?.pickNumber);
     return `
       <div class="row">
         <div>
           <strong>${pick.pickNumber}. ${player.name || 'Unknown player'}</strong>
           <div class="muted">${player.team || 'Team TBD'} ${player.position || ''} / ${escapeHtml(managerDisplayName(pick.managerEmail))}</div>
         </div>
-        <span class="badge">${Number(player.projection || 0).toFixed(1)}</span>
+        <div class="actions">
+          ${last ? '<span class="pill pill--muted">Last pick</span>' : ''}
+          <span class="badge">${Number(player.projection || 0).toFixed(1)}</span>
+        </div>
       </div>
     `;
   }).join('');
+}
+
+function draftOrderFromLeague(league = getLeagueState()) {
+  const meta = getDraftMeta();
+  if (Array.isArray(meta.draftOrder) && meta.draftOrder.length) return meta.draftOrder;
+  return (league?.members || [])
+    .filter((member) => String(member.status || '').toLowerCase() !== 'removed')
+    .map((member) => member.email)
+    .filter(Boolean);
+}
+
+function memberOrderFromLeague(league = getLeagueState()) {
+  return (league?.members || [])
+    .filter((member) => String(member.status || '').toLowerCase() !== 'removed')
+    .map((member) => member.email)
+    .filter(Boolean);
+}
+
+function shuffledOrder(order = []) {
+  const next = [...order];
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(Math.random() * (index + 1));
+    [next[index], next[swap]] = [next[swap], next[index]];
+  }
+  return next;
+}
+
+function renderDraftOrder() {
+  if (!canEnterDraftRoom()) return;
+  const league = getLeagueState();
+  const meta = getDraftMeta();
+  const order = draftOrderFromLeague(league);
+  const current = meta.status === 'complete' ? '' : currentDraftManager(meta);
+  if (draftOrderCount) draftOrderCount.textContent = `${order.length} manager${order.length === 1 ? '' : 's'}`;
+  if (!draftOrderList) return;
+  if (!order.length) {
+    draftOrderList.textContent = 'Draft order will appear when managers join.';
+    return;
+  }
+  draftOrderList.innerHTML = order.map((email, index) => {
+    const active = email === current;
+    return `
+      <div class="row ${active ? 'row--active' : ''}">
+        <div>
+          <strong>${index + 1}. ${escapeHtml(managerDisplayName(email))}</strong>
+          <div class="muted">${escapeHtml(email)}</div>
+        </div>
+        ${active ? '<span class="badge">On clock</span>' : '<span class="pill pill--muted">Waiting</span>'}
+      </div>
+    `;
+  }).join('');
+  if (draftOrderStatus) {
+    draftOrderStatus.textContent = getDraftPicks().length
+      ? 'Draft order is locked after the first pick.'
+      : isCurrentCommissioner(league)
+        ? 'Set the order before the first pick.'
+        : '';
+  }
 }
 
 function renderDraftClock() {
@@ -297,9 +371,55 @@ function renderAll() {
   renderLeagueHeader();
   renderQueue();
   renderRoster();
+  renderDraftOrder();
   renderDraftPicks();
   renderRecommended();
 }
+
+refreshDraftBtn?.addEventListener('click', async () => {
+  await refreshDraftFromApi();
+  renderAll();
+});
+
+undoLastPickBtn?.addEventListener('click', async () => {
+  if (!isCurrentCommissioner()) return;
+  try {
+    await undoLastDraftPickApi();
+  } catch {
+    undoLastDraftPick();
+  }
+  renderAll();
+});
+
+randomizeDraftOrderBtn?.addEventListener('click', async () => {
+  if (!isCurrentCommissioner() || getDraftPicks().length) return;
+  const order = shuffledOrder(memberOrderFromLeague());
+  if (!order.length) return;
+  try {
+    await saveDraftOrderApi(order);
+    renderAll();
+    if (draftOrderStatus) draftOrderStatus.textContent = 'Draft order randomized.';
+  } catch {
+    saveDraftOrder(order);
+    renderAll();
+    if (draftOrderStatus) draftOrderStatus.textContent = 'Draft order randomized locally.';
+  }
+});
+
+resetDraftOrderBtn?.addEventListener('click', async () => {
+  if (!isCurrentCommissioner() || getDraftPicks().length) return;
+  const order = memberOrderFromLeague();
+  if (!order.length) return;
+  try {
+    await saveDraftOrderApi(order);
+    renderAll();
+    if (draftOrderStatus) draftOrderStatus.textContent = 'Draft order reset.';
+  } catch {
+    saveDraftOrder(order);
+    renderAll();
+    if (draftOrderStatus) draftOrderStatus.textContent = 'Draft order reset locally.';
+  }
+});
 
 clearDraftBtn?.addEventListener('click', async () => {
   if (!isCurrentCommissioner()) return;

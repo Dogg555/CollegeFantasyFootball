@@ -637,7 +637,19 @@ function draftPlayer(player) {
     setRoster(roster);
   }
   setQueue(getQueue().filter((item) => item.id !== normalized.id));
-  const nextPick = Number(meta.currentPick || getDraftPicks().length + 1) + 1;
+  const picks = getDraftPicks();
+  const pickNumber = Number(meta.currentPick || picks.length + 1);
+  saveDraftPicks([
+    ...picks,
+    {
+      id: `pick-${Date.now()}`,
+      managerEmail: currentDraftManager(meta) || getAuthState()?.email || '',
+      pickNumber,
+      player: normalized,
+      createdAt: new Date().toISOString()
+    }
+  ]);
+  const nextPick = pickNumber + 1;
   const complete = rosterHasRoom(getLeagueState(), getRoster()) === false;
   saveDraftMeta({
     ...meta,
@@ -647,6 +659,26 @@ function draftPlayer(player) {
     pickDeadline: complete ? '' : new Date(Date.now() + Number(meta.pickClockSeconds || 90) * 1000).toISOString()
   });
   return roster;
+}
+
+function undoLastDraftPick() {
+  const picks = getDraftPicks();
+  const lastPick = picks[picks.length - 1];
+  if (!lastPick) return false;
+  const player = normalizePlayer(lastPick.player || {});
+  saveDraftPicks(picks.slice(0, -1));
+  setRoster(getRoster().filter((item) => item.id !== player.id));
+  addPlayerToQueue(player);
+  const meta = getDraftMeta();
+  const pickNumber = Number(lastPick.pickNumber || picks.length);
+  saveDraftMeta({
+    ...meta,
+    status: 'open',
+    currentPick: pickNumber,
+    currentManager: currentDraftManager({ ...meta, currentPick: pickNumber, currentManager: '' }),
+    pickDeadline: new Date(Date.now() + Number(meta.pickClockSeconds || 90) * 1000).toISOString()
+  });
+  return true;
 }
 
 async function draftPlayerApi(player) {
@@ -659,7 +691,11 @@ async function draftPlayerApi(player) {
     body: JSON.stringify({ player: normalizePlayer(player) })
   });
   applyDraftState(state);
-  await syncActiveLeagueCollectionsFromApi();
+  try {
+    await syncActiveLeagueCollectionsFromApi();
+  } catch {
+    // The draft state is already applied; keep the pick from being replayed locally.
+  }
   return getRoster();
 }
 
@@ -718,11 +754,12 @@ function getDraftMeta() {
       status: 'open',
       currentPick: 1,
       draftOrder: [],
+      draftType: league.draftType || 'snake',
       currentManager: getAuthState()?.email || '',
       pickClockSeconds: 90,
       pickDeadline: new Date(Date.now() + 90000).toISOString()
     }
-    : { status: 'open', currentPick: 1, draftOrder: [], pickClockSeconds: 90, pickDeadline: new Date(Date.now() + 90000).toISOString() };
+    : { status: 'open', currentPick: 1, draftOrder: [], draftType: 'snake', pickClockSeconds: 90, pickDeadline: new Date(Date.now() + 90000).toISOString() };
 }
 
 function saveDraftMeta(meta = {}) {
@@ -733,6 +770,7 @@ function saveDraftMeta(meta = {}) {
     status: meta.status || 'open',
     currentPick: Number(meta.currentPick || 1),
     draftOrder: Array.isArray(meta.draftOrder) ? meta.draftOrder : [],
+    draftType: meta.draftType || league.draftType || 'snake',
     currentManager: meta.currentManager || '',
     pickClockSeconds: Number(meta.pickClockSeconds || 90),
     pickDeadline: meta.pickDeadline || ''
@@ -740,11 +778,34 @@ function saveDraftMeta(meta = {}) {
   writeJson(CFF_DRAFT_META_KEY, store);
 }
 
+function saveDraftOrder(draftOrder = []) {
+  const meta = getDraftMeta();
+  const currentPick = Number(meta.currentPick || 1);
+  saveDraftMeta({
+    ...meta,
+    status: meta.status || 'open',
+    currentPick,
+    draftOrder,
+    currentManager: draftManagerForPick(draftOrder, currentPick, meta.draftType || getLeagueState()?.draftType || 'snake'),
+    pickDeadline: meta.pickDeadline || new Date(Date.now() + Number(meta.pickClockSeconds || 90) * 1000).toISOString()
+  });
+}
+
+function draftManagerForPick(order = [], currentPick = 1, draftType = 'snake') {
+  if (!Array.isArray(order) || !order.length) return '';
+  const pickIndex = Math.max(1, Number(currentPick || 1)) - 1;
+  const round = Math.floor(pickIndex / order.length);
+  let offset = pickIndex % order.length;
+  if (String(draftType || 'snake').toLowerCase() === 'snake' && round % 2 === 1) {
+    offset = order.length - 1 - offset;
+  }
+  return order[offset] || '';
+}
+
 function currentDraftManager(meta = getDraftMeta()) {
-  if (meta.currentManager) return meta.currentManager;
   const order = Array.isArray(meta.draftOrder) ? meta.draftOrder : [];
-  if (!order.length) return getAuthState()?.email || '';
-  return order[(Number(meta.currentPick || 1) - 1) % order.length] || '';
+  if (!order.length) return meta.currentManager || getAuthState()?.email || '';
+  return draftManagerForPick(order, meta.currentPick, meta.draftType || getLeagueState()?.draftType || 'snake') || meta.currentManager || '';
 }
 
 function isMyDraftTurn(meta = getDraftMeta()) {
@@ -973,6 +1034,20 @@ async function saveDraftQueueApi(queue = getQueue()) {
   return state;
 }
 
+async function saveDraftOrderApi(draftOrder = []) {
+  const league = getLeagueState();
+  if (!getAuthState()?.token || !league?.id) {
+    saveDraftOrder(draftOrder);
+    return null;
+  }
+  const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/order`, {
+    method: 'PUT',
+    body: JSON.stringify({ draftOrder })
+  });
+  applyDraftState(state);
+  return state;
+}
+
 async function resetDraftApi() {
   const league = getLeagueState();
   if (!getAuthState()?.token || !league?.id) {
@@ -983,7 +1058,29 @@ async function resetDraftApi() {
     method: 'POST'
   });
   applyDraftState(state);
-  await syncActiveLeagueCollectionsFromApi();
+  try {
+    await syncActiveLeagueCollectionsFromApi();
+  } catch {
+    // The draft reset response is authoritative enough to keep the UI moving.
+  }
+  return state;
+}
+
+async function undoLastDraftPickApi() {
+  const league = getLeagueState();
+  if (!getAuthState()?.token || !league?.id) {
+    undoLastDraftPick();
+    return null;
+  }
+  const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/undo`, {
+    method: 'POST'
+  });
+  applyDraftState(state);
+  try {
+    await syncActiveLeagueCollectionsFromApi();
+  } catch {
+    // The undo response already contains the updated draft board.
+  }
   return state;
 }
 

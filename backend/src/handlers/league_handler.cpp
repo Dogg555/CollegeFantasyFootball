@@ -15,6 +15,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <drogon/HttpResponse.h>
@@ -54,6 +55,7 @@ std::unordered_map<std::string, Json::Value> transactionsByLeague;
 std::unordered_map<std::string, Json::Value> matchupsByLeague;
 std::unordered_map<std::string, Json::Value> membersByLeague;
 std::unordered_map<std::string, Json::Value> draftPicksByLeague;
+std::unordered_map<std::string, Json::Value> draftOrdersByLeague;
 std::unordered_map<std::string, Json::Value> draftQueuesByLeagueManager;
 
 std::string lowerString(std::string value) {
@@ -1248,9 +1250,46 @@ Json::Value draftOrderForLeague(PGconn *conn, const std::string &leagueId) {
     return order;
 }
 
-std::string currentDraftManager(const Json::Value &draftOrder, int currentPick) {
+bool draftOrderMatchesMembers(PGconn *conn, const std::string &leagueId, const Json::Value &draftOrder) {
+    if (!draftOrder.isArray() || draftOrder.empty()) return false;
+    std::unordered_set<std::string> memberEmails;
+    for (const auto &member : membersForLeague(conn, leagueId)) {
+        if (lowerString(jsonString(member, "status")) == "removed") continue;
+        memberEmails.insert(lowerString(jsonString(member, "email")));
+    }
+    if (memberEmails.empty() || draftOrder.size() != memberEmails.size()) return false;
+    std::unordered_set<std::string> seen;
+    for (const auto &emailValue : draftOrder) {
+        if (!emailValue.isString()) return false;
+        const auto email = lowerString(emailValue.asString());
+        if (email.empty() || memberEmails.find(email) == memberEmails.end() || seen.find(email) != seen.end()) {
+            return false;
+        }
+        seen.insert(email);
+    }
+    return true;
+}
+
+std::string draftTypeForLeague(PGconn *conn, const std::string &leagueId) {
+    auto result = execParams(conn,
+                             "SELECT draft_type FROM leagues WHERE id = $1",
+                             {leagueId});
+    if (resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0) {
+        return lowerString(cell(result.get(), 0, 0));
+    }
+    return "snake";
+}
+
+std::string currentDraftManager(const Json::Value &draftOrder, int currentPick, const std::string &draftType = "snake") {
     if (!draftOrder.isArray() || draftOrder.empty()) return "";
-    const auto index = static_cast<Json::ArrayIndex>((std::max(1, currentPick) - 1) % static_cast<int>(draftOrder.size()));
+    const auto orderSize = static_cast<int>(draftOrder.size());
+    const auto zeroBasedPick = std::max(1, currentPick) - 1;
+    const auto round = zeroBasedPick / orderSize;
+    auto offset = zeroBasedPick % orderSize;
+    if (lowerString(draftType) == "snake" && round % 2 == 1) {
+        offset = orderSize - 1 - offset;
+    }
+    const auto index = static_cast<Json::ArrayIndex>(offset);
     return draftOrder[index].isString() ? draftOrder[index].asString() : "";
 }
 
@@ -1311,8 +1350,9 @@ std::optional<Json::Value> dbGetDraftState(const std::string &accountEmail, cons
         payload["pickClockSeconds"] = cellInt(stateResult.get(), 0, 2, 90);
         payload["pickDeadline"] = cell(stateResult.get(), 0, 3);
     }
+    payload["draftType"] = draftTypeForLeague(conn.get(), leagueId);
     payload["draftOrder"] = draftOrderForLeague(conn.get(), leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
+    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt(), payload["draftType"].asString());
     payload["picks"] = draftPicksForLeague(conn.get(), leagueId);
     if (dbDraftComplete(conn.get(), leagueId)) {
         payload["status"] = "complete";
@@ -1335,6 +1375,32 @@ std::optional<Json::Value> dbSaveDraftQueue(const std::string &accountEmail,
     return dbGetDraftState(accountEmail, leagueId);
 }
 
+std::optional<Json::Value> dbSaveDraftOrder(const std::string &accountEmail,
+                                            const std::string &leagueId,
+                                            const Json::Value &draftOrder) {
+    if (!dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    if (!draftOrderMatchesMembers(conn.get(), leagueId, draftOrder)) return std::nullopt;
+    auto picks = execParams(conn.get(),
+                            "SELECT COUNT(*) FROM draft_picks WHERE league_id = $1",
+                            {leagueId});
+    if (!resultOk(picks.get(), PGRES_TUPLES_OK) || cellInt(picks.get(), 0, 0, 0) > 0) return std::nullopt;
+    auto insertState = execParams(conn.get(),
+                                  "INSERT INTO draft_states (league_id, status, current_pick, draft_order, pick_deadline, started_at) "
+                                  "VALUES ($1, 'open', 1, ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), NOW() + INTERVAL '90 seconds', NOW()) "
+                                  "ON CONFLICT (league_id) DO NOTHING",
+                                  {leagueId, jsonToString(draftOrder)});
+    auto updateState = execParams(conn.get(),
+                                  "UPDATE draft_states SET draft_order = ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), "
+                                  "current_pick = 1, status = 'open', pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), updated_at = NOW() "
+                                  "WHERE league_id = $1",
+                                  {leagueId, jsonToString(draftOrder)});
+    (void)insertState;
+    if (!resultOk(updateState.get(), PGRES_COMMAND_OK)) return std::nullopt;
+    return dbGetDraftState(accountEmail, leagueId);
+}
+
 std::optional<Json::Value> dbMakeDraftPick(const std::string &accountEmail,
                                            const std::string &leagueId,
                                            const Json::Value &player) {
@@ -1344,13 +1410,14 @@ std::optional<Json::Value> dbMakeDraftPick(const std::string &accountEmail,
     if (!dbDraftLobbyOpen(conn.get(), leagueId) && !dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
     const auto normalized = normalizePlayerJson(player);
     auto order = draftOrderForLeague(conn.get(), leagueId);
+    const auto draftType = draftTypeForLeague(conn.get(), leagueId);
     auto pickNumberResult = execParams(conn.get(),
                                        "SELECT COALESCE(MAX(pick_number), 0) + 1 FROM draft_picks WHERE league_id = $1",
                                        {leagueId});
     const auto pickNumber = resultOk(pickNumberResult.get(), PGRES_TUPLES_OK) && PQntuples(pickNumberResult.get()) > 0
                                 ? cellInt(pickNumberResult.get(), 0, 0, 1)
                                 : 1;
-    const auto expectedManager = currentDraftManager(order, pickNumber);
+    const auto expectedManager = currentDraftManager(order, pickNumber, draftType);
     if (!expectedManager.empty() && expectedManager != accountEmail) return std::nullopt;
     auto pickResult = execParams(conn.get(),
                                  "INSERT INTO draft_picks (id, league_id, manager_email, pick_number, player_id, player_snapshot) "
@@ -1393,6 +1460,49 @@ std::optional<Json::Value> dbResetDraft(const std::string &accountEmail, const s
     (void)picks;
     (void)rosters;
     (void)state;
+    return dbGetDraftState(accountEmail, leagueId);
+}
+
+std::optional<Json::Value> dbUndoDraftPick(const std::string &accountEmail, const std::string &leagueId) {
+    if (!dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    auto lastPick = execParams(conn.get(),
+                               "SELECT manager_email, pick_number, player_id, player_snapshot::text "
+                               "FROM draft_picks WHERE league_id = $1 ORDER BY pick_number DESC LIMIT 1",
+                               {leagueId});
+    if (!resultOk(lastPick.get(), PGRES_TUPLES_OK)) return std::nullopt;
+    if (PQntuples(lastPick.get()) == 0) return dbGetDraftState(accountEmail, leagueId);
+
+    const auto managerEmail = cell(lastPick.get(), 0, 0);
+    const auto pickNumber = cellInt(lastPick.get(), 0, 1, 1);
+    const auto playerId = cell(lastPick.get(), 0, 2);
+    const auto playerSnapshot = cell(lastPick.get(), 0, 3);
+    auto deletePick = execParams(conn.get(),
+                                 "DELETE FROM draft_picks WHERE league_id = $1 AND pick_number = $2::int",
+                                 {leagueId, std::to_string(pickNumber)});
+    auto deleteRoster = execParams(conn.get(),
+                                   "DELETE FROM rosters WHERE league_id = $1 AND manager_email = $2 AND player_id = $3 AND acquired_via = 'draft'",
+                                   {leagueId, managerEmail, playerId});
+    auto restoreQueue = execParams(conn.get(),
+                                   "INSERT INTO draft_queues (league_id, manager_email, queue, updated_at) "
+                                   "VALUES ($1, $2, jsonb_build_array($3::jsonb), NOW()) "
+                                   "ON CONFLICT (league_id, manager_email) DO UPDATE SET "
+                                   "queue = jsonb_build_array($3::jsonb) || "
+                                   "COALESCE((SELECT jsonb_agg(item) FROM jsonb_array_elements(draft_queues.queue) item WHERE item->>'id' <> $4), '[]'::jsonb), "
+                                   "updated_at = NOW()",
+                                   {leagueId, managerEmail, playerSnapshot, playerId});
+    auto state = execParams(conn.get(),
+                            "UPDATE draft_states SET current_pick = $2::int, status = 'open', "
+                            "pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), updated_at = NOW() "
+                            "WHERE league_id = $1",
+                            {leagueId, std::to_string(pickNumber)});
+    (void)deleteRoster;
+    (void)restoreQueue;
+    (void)state;
+    if (!resultOk(deletePick.get(), PGRES_COMMAND_OK)) return std::nullopt;
+    dbAddTransaction(conn.get(), leagueId, "Draft Undo", "Undid pick " + std::to_string(pickNumber), accountEmail,
+                     snapshotPlayer(jsonFromString(playerSnapshot), playerId));
     return dbGetDraftState(accountEmail, leagueId);
 }
 
@@ -2924,7 +3034,8 @@ void handleGetDraftState(const drogon::HttpRequestPtr&,
     payload["currentPick"] = static_cast<int>(arrayForLeague(draftPicksByLeague, leagueId).size()) + 1;
     payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
     payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
-    payload["draftOrder"] = Json::Value{Json::arrayValue};
+    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
+    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
     callback(jsonResponse(payload, drogon::k200OK));
 }
 
@@ -2956,6 +3067,60 @@ void handleSaveDraftQueue(const drogon::HttpRequestPtr &req,
     payload["currentPick"] = static_cast<int>(arrayForLeague(draftPicksByLeague, leagueId).size()) + 1;
     payload["queue"] = queue;
     payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
+    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
+    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
+    callback(jsonResponse(payload, drogon::k200OK));
+}
+
+void handleSaveDraftOrder(const drogon::HttpRequestPtr &req,
+                          std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                          const std::string &accountEmail,
+                          const std::string &leagueId) {
+    const auto body = req->getJsonObject();
+    const auto order = body && body->isMember("draftOrder") && (*body)["draftOrder"].isArray()
+                           ? (*body)["draftOrder"]
+                           : Json::Value{Json::arrayValue};
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        auto state = dbSaveDraftOrder(accountEmail, leagueId, order);
+        if (!state) {
+            sendError(callback, drogon::k409Conflict, "Unable to save draft order");
+            return;
+        }
+        callback(jsonResponse(*state, drogon::k200OK));
+        return;
+    }
+#endif
+
+    std::lock_guard<std::mutex> lock(storeMutex);
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    if (!arrayForLeague(draftPicksByLeague, leagueId).empty() || !order.isArray() || order.empty()) {
+        sendError(callback, drogon::k409Conflict, "Unable to save draft order");
+        return;
+    }
+    std::unordered_set<std::string> seenOrderEmails;
+    for (const auto &emailValue : order) {
+        if (!emailValue.isString() || emailValue.asString().empty()) {
+            sendError(callback, drogon::k409Conflict, "Unable to save draft order");
+            return;
+        }
+        const auto email = lowerString(emailValue.asString());
+        if (seenOrderEmails.find(email) != seenOrderEmails.end()) {
+            sendError(callback, drogon::k409Conflict, "Unable to save draft order");
+            return;
+        }
+        seenOrderEmails.insert(email);
+    }
+    Json::Value payload;
+    payload["status"] = "open";
+    payload["currentPick"] = 1;
+    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
+    payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
+    payload["draftOrder"] = order;
+    payload["currentManager"] = order[0].asString();
+    draftOrdersByLeague[leagueId] = order;
     callback(jsonResponse(payload, drogon::k200OK));
 }
 
@@ -3011,6 +3176,8 @@ void handleMakeDraftPick(const drogon::HttpRequestPtr &req,
     payload["currentPick"] = static_cast<int>(picks.size()) + 1;
     payload["queue"] = queue;
     payload["picks"] = picks;
+    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
+    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
     callback(jsonResponse(payload, drogon::k201Created));
 }
 
@@ -3041,6 +3208,52 @@ void handleResetDraft(const drogon::HttpRequestPtr&,
     payload["currentPick"] = 1;
     payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
     payload["picks"] = draftPicksByLeague[leagueId];
+    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
+    payload["currentManager"] = currentDraftManager(payload["draftOrder"], 1);
+    callback(jsonResponse(payload, drogon::k200OK));
+}
+
+void handleUndoDraftPick(const drogon::HttpRequestPtr&,
+                         std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                         const std::string &accountEmail,
+                         const std::string &leagueId) {
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        auto state = dbUndoDraftPick(accountEmail, leagueId);
+        if (!state) {
+            sendError(callback, drogon::k403Forbidden, "Commissioner access required");
+            return;
+        }
+        callback(jsonResponse(*state, drogon::k200OK));
+        return;
+    }
+#endif
+
+    std::lock_guard<std::mutex> lock(storeMutex);
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    auto &picks = arrayForLeague(draftPicksByLeague, leagueId);
+    if (!picks.empty()) {
+        Json::Value removed;
+        picks.removeIndex(static_cast<Json::ArrayIndex>(picks.size() - 1), &removed);
+        const auto managerEmail = jsonString(removed, "managerEmail", accountEmail);
+        const auto player = removed["player"];
+        const auto playerId = jsonString(player, "id");
+        auto &roster = arrayForLeague(rostersByLeague, leagueId);
+        removePlayer(roster, playerId);
+        auto &queue = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + managerEmail);
+        if (indexOfPlayer(queue, playerId) < 0) {
+            queue.append(player);
+        }
+    }
+    Json::Value payload;
+    payload["status"] = "open";
+    payload["currentPick"] = static_cast<int>(picks.size()) + 1;
+    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
+    payload["picks"] = picks;
+    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
+    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
     callback(jsonResponse(payload, drogon::k200OK));
 }
 

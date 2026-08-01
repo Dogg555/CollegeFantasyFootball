@@ -88,7 +88,9 @@ Expected:
 - Invite a manager.
 - Open league settings as commissioner.
 - Open draft lobby.
+- In Draft Room, randomize or reset draft order before the first pick.
 - Queue a player from Players.
 - Enter draft room and make a pick.
+- As commissioner, undo the last draft pick and confirm the player leaves the roster and the draft returns to that pick.
 - Submit a waiver claim.
 - Send and cancel a trade offer.
