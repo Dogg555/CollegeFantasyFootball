@@ -1,0 +1,79 @@
+name: Render staging validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA to deploy; leave blank to deploy the selected branch head
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-staging-validation
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-smoke:
+    name: Deploy Render staging and run smoke tests
+    runs-on: ubuntu-24.04
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_STAGING_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_STAGING_SERVICE_ID }}
+      RENDER_COMMIT_SHA: ${{ inputs.commit_sha || github.sha }}
+      CFF_API_BASE_URL: ${{ secrets.CFF_STAGING_API_BASE_URL }}
+      CFF_SMOKE_ACCOUNT_EMAIL: ${{ secrets.CFF_STAGING_SMOKE_EMAIL }}
+      CFF_SMOKE_ACCOUNT_PASSWORD: ${{ secrets.CFF_STAGING_SMOKE_PASSWORD }}
+      CFF_ADMIN_API_TOKEN: ${{ secrets.CFF_STAGING_ADMIN_API_TOKEN }}
+      CFF_SMOKE_VERIFICATION_EMAIL_BASE: ${{ secrets.CFF_STAGING_VERIFICATION_EMAIL_BASE }}
+      CFF_SMOKE_TEST_EMAIL_VERIFICATION: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Require Render staging configuration
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            RENDER_API_KEY \
+            RENDER_SERVICE_ID \
+            CFF_API_BASE_URL \
+            CFF_SMOKE_ACCOUNT_EMAIL \
+            CFF_SMOKE_ACCOUNT_PASSWORD \
+            CFF_ADMIN_API_TOKEN \
+            CFF_SMOKE_VERIFICATION_EMAIL_BASE
+          do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub Actions secret for $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Deploy selected commit and wait for Render health
+        id: render
+        run: python scripts/render_deploy_and_wait.py
+
+      - name: Run full deployed API smoke suite
+        run: python scripts/api_smoke_tests.py
+
+      - name: Run deployed acceptance smoke suite
+        run: python scripts/render_smoke_tests.py
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "### Render staging validation" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: $RENDER_COMMIT_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API: $CFF_API_BASE_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Deploy ID: ${{ steps.render.outputs.deploy_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Deploy status: ${{ steps.render.outputs.deploy_status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Acceptance: health, database, signup enforcement, verification resend, login, league creation, and admin authorization" >> "$GITHUB_STEP_SUMMARY"
