@@ -18,7 +18,7 @@ services:
       - key: CFBD_API_KEY
         sync: false
       - key: CFF_ADMIN_API_TOKEN
-        sync: false
+        generateValue: true
       - key: CFF_ADMIN_EMAILS
         sync: false
       - key: CFBD_INGEST_ON_STARTUP
@@ -36,7 +36,7 @@ services:
       - key: CFF_ALLOW_SHARED_SECRET_AUTH
         value: "false"
       - key: CFF_REQUIRE_EMAIL_VERIFICATION
-        value: "true"
+        value: "false"
       - key: CFF_EXPOSE_AUTH_TOKENS
         value: "false"
       - key: CFF_LOG_AUTH_TOKENS
@@ -86,6 +86,33 @@ services:
       - path: /assets/*
         name: Cache-Control
         value: "public, max-age=31536000, immutable"
+
+  - type: cron
+    name: college-ff-db-backup
+    runtime: docker
+    dockerfilePath: ./ops/backup/Dockerfile
+    dockerContext: .
+    schedule: "0 7 * * *"
+    plan: starter
+    envVars:
+      - key: DB_URL
+        fromDatabase:
+          name: college-ff-db
+          property: connectionString
+      - key: CFF_BACKUP_S3_BUCKET
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: auto
+      - key: CFF_BACKUP_S3_PREFIX
+        value: college-ff/postgres
+      - key: CFF_BACKUP_RETENTION_DAYS
+        value: "30"
+      - key: CFF_BACKUP_SSE
+        value: AES256
 
 databases:
   - name: college-ff-db
