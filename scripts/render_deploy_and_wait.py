@@ -9,6 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+
 API_ROOT = "https://api.render.com/v1"
 API_KEY = os.environ.get("RENDER_API_KEY", "").strip()
 SERVICE_ID = os.environ.get("RENDER_SERVICE_ID", "").strip()
@@ -89,6 +90,14 @@ def wait_for_deploy(deploy_id):
     deadline = time.monotonic() + TIMEOUT_SECONDS
     last_status = None
     failure_states = {"build_failed", "update_failed", "canceled", "cancelled", "deactivated", "failed"}
+    failure_states = {
+        "build_failed",
+        "update_failed",
+        "canceled",
+        "cancelled",
+        "deactivated",
+        "failed",
+    }
     while time.monotonic() < deadline:
         _, response = render_request("GET", f"/services/{SERVICE_ID}/deploys/{deploy_id}")
         deploy = deploy_object(response)
@@ -132,6 +141,7 @@ def main():
     require(API_KEY, "RENDER_API_KEY")
     require(SERVICE_ID, "RENDER_SERVICE_ID")
     require(APP_URL, "CFF_API_BASE_URL")
+
     deploy = trigger_deploy()
     deploy_id = deploy["id"]
     print(f"Triggered Render deploy {deploy_id} for commit {COMMIT_SHA or 'latest'}")

@@ -31,6 +31,10 @@ jobs:
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
+      - uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4.37.3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build_mode }}
@@ -95,6 +99,11 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: /language:${{ matrix.language }}
+        uses: github/codeql-action/analyze@v4.37.3
+        with:
+          category: /language:${{ matrix.language }}
+          # GitHub default setup is still enabled. Generate and preserve SARIF
+          # without uploading until an administrator disables default setup.
           upload: never
           output: codeql-results
 

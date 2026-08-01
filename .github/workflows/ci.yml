@@ -14,6 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: JavaScript syntax checks
@@ -70,6 +74,7 @@ jobs:
             -e JWT_SECRET=ci-secret \
             -e CFF_REQUIRE_DB=true \
             -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION=false \
             -e CFF_EXPOSE_AUTH_TOKENS=true \
             college-ff-api
 
@@ -96,6 +101,7 @@ jobs:
           exit 1
 
       - name: Run API smoke suite against Docker
+      - name: Run full API smoke suite against Docker
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
         run: python scripts/api_smoke_tests.py
@@ -107,6 +113,7 @@ jobs:
   render-staging:
     name: Render staging deploy and smoke
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/production-validation'
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/render-validation-hardening'
     needs: [frontend, docker-validation]
     runs-on: ubuntu-24.04
     env:
@@ -122,6 +129,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -151,6 +161,8 @@ jobs:
 
       - name: Run deployed smoke suite
         run: python scripts/api_smoke_tests.py
+      - name: Run deployed acceptance smoke suite
+        run: python scripts/render_smoke_tests.py
 
       - name: Deployment summary
         if: always()
@@ -161,3 +173,4 @@ jobs:
           echo "- Deploy ID: ${{ steps.render.outputs.deploy_id }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Deploy status: ${{ steps.render.outputs.deploy_status }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Verification email: check the plus-address printed by the smoke suite" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Acceptance: signup enforcement, verification resend, login, league creation, and admin authorization" >> "$GITHUB_STEP_SUMMARY"
