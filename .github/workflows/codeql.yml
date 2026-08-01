@@ -23,7 +23,7 @@ jobs:
         language: [cpp, javascript-typescript]
     steps:
       - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4.37.3
         with:
           languages: ${{ matrix.language }}
       - name: Install C++ build dependencies
@@ -31,7 +31,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential libjsoncpp-dev libcrypt-dev uuid-dev zlib1g-dev libssl-dev libpq-dev libbrotli-dev libsqlite3-dev libpqxx-dev libcurl4-openssl-dev nlohmann-json3-dev
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/autobuild@v4.37.3
+      - uses: github/codeql-action/analyze@v4.37.3
         with:
           category: /language:${{ matrix.language }}
