@@ -36,7 +36,7 @@ services:
       - key: CFF_ALLOW_SHARED_SECRET_AUTH
         value: "false"
       - key: CFF_REQUIRE_EMAIL_VERIFICATION
-        value: "false"
+        value: "true"
       - key: CFF_EXPOSE_AUTH_TOKENS
         value: "false"
       - key: CFF_LOG_AUTH_TOKENS
@@ -59,6 +59,18 @@ services:
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https:; upgrade-insecure-requests"
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000; includeSubDomains"
       - path: /assets/*
         name: Cache-Control
         value: "public, max-age=31536000, immutable"
