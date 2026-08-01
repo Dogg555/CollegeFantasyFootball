@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   api-security:
-    name: API security controls
+    name: API and backup image security controls
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -42,10 +42,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build production backend image
-        run: docker build -f backend/Dockerfile -t college-ff-api-security ./backend
+      - name: Build production images
+        run: |
+          docker build -f backend/Dockerfile -t college-ff-api-security ./backend
+          docker build -f ops/backup/Dockerfile -t college-ff-db-backup-security .
 
-      - name: Scan production image
+      - name: Scan production API image
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -56,6 +58,21 @@ jobs:
             --ignore-unfixed \
             --exit-code 1 \
             college-ff-api-security
+
+      - name: Scan production backup image
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.70.0 \
+            image \
+            --scanners vuln,secret,misconfig \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            college-ff-db-backup-security
+
+      - name: Verify backup image is non-root
+        run: test "$(docker run --rm --entrypoint id college-ff-db-backup-security -u)" = "10002"
 
       - name: Run production migrations
         run: |
