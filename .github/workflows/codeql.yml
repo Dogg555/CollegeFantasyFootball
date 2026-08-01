@@ -13,6 +13,10 @@ permissions:
   contents: read
   security-events: write
 
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
@@ -31,10 +35,6 @@ jobs:
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
-      - uses: actions/checkout@v7
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4.37.3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build_mode }}
@@ -99,14 +99,8 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: /language:${{ matrix.language }}
-          # Default setup is currently enabled on this repository. Generate the
-          # advanced-analysis SARIF without uploading it until an admin disables
-          # default setup, avoiding GitHub's default/advanced setup conflict.
-        uses: github/codeql-action/analyze@v4.37.3
-        with:
-          category: /language:${{ matrix.language }}
-          # GitHub default setup is still enabled. Generate and preserve SARIF
-          # without uploading until an administrator disables default setup.
+          # Default CodeQL setup must be disabled in repository settings before
+          # changing this to a direct code-scanning upload.
           upload: never
           output: codeql-results
 
