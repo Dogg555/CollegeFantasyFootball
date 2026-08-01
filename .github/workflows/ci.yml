@@ -2,22 +2,25 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   frontend:
     name: Frontend syntax
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: JavaScript syntax checks
@@ -46,6 +49,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -86,6 +90,7 @@ jobs:
               if python - "$payload" <<'PY'
           import json
           import sys
+
           payload = json.loads(sys.argv[1])
           if payload.get("status") != "ok" or payload.get("database") != "ok":
               raise SystemExit(1)
@@ -100,7 +105,6 @@ jobs:
           docker logs college-ff-api
           exit 1
 
-      - name: Run API smoke suite against Docker
       - name: Run full API smoke suite against Docker
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
@@ -109,69 +113,3 @@ jobs:
       - name: Backend logs
         if: always()
         run: docker logs college-ff-api || true
-
-  render-staging:
-    name: Render staging deploy and smoke
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/phase-1-security-hardening'
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/production-validation'
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/render-validation-hardening'
-    needs: [frontend, docker-validation]
-    runs-on: ubuntu-24.04
-    env:
-      RENDER_API_KEY: ${{ secrets.RENDER_STAGING_API_KEY }}
-      RENDER_SERVICE_ID: ${{ secrets.RENDER_STAGING_SERVICE_ID }}
-      RENDER_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
-      CFF_API_BASE_URL: ${{ secrets.CFF_STAGING_API_BASE_URL }}
-      CFF_SMOKE_ACCOUNT_EMAIL: ${{ secrets.CFF_STAGING_SMOKE_EMAIL }}
-      CFF_SMOKE_ACCOUNT_PASSWORD: ${{ secrets.CFF_STAGING_SMOKE_PASSWORD }}
-      CFF_ADMIN_API_TOKEN: ${{ secrets.CFF_STAGING_ADMIN_API_TOKEN }}
-      CFF_SMOKE_VERIFICATION_EMAIL_BASE: ${{ secrets.CFF_STAGING_VERIFICATION_EMAIL_BASE }}
-      CFF_SMOKE_TEST_EMAIL_VERIFICATION: "true"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Require Render staging configuration
-        run: |
-          set -euo pipefail
-          missing=0
-          for name in \
-            RENDER_API_KEY \
-            RENDER_SERVICE_ID \
-            CFF_API_BASE_URL \
-            CFF_SMOKE_ACCOUNT_EMAIL \
-            CFF_SMOKE_ACCOUNT_PASSWORD \
-            CFF_ADMIN_API_TOKEN \
-            CFF_SMOKE_VERIFICATION_EMAIL_BASE
-          do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing required GitHub Actions secret for $name"
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - name: Deploy PR head to Render staging and wait for live
-        id: render
-        run: python scripts/render_deploy_and_wait.py
-
-      - name: Run deployed smoke suite
-        run: python scripts/api_smoke_tests.py
-      - name: Run deployed acceptance smoke suite
-        run: python scripts/render_smoke_tests.py
-
-      - name: Deployment summary
-        if: always()
-        run: |
-          echo "### Render staging validation" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Commit: $RENDER_COMMIT_SHA" >> "$GITHUB_STEP_SUMMARY"
-          echo "- API: $CFF_API_BASE_URL" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Deploy ID: ${{ steps.render.outputs.deploy_id }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Deploy status: ${{ steps.render.outputs.deploy_status }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Verification email: check the plus-address printed by the smoke suite" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Acceptance: signup enforcement, verification resend, login, league creation, and admin authorization" >> "$GITHUB_STEP_SUMMARY"
