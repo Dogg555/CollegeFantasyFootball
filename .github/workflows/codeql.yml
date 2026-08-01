@@ -101,7 +101,7 @@ jobs:
           category: /language:${{ matrix.language }}
           # Default CodeQL setup must be disabled in repository settings before
           # changing this to a direct code-scanning upload.
-          upload: never
+          upload: always
           output: codeql-results
 
       - name: Preserve CodeQL SARIF
