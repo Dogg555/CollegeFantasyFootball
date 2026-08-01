@@ -7,6 +7,15 @@ const searchResultsEl = document.getElementById('search-results');
 const queueList = document.getElementById('queue-list');
 const queueCount = document.getElementById('queue-count');
 
+function safeText(value, fallback = '') {
+  return escapeHtml(value ?? fallback);
+}
+
+function safeNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 function refreshAuthState() {
   updateSharedNav('players');
 }
@@ -21,16 +30,20 @@ searchForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const term = searchInput.value.trim();
   const position = positionFilter.value;
-  if (!term) return;
+  if (!term) {
+    searchResultsEl.textContent = 'Enter a player, school, position, or conference.';
+    searchInput.focus();
+    return;
+  }
   searchResultsEl.textContent = 'Searching...';
   try {
     const params = new URLSearchParams({ query: term });
     if (position) params.set('position', position);
-    const resp = await fetch(`${apiBase}/players?${params.toString()}`);
-    if (!resp.ok) throw new Error('Search failed');
-    renderSearchResults(applyPositionFilter((await resp.json()).map(normalizePlayer), position));
+    const response = await fetch(`${apiBase}/players?${params.toString()}`);
+    if (!response.ok) throw new Error('Player search failed.');
+    renderSearchResults(applyPositionFilter((await response.json()).map(normalizePlayer), position));
   } catch {
-    renderSearchResults(applyPositionFilter(filterSamplePlayers(term), position));
+    renderSearchResults(applyPositionFilter(filterSamplePlayers(term), position), true);
   }
 });
 
@@ -44,33 +57,42 @@ function applyPositionFilter(players, position) {
   return players.filter((player) => player.position === position);
 }
 
-function renderSearchResults(players = []) {
+function renderSearchResults(players = [], fallback = false) {
   if (!searchResultsEl) return;
   if (!players.length) {
-    searchResultsEl.textContent = 'No players found.';
+    searchResultsEl.textContent = 'No players matched those filters.';
     return;
   }
-  searchResultsEl.innerHTML = players.slice(0, 20).map((player) => `
-    <div class="row">
-      <div>
-        <strong>${player.name}</strong> - ${player.team} (${player.position || 'Pos TBD'})
-        <div class="muted">${player.conference || 'Conference TBD'} / ${player.class || 'Class TBD'} / ${Number(player.projection).toFixed(1)} proj</div>
+  const queuedIds = new Set(getQueue().map((player) => player.id));
+  const notice = fallback
+    ? '<div class="row"><div><strong>Offline player pool</strong><div class="muted">Showing cached sample players until the API is reachable.</div></div></div>'
+    : '';
+  searchResultsEl.innerHTML = notice + players.slice(0, 20).map((player, index) => {
+    const queued = queuedIds.has(player.id);
+    return `
+      <div class="row">
+        <div>
+          <strong>${safeText(player.name, 'Unknown player')}</strong> - ${safeText(player.team, 'Team TBD')} (${safeText(player.position, 'FLEX')})
+          <div class="muted">${safeText(player.conference, 'Conference TBD')} / ${safeText(player.class, 'Class TBD')} / ${safeNumber(player.projection, 0).toFixed(1)} proj</div>
+        </div>
+        <button class="button" data-player-index="${index}" type="button" ${queued ? 'disabled' : ''}>${queued ? 'Queued' : 'Add to queue'}</button>
       </div>
-      <button class="button" data-player="${player.id}" type="button">Add to queue</button>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 
-  searchResultsEl.querySelectorAll('[data-player]').forEach((button) => {
+  searchResultsEl.querySelectorAll('[data-player-index]').forEach((button) => {
     button.addEventListener('click', async () => {
-      const player = players.find((item) => item.id === button.dataset.player);
+      const player = players[Number(button.dataset.playerIndex)];
       if (!player) return;
       addPlayerToQueue(player);
       try {
         await saveDraftQueueApi(getQueue());
       } catch {
-        // Local queue remains updated.
+        // The local queue remains available while the API is offline.
       }
       button.textContent = 'Queued';
+      button.disabled = true;
+      window.CFF_UI?.notify(`${player.name} added to your draft queue.`, 'success');
       renderQueue();
     });
   });
@@ -81,27 +103,38 @@ function renderQueue() {
   if (queueCount) queueCount.textContent = String(queue.length);
   if (!queueList) return;
   if (!queue.length) {
-    queueList.textContent = 'No queued players yet.';
+    queueList.innerHTML = `
+      <div class="row">
+        <div>
+          <strong>No queued players yet</strong>
+          <div class="muted">Search above to build a ranked draft shortlist.</div>
+        </div>
+      </div>
+    `;
     return;
   }
   queueList.innerHTML = queue.map((player, index) => `
     <div class="row">
       <div>
-        <strong>${index + 1}. ${player.name}</strong>
-        <div class="muted">${player.team} ${player.position} / Rank ${player.rank}</div>
+        <strong>${index + 1}. ${safeText(player.name, 'Unknown player')}</strong>
+        <div class="muted">${safeText(player.team, 'Team TBD')} ${safeText(player.position, 'FLEX')} / Rank ${safeNumber(player.rank, 99)}</div>
       </div>
-      <button class="button button--ghost" data-remove="${player.id}" type="button">Remove</button>
+      <button class="button button--ghost" data-remove-index="${index}" type="button">Remove</button>
     </div>
   `).join('');
-  queueList.querySelectorAll('[data-remove]').forEach((button) => {
+  queueList.querySelectorAll('[data-remove-index]').forEach((button) => {
     button.addEventListener('click', async () => {
-      removeFromQueue(button.dataset.remove);
+      const player = getQueue()[Number(button.dataset.removeIndex)];
+      if (!player) return;
+      removeFromQueue(player.id);
       try {
         await saveDraftQueueApi(getQueue());
       } catch {
-        // Local queue remains updated.
+        // The local queue remains updated.
       }
+      window.CFF_UI?.notify(`${player.name} removed from your queue.`, 'info');
       renderQueue();
+      renderSearchResults(applyPositionFilter(filterSamplePlayers(searchInput.value.trim()), positionFilter.value));
     });
   });
 }
@@ -113,7 +146,7 @@ async function initPlayersPage() {
     await syncLeaguesFromApi();
     await syncDraftFromApi();
   } catch {
-    // Keep local player queue available when the API is offline.
+    // Keep the local player queue available when the API is offline.
   }
   renderQueue();
   renderSearchResults(samplePlayers.slice(0, 6));
