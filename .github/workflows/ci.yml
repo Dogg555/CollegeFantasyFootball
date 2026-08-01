@@ -9,14 +9,11 @@ permissions:
 
 jobs:
   frontend:
+    name: Frontend syntax
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - name: JavaScript syntax checks
@@ -28,8 +25,9 @@ jobs:
           node --check frontend/app.js
           node --check frontend/players.js
 
-  api-smoke:
-    runs-on: ubuntu-latest
+  docker-validation:
+    name: Docker build and Postgres smoke
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -45,18 +43,26 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build backend Docker image
-        run: docker build -f backend/Dockerfile -t college-ff-api backend
-      - name: Run migrations
+
+      - name: Build the production backend image
+        run: docker build -f backend/Dockerfile -t college-ff-api ./backend
+
+      - name: Verify the runtime image is non-root
+        run: |
+          uid="$(docker run --rm --entrypoint id college-ff-api -u)"
+          test "$uid" = "10001"
+
+      - name: Run production migrations
         run: |
           docker run --rm --network host \
             -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
             college-ff-api sh /srv/db/migrate.sh
-      - name: Start backend
+
+      - name: Start the production backend image
         run: |
           docker run -d --name college-ff-api --network host \
             -e PORT=8080 \
@@ -66,18 +72,92 @@ jobs:
             -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
             -e CFF_EXPOSE_AUTH_TOKENS=true \
             college-ff-api
-      - name: Wait for health
+
+      - name: Require healthy API and database
         run: |
-          for i in {1..30}; do
-            if curl -fsS http://127.0.0.1:8080/health; then exit 0; fi
+          set -euo pipefail
+          for i in {1..45}; do
+            if payload="$(curl -fsS http://127.0.0.1:8080/health 2>/dev/null)"; then
+              if python - "$payload" <<'PY'
+          import json
+          import sys
+          payload = json.loads(sys.argv[1])
+          if payload.get("status") != "ok" or payload.get("database") != "ok":
+              raise SystemExit(1)
+          print(json.dumps(payload, indent=2))
+          PY
+              then
+                exit 0
+              fi
+            fi
             sleep 2
           done
           docker logs college-ff-api
           exit 1
-      - name: API smoke tests
+
+      - name: Run API smoke suite against Docker
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
         run: python scripts/api_smoke_tests.py
+
       - name: Backend logs
         if: always()
         run: docker logs college-ff-api || true
+
+  render-staging:
+    name: Render staging deploy and smoke
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/production-validation'
+    needs: [frontend, docker-validation]
+    runs-on: ubuntu-24.04
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_STAGING_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_STAGING_SERVICE_ID }}
+      RENDER_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+      CFF_API_BASE_URL: ${{ secrets.CFF_STAGING_API_BASE_URL }}
+      CFF_SMOKE_ACCOUNT_EMAIL: ${{ secrets.CFF_STAGING_SMOKE_EMAIL }}
+      CFF_SMOKE_ACCOUNT_PASSWORD: ${{ secrets.CFF_STAGING_SMOKE_PASSWORD }}
+      CFF_ADMIN_API_TOKEN: ${{ secrets.CFF_STAGING_ADMIN_API_TOKEN }}
+      CFF_SMOKE_VERIFICATION_EMAIL_BASE: ${{ secrets.CFF_STAGING_VERIFICATION_EMAIL_BASE }}
+      CFF_SMOKE_TEST_EMAIL_VERIFICATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Require Render staging configuration
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            RENDER_API_KEY \
+            RENDER_SERVICE_ID \
+            CFF_API_BASE_URL \
+            CFF_SMOKE_ACCOUNT_EMAIL \
+            CFF_SMOKE_ACCOUNT_PASSWORD \
+            CFF_ADMIN_API_TOKEN \
+            CFF_SMOKE_VERIFICATION_EMAIL_BASE
+          do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub Actions secret for $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Deploy PR head to Render staging and wait for live
+        id: render
+        run: python scripts/render_deploy_and_wait.py
+
+      - name: Run deployed smoke suite
+        run: python scripts/api_smoke_tests.py
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "### Render staging validation" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: $RENDER_COMMIT_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API: $CFF_API_BASE_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Deploy ID: ${{ steps.render.outputs.deploy_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Deploy status: ${{ steps.render.outputs.deploy_status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Verification email: check the plus-address printed by the smoke suite" >> "$GITHUB_STEP_SUMMARY"
