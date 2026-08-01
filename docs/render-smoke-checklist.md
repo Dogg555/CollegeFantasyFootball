@@ -72,6 +72,7 @@ python scripts/ops_ingest.py
 ```
 
 Expected:
+- Public `/health` and `/api/health` checks succeed in the helper output.
 - `status` is `ok` or `partial`.
 - `counts.players` increases after a successful player import.
 - Recent runs are visible through the admin status endpoint.

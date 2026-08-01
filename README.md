@@ -89,6 +89,8 @@ CFF_ADMIN_API_TOKEN=YOUR_ADMIN_TOKEN \
 python scripts/ops_ingest.py
 ```
 
+The helper checks `/health` and `/api/health` before reading the private ingestion status. Add `--skip-health` if you only want the admin ingestion endpoint response.
+
 Trigger a one-off ingest from a trusted terminal:
 ```sh
 CFF_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com \

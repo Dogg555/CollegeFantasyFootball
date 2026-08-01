@@ -17,8 +17,12 @@ const draftCurrentPick = document.getElementById('draft-current-pick');
 const draftCurrentManager = document.getElementById('draft-current-manager');
 const draftClock = document.getElementById('draft-clock');
 const draftStatus = document.getElementById('draft-status');
+const draftRoundLabel = document.getElementById('draft-round-label');
+const draftNextPickLabel = document.getElementById('draft-next-pick-label');
 const draftOrderList = document.getElementById('draft-order-list');
 const draftOrderCount = document.getElementById('draft-order-count');
+const upcomingPickList = document.getElementById('upcoming-pick-list');
+const upcomingPickCount = document.getElementById('upcoming-pick-count');
 const draftLocked = document.getElementById('draft-locked');
 const draftLockedMessage = document.getElementById('draft-locked-message');
 const draftLockedPrimary = document.getElementById('draft-locked-primary');
@@ -213,11 +217,16 @@ function renderDraftPicks() {
   const meta = getDraftMeta();
   const picks = getDraftPicks();
   const manager = currentDraftManager(meta);
+  const order = draftOrderFromLeague();
+  const currentPick = Number(meta.currentPick || picks.length + 1);
+  const round = order.length ? Math.floor((Math.max(1, currentPick) - 1) / order.length) + 1 : 1;
   if (draftCurrentPick) {
-    draftCurrentPick.textContent = meta.status === 'complete' ? 'Complete' : `Pick ${meta.currentPick || picks.length + 1}`;
+    draftCurrentPick.textContent = meta.status === 'complete' ? 'Complete' : `Pick ${currentPick}`;
   }
   if (draftCurrentManager) draftCurrentManager.textContent = meta.status === 'complete' ? 'Draft complete' : managerDisplayName(manager) || 'Manager TBD';
   if (draftStatus) draftStatus.textContent = meta.status === 'complete' ? 'Complete' : isMyDraftTurn(meta) ? 'Your pick' : 'Waiting';
+  if (draftRoundLabel) draftRoundLabel.textContent = meta.status === 'complete' ? 'Complete' : `Round ${round}`;
+  if (draftNextPickLabel) draftNextPickLabel.textContent = meta.status === 'complete' ? 'Done' : `Pick ${currentPick}`;
   renderDraftClock();
   if (!draftPickList) return;
   if (!picks.length) {
@@ -237,6 +246,39 @@ function renderDraftPicks() {
           ${last ? '<span class="pill pill--muted">Last pick</span>' : ''}
           <span class="badge">${Number(player.projection || 0).toFixed(1)}</span>
         </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderUpcomingPicks() {
+  if (!canEnterDraftRoom()) return;
+  const meta = getDraftMeta();
+  const picks = getDraftPicks();
+  const order = draftOrderFromLeague();
+  const currentPick = Number(meta.currentPick || picks.length + 1);
+  const count = order.length ? Math.min(5, Math.max(3, order.length)) : 0;
+  if (upcomingPickCount) upcomingPickCount.textContent = count ? `Next ${count}` : 'Order needed';
+  if (!upcomingPickList) return;
+  if (meta.status === 'complete') {
+    upcomingPickList.textContent = 'Draft complete.';
+    return;
+  }
+  if (!order.length) {
+    upcomingPickList.textContent = 'Upcoming picks will appear when draft order is set.';
+    return;
+  }
+  upcomingPickList.innerHTML = Array.from({ length: count }, (_, index) => {
+    const pickNumber = currentPick + index;
+    const manager = draftManagerForPick(order, pickNumber, meta.draftType || getLeagueState()?.draftType || 'snake');
+    const round = Math.floor((pickNumber - 1) / order.length) + 1;
+    return `
+      <div class="row ${index === 0 ? 'row--active' : ''}">
+        <div>
+          <strong>Pick ${pickNumber}</strong>
+          <div class="muted">Round ${round} / ${escapeHtml(managerDisplayName(manager))}</div>
+        </div>
+        ${index === 0 ? '<span class="badge">On clock</span>' : '<span class="pill pill--muted">Upcoming</span>'}
       </div>
     `;
   }).join('');
@@ -373,6 +415,7 @@ function renderAll() {
   renderRoster();
   renderDraftOrder();
   renderDraftPicks();
+  renderUpcomingPicks();
   renderRecommended();
 }
 

@@ -938,7 +938,10 @@ function standingsFromMatchups(league = getLeagueState(), matchups = getMatchups
     wins: 0,
     losses: 0,
     ties: 0,
-    pointsFor: 0
+    pointsFor: 0,
+    pointsAgainst: 0,
+    gamesPlayed: 0,
+    winPct: 0
   }));
   const byEmail = new Map(rows.map((row) => [row.email, row]));
   matchups.forEach((matchup) => {
@@ -948,7 +951,13 @@ function standingsFromMatchups(league = getLeagueState(), matchups = getMatchups
     const awayScore = Number(matchup.awayScore || 0);
     if (home) home.pointsFor += homeScore;
     if (away) away.pointsFor += awayScore;
+    if (home && away) {
+      home.pointsAgainst += awayScore;
+      away.pointsAgainst += homeScore;
+    }
     if (!away || matchup.status !== 'final') return;
+    if (home) home.gamesPlayed += 1;
+    away.gamesPlayed += 1;
     if (homeScore > awayScore) {
       home.wins += 1;
       away.losses += 1;
@@ -960,7 +969,10 @@ function standingsFromMatchups(league = getLeagueState(), matchups = getMatchups
       away.ties += 1;
     }
   });
-  return rows.sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.pointsFor - a.pointsFor);
+  rows.forEach((row) => {
+    row.winPct = row.gamesPlayed ? (row.wins + row.ties * 0.5) / row.gamesPlayed : 0;
+  });
+  return rows.sort((a, b) => b.winPct - a.winPct || b.wins - a.wins || a.losses - b.losses || b.pointsFor - a.pointsFor);
 }
 
 function addTransaction(type, summary) {

@@ -638,7 +638,8 @@ function renderStandings(leagueState) {
     <div class="row">
       <div>
         <strong>${index + 1}. ${escapeHtml(manager.teamName || manager.email)}</strong>
-        <div class="muted">${escapeHtml(manager.email)} / ${manager.role === 'commissioner' ? 'Commissioner' : 'Manager'} / PF ${Number(manager.pointsFor).toFixed(1)}</div>
+        <div class="muted">${escapeHtml(manager.email)} / ${manager.role === 'commissioner' ? 'Commissioner' : 'Manager'} / GP ${manager.gamesPlayed}</div>
+        <div class="muted small">PF ${Number(manager.pointsFor).toFixed(1)} / PA ${Number(manager.pointsAgainst).toFixed(1)} / PCT ${Number(manager.winPct || 0).toFixed(3)}</div>
       </div>
       <span class="badge">${manager.wins}-${manager.losses}${manager.ties ? `-${manager.ties}` : ''}</span>
     </div>

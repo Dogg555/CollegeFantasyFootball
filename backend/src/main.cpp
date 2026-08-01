@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <chrono>
+#include <deque>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -50,6 +51,13 @@ struct TokenRecord {
 
 std::unordered_map<std::string, TokenRecord> activeTokens; // token -> record
 constexpr std::chrono::hours kTokenTtl{24};
+
+struct RateLimitBucket {
+    std::deque<std::chrono::steady_clock::time_point> attempts;
+};
+
+std::mutex rateLimitMutex;
+std::unordered_map<std::string, RateLimitBucket> rateLimitBuckets;
 
 bool envFlagEnabled(const std::string &key) {
     const auto value = readEnv(key);
@@ -675,6 +683,68 @@ drogon::HttpResponsePtr buildPreflightResponse(const drogon::HttpRequestPtr &req
     applyCorsHeaders(req, resp, allowedOrigins);
     resp->setStatusCode(drogon::k204NoContent);
     return resp;
+}
+
+std::string firstHeaderValue(std::string value) {
+    const auto comma = value.find(',');
+    if (comma != std::string::npos) {
+        value = value.substr(0, comma);
+    }
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), value.end());
+    return value;
+}
+
+std::string requestRateLimitKey(const drogon::HttpRequestPtr &req, const std::string &scope) {
+    auto client = firstHeaderValue(req->getHeader("x-forwarded-for"));
+    if (client.empty()) client = firstHeaderValue(req->getHeader("x-real-ip"));
+    if (client.empty()) client = firstHeaderValue(req->getHeader("cf-connecting-ip"));
+    if (client.empty()) client = "unknown-client";
+    return scope + ":" + client;
+}
+
+bool rateLimitAllowed(const drogon::HttpRequestPtr &req,
+                      const std::string &scope,
+                      std::size_t limit,
+                      std::chrono::seconds window) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto cutoff = now - window;
+    const auto key = requestRateLimitKey(req, scope);
+    std::lock_guard<std::mutex> lock(rateLimitMutex);
+    auto &attempts = rateLimitBuckets[key].attempts;
+    while (!attempts.empty() && attempts.front() < cutoff) {
+        attempts.pop_front();
+    }
+    if (attempts.size() >= limit) {
+        return false;
+    }
+    attempts.push_back(now);
+    return true;
+}
+
+void sendRateLimitExceeded(std::function<void (const drogon::HttpResponsePtr &)> &callback) {
+    Json::Value error;
+    error["error"] = "Too many requests. Try again later.";
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(static_cast<drogon::HttpStatusCode>(429));
+    resp->addHeader("Retry-After", "60");
+    callback(resp);
+}
+
+bool enforceRateLimit(const drogon::HttpRequestPtr &req,
+                      std::function<void (const drogon::HttpResponsePtr &)> &callback,
+                      const std::string &scope,
+                      std::size_t limit,
+                      std::chrono::seconds window) {
+    if (rateLimitAllowed(req, scope, limit, window)) {
+        return true;
+    }
+    sendRateLimitExceeded(callback);
+    return false;
 }
 
 bool ensureCredentials(const Json::Value &body) {
@@ -1372,11 +1442,17 @@ int main(int argc, char* argv[]) {
                          {drogon::Get})
         .registerHandler("/api/auth/login",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             if (!enforceRateLimit(req, callback, "auth-login", 12, std::chrono::minutes(10))) {
+                                 return;
+                             }
                              handleLogin(req, std::move(callback), jwtSecret);
                          },
                          {drogon::Post})
         .registerHandler("/api/auth/signup",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             if (!enforceRateLimit(req, callback, "auth-signup", 6, std::chrono::minutes(10))) {
+                                 return;
+                             }
                              handleSignup(req, std::move(callback), jwtSecret);
                          },
                          {drogon::Post})
@@ -1387,21 +1463,33 @@ int main(int argc, char* argv[]) {
                          {drogon::Post})
         .registerHandler("/api/auth/verify-email",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             if (!enforceRateLimit(req, callback, "auth-verify-email", 20, std::chrono::minutes(10))) {
+                                 return;
+                             }
                              handleVerifyEmail(req, std::move(callback));
                          },
                          {drogon::Post})
         .registerHandler("/api/auth/resend-verification",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             if (!enforceRateLimit(req, callback, "auth-resend-verification", 5, std::chrono::minutes(15))) {
+                                 return;
+                             }
                              handleResendVerification(req, std::move(callback));
                          },
                          {drogon::Post})
         .registerHandler("/api/auth/request-password-reset",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             if (!enforceRateLimit(req, callback, "auth-request-password-reset", 5, std::chrono::minutes(15))) {
+                                 return;
+                             }
                              handleRequestPasswordReset(req, std::move(callback));
                          },
                          {drogon::Post})
         .registerHandler("/api/auth/reset-password",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             if (!enforceRateLimit(req, callback, "auth-reset-password", 10, std::chrono::minutes(15))) {
+                                 return;
+                             }
                              handleResetPassword(req, std::move(callback));
                          },
                          {drogon::Post})
