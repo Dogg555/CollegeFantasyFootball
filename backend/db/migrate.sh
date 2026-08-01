@@ -30,14 +30,14 @@ apply_migration() {
   echo "Checking $version"
   {
     printf "SELECT pg_advisory_xact_lock(hashtext('%s'));\n" "$LOCK_NAME"
-    printf "SELECT NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '%s') AS apply_migration \\gset\n" "$version"
-    printf "\\if :apply_migration\n"
-    printf "\\echo Applying %s\n" "$version"
+    printf "%s\n" "SELECT NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '$version') AS apply_migration \\gset"
+    printf '%s\n' '\if :apply_migration'
+    printf '%s\n' "\\echo Applying $version"
     cat "$migration"
     printf "\nINSERT INTO schema_migrations (version) VALUES ('%s');\n" "$version"
-    printf "\\else\n"
-    printf "\\echo Skipping %s\n" "$version"
-    printf "\\endif\n"
+    printf '%s\n' '\else'
+    printf '%s\n' "\\echo Skipping $version"
+    printf '%s\n' '\endif'
   } | psql "$DB_URL" -v ON_ERROR_STOP=1 --single-transaction
 }
 
