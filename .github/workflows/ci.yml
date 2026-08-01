@@ -10,6 +10,10 @@ permissions:
 jobs:
   frontend:
     name: Frontend syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -43,8 +47,8 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -96,6 +100,7 @@ jobs:
           docker logs college-ff-api
           exit 1
 
+      - name: Run API smoke suite against Docker
       - name: Run full API smoke suite against Docker
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
@@ -107,6 +112,7 @@ jobs:
 
   render-staging:
     name: Render staging deploy and smoke
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/production-validation'
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/render-validation-hardening'
     needs: [frontend, docker-validation]
     runs-on: ubuntu-24.04
@@ -119,6 +125,10 @@ jobs:
       CFF_SMOKE_ACCOUNT_PASSWORD: ${{ secrets.CFF_STAGING_SMOKE_PASSWORD }}
       CFF_ADMIN_API_TOKEN: ${{ secrets.CFF_STAGING_ADMIN_API_TOKEN }}
       CFF_SMOKE_VERIFICATION_EMAIL_BASE: ${{ secrets.CFF_STAGING_VERIFICATION_EMAIL_BASE }}
+      CFF_SMOKE_TEST_EMAIL_VERIFICATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -149,6 +159,8 @@ jobs:
         id: render
         run: python scripts/render_deploy_and_wait.py
 
+      - name: Run deployed smoke suite
+        run: python scripts/api_smoke_tests.py
       - name: Run deployed acceptance smoke suite
         run: python scripts/render_smoke_tests.py
 
@@ -160,4 +172,5 @@ jobs:
           echo "- API: $CFF_API_BASE_URL" >> "$GITHUB_STEP_SUMMARY"
           echo "- Deploy ID: ${{ steps.render.outputs.deploy_id }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Deploy status: ${{ steps.render.outputs.deploy_status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Verification email: check the plus-address printed by the smoke suite" >> "$GITHUB_STEP_SUMMARY"
           echo "- Acceptance: signup enforcement, verification resend, login, league creation, and admin authorization" >> "$GITHUB_STEP_SUMMARY"
