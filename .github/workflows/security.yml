@@ -25,21 +25,46 @@ jobs:
 
   trivy:
     name: Filesystem vulnerabilities
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       security-events: write
     steps:
       - uses: actions/checkout@v7
-      - uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: sarif
-          output: trivy-results.sarif
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-      - uses: github/codeql-action/upload-sarif@v4.37.3
-        if: always()
+
+      - name: Generate Trivy SARIF
+        run: |
+          set -euxo pipefail
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            aquasec/trivy:0.70.0 \
+            fs \
+            --scanners vuln,misconfig,secret \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output /workspace/trivy-results.sarif \
+            --exit-code 0 \
+            /workspace
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v4.37.3
         with:
           sarif_file: trivy-results.sarif
+          category: trivy-filesystem
+
+      - name: Enforce high and critical vulnerability gate
+        run: |
+          set -euxo pipefail
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            aquasec/trivy:0.70.0 \
+            fs \
+            --scanners vuln,misconfig,secret \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format table \
+            --exit-code 1 \
+            /workspace
