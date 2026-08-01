@@ -2,7 +2,14 @@
 FROM nginx:1.27-alpine AS frontend
 WORKDIR /usr/share/nginx/html
 COPY frontend/ /usr/share/nginx/html
-EXPOSE 80
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+RUN chown -R nginx:nginx \
+      /usr/share/nginx/html \
+      /var/cache/nginx \
+      /var/run \
+      /etc/nginx/conf.d
+USER nginx
+EXPOSE 8080
 
 # Backend: Drogon-based server build
 FROM debian:bookworm AS backend-build
@@ -52,9 +59,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g \
     libbrotli1 \
     libsqlite3-0 \
+ && groupadd --system --gid 10001 cff \
+ && useradd --system --uid 10001 --gid cff --home-dir /srv --shell /usr/sbin/nologin cff \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY --from=backend-build /app/backend/build/college_ff_server /srv/college_ff_server
+RUN chown -R cff:cff /srv
+USER cff
 
 EXPOSE 8080
 ENV PORT=8080
