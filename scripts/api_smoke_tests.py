@@ -7,12 +7,23 @@ import urllib.request
 
 
 BASE_URL = os.environ.get("CFF_API_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
-PASSWORD = os.environ.get("CFF_SMOKE_PASSWORD", "SmokeTest123!")
+DEFAULT_PASSWORD = os.environ.get("CFF_SMOKE_PASSWORD", "SmokeTest123!")
 EMAIL_PREFIX = os.environ.get("CFF_SMOKE_EMAIL_PREFIX", "smoke")
+ACCOUNT_EMAIL = os.environ.get("CFF_SMOKE_ACCOUNT_EMAIL", "").strip().lower()
+ACCOUNT_PASSWORD = os.environ.get("CFF_SMOKE_ACCOUNT_PASSWORD", DEFAULT_PASSWORD)
+ADMIN_API_TOKEN = os.environ.get("CFF_ADMIN_API_TOKEN", "").strip()
+VERIFICATION_EMAIL_BASE = os.environ.get("CFF_SMOKE_VERIFICATION_EMAIL_BASE", "").strip().lower()
 
 
 class SmokeFailure(RuntimeError):
     pass
+
+
+def env_flag(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def request(method, path, body=None, token=None, expected=(200,)):
@@ -25,12 +36,14 @@ def request(method, path, body=None, token=None, expected=(200,)):
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(f"{BASE_URL}{path}", data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             text = resp.read().decode("utf-8")
             status = resp.getcode()
     except urllib.error.HTTPError as exc:
         text = exc.read().decode("utf-8")
         status = exc.code
+    except urllib.error.URLError as exc:
+        raise SmokeFailure(f"{method} {path} could not connect to {BASE_URL}: {exc}") from exc
     if status not in expected:
         raise SmokeFailure(f"{method} {path} expected {expected}, got {status}: {text}")
     if not text:
@@ -46,31 +59,70 @@ def assert_true(condition, message):
         raise SmokeFailure(message)
 
 
+def plus_alias(email, suffix):
+    if "@" not in email:
+        raise SmokeFailure("CFF_SMOKE_VERIFICATION_EMAIL_BASE must be a valid email address")
+    local, domain = email.rsplit("@", 1)
+    local = local.split("+", 1)[0]
+    return f"{local}+cff-smoke-{suffix}@{domain}"
+
+
 def main():
     suffix = str(int(time.time()))
-    email = f"{EMAIL_PREFIX}+{suffix}@example.com"
+    verification_email = None
 
     health = request("GET", "/health")
-    assert_true(health.get("status") in {"ok", "degraded"}, f"unexpected health payload: {health}")
+    assert_true(health.get("status") == "ok", f"backend is not healthy: {health}")
+    assert_true(health.get("database") == "ok", f"database is not healthy: {health}")
 
     api_health = request("GET", "/api/health")
     assert_true(api_health.get("service") == "college-ff-api", f"unexpected api health payload: {api_health}")
 
     request("GET", "/api/leagues", expected=(401,))
 
-    signup = request("POST", "/api/auth/signup", {"email": email, "password": PASSWORD}, expected=(201,))
-    token = signup.get("token")
-    assert_true(token, f"signup did not return token: {signup}")
+    created_account = not ACCOUNT_EMAIL
+    if created_account:
+        email = f"{EMAIL_PREFIX}+{suffix}@example.com"
+        signup = request("POST", "/api/auth/signup", {"email": email, "password": DEFAULT_PASSWORD}, expected=(201,))
+        token = signup.get("token")
+        assert_true(
+            token,
+            "signup did not return a token. For verification-required deployments, configure "
+            "CFF_SMOKE_ACCOUNT_EMAIL and CFF_SMOKE_ACCOUNT_PASSWORD with a preverified staging account.",
+        )
+        password = DEFAULT_PASSWORD
+
+        second_login = request("POST", "/api/auth/login", {"email": email, "password": password})
+        second_token = second_login.get("token")
+        assert_true(second_token, f"login did not return token: {second_login}")
+        request("POST", "/api/auth/logout", token=second_token)
+        request("GET", "/api/auth/validate", token=second_token, expected=(401,))
+    else:
+        email = ACCOUNT_EMAIL
+        password = ACCOUNT_PASSWORD
+        login = request("POST", "/api/auth/login", {"email": email, "password": password})
+        token = login.get("token")
+        assert_true(token, f"staging account login did not return token: {login}")
+
+        if env_flag("CFF_SMOKE_TEST_EMAIL_VERIFICATION"):
+            assert_true(
+                VERIFICATION_EMAIL_BASE,
+                "CFF_SMOKE_VERIFICATION_EMAIL_BASE is required when CFF_SMOKE_TEST_EMAIL_VERIFICATION=true",
+            )
+            verification_email = plus_alias(VERIFICATION_EMAIL_BASE, suffix)
+            verification_signup = request(
+                "POST",
+                "/api/auth/signup",
+                {"email": verification_email, "password": DEFAULT_PASSWORD},
+                expected=(201,),
+            )
+            assert_true(
+                not verification_signup.get("token"),
+                f"verification-required signup unexpectedly returned a token: {verification_signup}",
+            )
 
     validate = request("GET", "/api/auth/validate", token=token)
     assert_true(validate.get("valid") is True, f"token did not validate: {validate}")
-
-    login = request("POST", "/api/auth/login", {"email": email, "password": PASSWORD})
-    login_token = login.get("token")
-    assert_true(login_token, f"login did not return token: {login}")
-
-    request("POST", "/api/auth/logout", token=login_token)
-    request("GET", "/api/auth/validate", token=login_token, expected=(401,))
 
     league_payload = {
         "name": f"Smoke League {suffix}",
@@ -98,24 +150,30 @@ def main():
     assert_true("status" in draft, f"draft state missing status: {draft}")
 
     request("GET", "/api/admin/ingest/cfbd/status", token=token, expected=(403,))
+    if ADMIN_API_TOKEN:
+        admin_status = request("GET", "/api/admin/ingest/cfbd/status", token=ADMIN_API_TOKEN)
+        assert_true(isinstance(admin_status, dict), f"unexpected admin ingest status: {admin_status}")
 
     transactions = request("GET", f"/api/leagues/{league_id}/transactions", token=token)
     assert_true(isinstance(transactions, list), f"transactions response is not a list: {transactions}")
 
-    reset = request("POST", "/api/auth/request-password-reset", {"email": email})
-    reset_token = reset.get("passwordResetToken")
-    if reset_token:
-        new_password = f"{PASSWORD}Reset"
-        request("POST", "/api/auth/reset-password", {"token": reset_token, "password": new_password})
-        request("GET", "/api/auth/validate", token=token, expected=(401,))
-        relogin = request("POST", "/api/auth/login", {"email": email, "password": new_password})
-        assert_true(relogin.get("token"), f"password reset login failed: {relogin}")
+    if created_account:
+        reset = request("POST", "/api/auth/request-password-reset", {"email": email})
+        reset_token = reset.get("passwordResetToken")
+        if reset_token:
+            new_password = f"{password}Reset"
+            request("POST", "/api/auth/reset-password", {"token": reset_token, "password": new_password})
+            request("GET", "/api/auth/validate", token=token, expected=(401,))
+            relogin = request("POST", "/api/auth/login", {"email": email, "password": new_password})
+            assert_true(relogin.get("token"), f"password reset login failed: {relogin}")
 
     print(json.dumps({
         "status": "ok",
         "baseUrl": BASE_URL,
         "email": email,
         "leagueId": league_id,
+        "verificationEmailPending": verification_email,
+        "adminAuthorizationChecked": bool(ADMIN_API_TOKEN),
     }, indent=2))
 
 
