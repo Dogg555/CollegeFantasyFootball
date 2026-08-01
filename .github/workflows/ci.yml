@@ -25,12 +25,22 @@ jobs:
           node-version: "22"
       - name: JavaScript syntax checks
         run: |
-          node --check frontend/state.js
-          node --check frontend/auth.js
-          node --check frontend/league.js
-          node --check frontend/draft.js
-          node --check frontend/app.js
-          node --check frontend/players.js
+          set -euo pipefail
+          for file in frontend/*.js; do
+            echo "Checking ${file}"
+            node --check "${file}"
+          done
+      - name: Validate Render frontend build
+        env:
+          CFF_API_BASE: https://example.invalid/api
+          CFF_ALLOW_LOCAL_DEMO: "false"
+        run: |
+          sh scripts/render-build-frontend.sh
+          node --check frontend-dist/config.js
+          test -f frontend-dist/polish.css
+          grep -F "window.CFF_API_BASE = 'https://example.invalid/api';" frontend-dist/config.js
+          grep -F "window.CFF_ALLOW_LOCAL_DEMO = false;" frontend-dist/config.js
+          grep -F "Shared pre-beta UX" frontend-dist/polish.css
 
   docker-validation:
     name: Docker build and Postgres smoke
