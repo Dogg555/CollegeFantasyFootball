@@ -33,7 +33,7 @@ jobs:
           for line in lines:
               if 'replace_all("docs/alpha-release-runbook.md", "Monday", "Tuesday")' in line:
                   continue
-              if 'replace_once("frontend/league.html"' in line and 'data-league-panel=\\"overview\\"' in line:
+              if 'replace_once("frontend/league.html"' in line and 'data-league-panel="overview"' in line:
                   continue
               filtered.append(line)
           path.write_text('\n'.join(filtered) + '\n', encoding='utf-8')
