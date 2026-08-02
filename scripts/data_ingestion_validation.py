@@ -252,7 +252,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except GateFailure as exc:
+    except Exception as exc:
         write_failure_report("Data ingestion validation", "data-ingestion-validation", exc)
         print(f"Data ingestion validation failed: {exc}", file=os.sys.stderr)
         raise SystemExit(1)
