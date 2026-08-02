@@ -4,12 +4,12 @@ on:
   push:
     branches: [agent/security-open-signup]
     paths:
-      - scripts/.security_patch_*.b64
+      - scripts/.security_patch_v2_*.b64
       - .github/workflows/apply-open-signup-security-patch.yml
   pull_request:
     branches: [main]
     paths:
-      - scripts/.security_patch_*.b64
+      - scripts/.security_patch_v2_*.b64
       - .github/workflows/apply-open-signup-security-patch.yml
 
 permissions:
@@ -29,7 +29,8 @@ jobs:
           python-version: '3.12'
       - name: Reconstruct guarded patch
         run: |
-          cat scripts/.security_patch_*.b64 | base64 --decode > scripts/apply_open_signup_security_patch.py
+          cat scripts/.security_patch_v2_*.b64 | base64 --decode > scripts/apply_open_signup_security_patch.py
+          echo '3b1f0f52b4bb5fc53536ea1ba09ebbb276504f57ad9f71307a186f6fca423e14  scripts/apply_open_signup_security_patch.py' | sha256sum --check --strict
           python -m py_compile scripts/apply_open_signup_security_patch.py
       - name: Apply guarded source patch
         run: python scripts/apply_open_signup_security_patch.py
