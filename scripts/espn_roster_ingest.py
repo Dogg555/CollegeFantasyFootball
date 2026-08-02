@@ -22,6 +22,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from espn_team_directory import conference_teams_url
+
 ESPN_BASE_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/football/college-football"
 )
@@ -197,8 +199,7 @@ def fetch_conference_teams(
     calls = 0
     for key in conference_keys:
         conference, group_id = CONFERENCES[key]
-        query = urllib.parse.urlencode({"limit": 100, "groups": group_id})
-        url = f"{ESPN_BASE_URL}/teams?{query}"
+        url = conference_teams_url(group_id)
         payload = fetch_json(url, timeout=timeout, retries=retries)
         calls += 1
         teams = parse_teams(payload, conference)
