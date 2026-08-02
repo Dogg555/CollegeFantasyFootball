@@ -1,5 +1,6 @@
 const apiBase = window.CFF_API_BASE || '/api';
-const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO !== false;
+const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO === true
+  && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
 const PAGE_SIZE = 50;
 
 const searchForm = document.getElementById('search-form');
@@ -174,15 +175,18 @@ function renderSearchResults(players = [], fallback = false) {
     button.addEventListener('click', async () => {
       const player = players[Number(button.dataset.playerIndex)];
       if (!player) return;
-      addPlayerToQueue(player);
-      try {
-        await saveDraftQueueApi(getQueue());
-      } catch {
-        // The local queue remains available while the API is offline.
-      }
-      button.textContent = 'Queued';
+      const nextQueue = [...getQueue().filter((item) => item.id !== player.id), normalizePlayer(player)];
       button.disabled = true;
-      window.CFF_UI?.notify(`${player.name} added to your draft queue.`, 'success');
+      try {
+        await saveDraftQueueApi(nextQueue);
+        setQueue(nextQueue);
+        button.textContent = 'Queued';
+        window.CFF_UI?.notify(`${player.name} added to your draft queue.`, 'success');
+      } catch (error) {
+        button.disabled = false;
+        window.CFF_UI?.notify(mutationErrorMessage(error, 'Could not update draft queue. No local changes were made.'), 'error');
+        return;
+      }
       renderQueue();
     });
   });
@@ -216,13 +220,17 @@ function renderQueue() {
     button.addEventListener('click', async () => {
       const player = getQueue()[Number(button.dataset.removeIndex)];
       if (!player) return;
-      removeFromQueue(player.id);
+      const nextQueue = getQueue().filter((item) => item.id !== player.id);
+      button.disabled = true;
       try {
-        await saveDraftQueueApi(getQueue());
-      } catch {
-        // The local queue remains updated.
+        await saveDraftQueueApi(nextQueue);
+        setQueue(nextQueue);
+        window.CFF_UI?.notify(`${player.name} removed from your queue.`, 'info');
+      } catch (error) {
+        button.disabled = false;
+        window.CFF_UI?.notify(mutationErrorMessage(error, 'Could not update draft queue. No local changes were made.'), 'error');
+        return;
       }
-      window.CFF_UI?.notify(`${player.name} removed from your queue.`, 'info');
       renderQueue();
       renderSearchResults(lastResults);
     });

@@ -1,5 +1,6 @@
 const apiBase = window.CFF_API_BASE || '/api';
-const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO !== false;
+const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO === true
+  && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
 
 const modal = document.getElementById('league-modal');
 const modalBackdrop = modal?.querySelector('.modal__backdrop');
@@ -295,10 +296,10 @@ form?.addEventListener('submit', async (event) => {
     }));
   } catch (error) {
     if (error.status) {
-      setFormStatus(error.message || 'The server rejected these league settings.', true);
+      setFormStatus(mutationErrorMessage(error, 'The server rejected these league settings. No local league was created.'), true);
       return;
     }
-    if (!allowLocalDemo) {
+    if (!allowLocalDemo || !String(authState?.token || '').startsWith('local-demo-')) {
       setFormStatus('The API is unavailable. Try again when the connection is restored.', true);
       return;
     }

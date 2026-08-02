@@ -138,7 +138,8 @@
   if (typeof document === 'undefined') return;
 
   const apiBase = root.CFF_API_BASE || '/api';
-  const allowLocalDemo = root.CFF_ALLOW_LOCAL_DEMO !== false;
+  const allowLocalDemo = root.CFF_ALLOW_LOCAL_DEMO === true
+    && ['localhost', '127.0.0.1', '::1'].includes(root.location.hostname);
   const scoreList = document.getElementById('live-scores');
   const weekSelect = document.getElementById('score-week-select');
   const weekPrev = document.getElementById('score-week-prev');

@@ -150,6 +150,36 @@ function renderLeague() {
   renderTrades(leagueState);
   renderLeagueFeed(leagueState);
   renderTransactions();
+  renderApiOutageState();
+}
+
+function renderApiOutageState() {
+  const meta = apiCacheMeta('league') || apiCacheMeta('leagues');
+  const stale = Boolean(meta?.stale || mutationControlsDisabled());
+  let banner = document.getElementById('api-stale-warning');
+  if (!stale) {
+    banner?.remove();
+    details?.querySelectorAll('[data-cff-outage-disabled="true"]').forEach((button) => {
+      button.disabled = false;
+      delete button.dataset.cffOutageDisabled;
+    });
+  } else {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'api-stale-warning';
+      banner.className = 'notice notice--warning';
+      details?.prepend(banner);
+    }
+    const fetched = meta?.fetchedAt ? ` Last server refresh: ${new Date(meta.fetchedAt).toLocaleString()}.` : '';
+    banner.textContent = `Showing cached league data because the API is unavailable. Mutation controls are disabled until the service recovers.${fetched}`;
+  }
+  if (details) {
+    details.querySelectorAll('button:not([data-league-tab]):not(#nav-logout)').forEach((button) => {
+      if (!stale || button.disabled) return;
+      button.disabled = true;
+      button.dataset.cffOutageDisabled = 'true';
+    });
+  }
 }
 
 function renderLeagueList() {
@@ -195,8 +225,8 @@ function renderLeagueList() {
       if (!requireCommissioner()) return;
       try {
         await removeLeagueFromApi(button.dataset.removeLeague);
-      } catch {
-        removeLeagueForCurrentAccount(button.dataset.removeLeague);
+      } catch (error) {
+        setSettingsStatus(mutationErrorMessage(error, 'Could not remove league. No local changes were made.'), true);
       }
       renderLeague();
     });
@@ -252,10 +282,8 @@ function renderFreeAgency() {
           if (player) {
             try {
               await addFreeAgentApi(player);
-            } catch {
-              if (!addFreeAgent(player) && waiverStatus) {
-                waiverStatus.textContent = 'Roster is full or player is unavailable. Use waivers with a drop.';
-              }
+            } catch (error) {
+              if (waiverStatus) waiverStatus.textContent = mutationErrorMessage(error, 'Could not add player. No local changes were made.');
             }
           }
           renderLeague();
@@ -284,8 +312,8 @@ function renderFreeAgency() {
         button.addEventListener('click', async () => {
           try {
             await dropPlayerApi(button.dataset.dropPlayer);
-          } catch {
-            dropPlayer(button.dataset.dropPlayer);
+          } catch (error) {
+            if (waiverStatus) waiverStatus.textContent = mutationErrorMessage(error, 'Could not drop player. No local changes were made.');
           }
           renderLeague();
         });
@@ -355,11 +383,8 @@ function renderWaivers() {
     try {
       const result = await processWaiversApi();
       if (waiverStatus) waiverStatus.textContent = `Processed ${result?.processed?.length || 0} claim(s).`;
-    } catch {
-      const result = processAllWaiverClaims();
-      if (waiverStatus) waiverStatus.textContent = waiverDeadlinePassed()
-        ? `Processed ${result?.processed?.length || 0} local waiver claim(s).`
-        : 'Waiver deadline has not passed yet.';
+    } catch (error) {
+      if (waiverStatus) waiverStatus.textContent = mutationErrorMessage(error, 'Could not process waivers. No local changes were made.');
     }
     renderLeague();
   });
@@ -367,9 +392,8 @@ function renderWaivers() {
     button.addEventListener('click', async () => {
       try {
         await processWaiverClaimApi(button.dataset.processWaiver);
-      } catch {
-        const processed = processWaiverClaim(button.dataset.processWaiver);
-        if (waiverStatus && !processed) waiverStatus.textContent = 'Waiver deadline has not passed yet.';
+      } catch (error) {
+        if (waiverStatus) waiverStatus.textContent = mutationErrorMessage(error, 'Could not process waiver claim. No local changes were made.');
       }
       renderLeague();
     });
@@ -379,10 +403,8 @@ function renderWaivers() {
       try {
         await cancelWaiverClaimApi(button.dataset.cancelWaiver);
         if (waiverStatus) waiverStatus.textContent = 'Waiver claim cancelled.';
-      } catch {
-        if (!cancelWaiverClaim(button.dataset.cancelWaiver) && waiverStatus) {
-          waiverStatus.textContent = 'Could not cancel waiver claim.';
-        }
+      } catch (error) {
+        if (waiverStatus) waiverStatus.textContent = mutationErrorMessage(error, 'Could not cancel waiver claim. No local changes were made.');
       }
       renderLeague();
     });
@@ -396,9 +418,8 @@ function renderWaivers() {
     try {
       await reorderWaiverClaimsApi(ids);
       if (waiverStatus) waiverStatus.textContent = 'Waiver claim order updated.';
-    } catch {
-      reorderWaiverClaims(ids);
-      if (waiverStatus) waiverStatus.textContent = 'Waiver claim order saved locally.';
+    } catch (error) {
+      if (waiverStatus) waiverStatus.textContent = mutationErrorMessage(error, 'Could not reorder waiver claims. No local changes were made.');
     }
     renderLeague();
   };
@@ -474,8 +495,8 @@ function renderTrades(leagueState) {
     button.addEventListener('click', async () => {
       try {
         await updateTradeStatusApi(button.dataset.tradeAccept, 'Accepted');
-      } catch {
-        updateTradeStatus(button.dataset.tradeAccept, 'Accepted');
+      } catch (error) {
+        if (tradeStatus) tradeStatus.textContent = mutationErrorMessage(error, 'Could not accept trade. No local changes were made.');
       }
       renderLeague();
     });
@@ -484,8 +505,8 @@ function renderTrades(leagueState) {
     button.addEventListener('click', async () => {
       try {
         await updateTradeStatusApi(button.dataset.tradeDecline, 'Declined');
-      } catch {
-        updateTradeStatus(button.dataset.tradeDecline, 'Declined');
+      } catch (error) {
+        if (tradeStatus) tradeStatus.textContent = mutationErrorMessage(error, 'Could not decline trade. No local changes were made.');
       }
       renderLeague();
     });
@@ -494,8 +515,8 @@ function renderTrades(leagueState) {
     button.addEventListener('click', async () => {
       try {
         await updateTradeStatusApi(button.dataset.tradeCancel, 'Cancelled');
-      } catch {
-        updateTradeStatus(button.dataset.tradeCancel, 'Cancelled');
+      } catch (error) {
+        if (tradeStatus) tradeStatus.textContent = mutationErrorMessage(error, 'Could not cancel trade. No local changes were made.');
       }
       renderLeague();
     });
@@ -504,8 +525,8 @@ function renderTrades(leagueState) {
     button.addEventListener('click', async () => {
       try {
         await updateTradeStatusApi(button.dataset.tradeApprove, 'Approved');
-      } catch {
-        updateTradeStatus(button.dataset.tradeApprove, 'Approved');
+      } catch (error) {
+        if (tradeStatus) tradeStatus.textContent = mutationErrorMessage(error, 'Could not approve trade. No local changes were made.');
       }
       renderLeague();
     });
@@ -514,8 +535,8 @@ function renderTrades(leagueState) {
     button.addEventListener('click', async () => {
       try {
         await updateTradeStatusApi(button.dataset.tradeVeto, 'Vetoed');
-      } catch {
-        updateTradeStatus(button.dataset.tradeVeto, 'Vetoed');
+      } catch (error) {
+        if (tradeStatus) tradeStatus.textContent = mutationErrorMessage(error, 'Could not veto trade. No local changes were made.');
       }
       renderLeague();
     });
@@ -1311,8 +1332,8 @@ clearLeagueBtn?.addEventListener('click', async () => {
   if (current) {
     try {
       await removeLeagueFromApi(current.id);
-    } catch {
-      removeLeagueForCurrentAccount(current.id);
+    } catch (error) {
+      setSettingsStatus(mutationErrorMessage(error, 'Could not remove league. No local changes were made.'), true);
     }
   }
   renderLeague();
@@ -1353,9 +1374,8 @@ settingsForm?.addEventListener('submit', async (event) => {
       : '';
     setSettingsStatus(`Settings saved.${inviteCopy}${failCopy}`, Boolean(inviteResult.failed));
     await refreshLeagueFromApi();
-  } catch {
-    setLeagueState(updated);
-    setSettingsStatus('Settings saved locally. API unavailable.');
+  } catch (error) {
+    setSettingsStatus(mutationErrorMessage(error, 'Could not save settings. No local changes were made.'), true);
   }
   renderLeague();
 });
@@ -1398,9 +1418,8 @@ waiverForm?.addEventListener('submit', async (event) => {
   try {
     await submitWaiverClaimApi(player, waiverDropPlayer.value);
     if (waiverStatus) waiverStatus.textContent = 'Waiver claim submitted.';
-  } catch {
-    submitWaiverClaim(player, waiverDropPlayer.value);
-    if (waiverStatus) waiverStatus.textContent = 'Waiver claim saved locally.';
+  } catch (error) {
+    if (waiverStatus) waiverStatus.textContent = mutationErrorMessage(error, 'Could not submit waiver claim. No local changes were made.');
   }
   renderLeague();
 });
@@ -1421,8 +1440,10 @@ tradeForm?.addEventListener('submit', async (event) => {
   }
   try {
     ok = await submitTradeOfferApi(tradeOfferPlayer.value, tradeRequestPlayer.value.trim(), tradeTargetManager.value, requestPlayer, tradeNote?.value.trim() || '');
-  } catch {
-    ok = submitTradeOffer(tradeOfferPlayer.value, tradeRequestPlayer.value.trim(), tradeTargetManager.value, requestPlayer, tradeNote?.value.trim() || '');
+  } catch (error) {
+    if (tradeStatus) tradeStatus.textContent = mutationErrorMessage(error, 'Could not send trade offer. No local changes were made.');
+    renderLeague();
+    return;
   }
   if (tradeStatus) {
     tradeStatus.textContent = ok
@@ -1494,8 +1515,10 @@ stepLobby?.addEventListener('click', async () => {
   });
   try {
     await saveLeagueToApi(updated);
-  } catch {
-    setLeagueState(updated);
+  } catch (error) {
+    setSettingsStatus(mutationErrorMessage(error, 'Could not open draft lobby. No local changes were made.'), true);
+    renderLeague();
+    return;
   }
   renderLeague();
   window.location.href = `draft.html?league=${encodeURIComponent(updated.id)}`;

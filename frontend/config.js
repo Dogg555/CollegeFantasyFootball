@@ -1,7 +1,7 @@
 // Default same-origin API config for local development.
 // Render prepends deployment-specific values before this file.
 window.CFF_API_BASE = window.CFF_API_BASE || '/api';
-window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
+window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO === true;
 window.CFF_ALLOWED_LEAGUE_SIZES = Object.freeze([4, 6, 8, 10, 12, 14, 16]);
 
 (() => {

@@ -105,19 +105,21 @@ function renderQueue() {
       if (!player) return;
       try {
         await draftPlayerApi(player);
-      } catch {
-        draftPlayer(player);
+      } catch (error) {
+        if (draftStatus) draftStatus.textContent = mutationErrorMessage(error, 'Could not draft player. No local changes were made.');
       }
       renderAll();
     });
   });
   draftQueue.querySelectorAll('[data-remove]').forEach((button) => {
     button.addEventListener('click', async () => {
-      removeFromQueue(button.dataset.remove);
+      const playerId = button.dataset.remove;
+      const nextQueue = getQueue().filter((item) => item.id !== playerId);
       try {
-        await saveDraftQueueApi(getQueue());
-      } catch {
-        // Local queue remains updated.
+        await saveDraftQueueApi(nextQueue);
+        setQueue(nextQueue);
+      } catch (error) {
+        if (draftStatus) draftStatus.textContent = mutationErrorMessage(error, 'Could not update draft queue. No local changes were made.');
       }
       renderAll();
     });
@@ -152,9 +154,8 @@ function renderRoster() {
       if (!player) return;
       try {
         await releaseDraftedPlayerApi(player.id);
-      } catch {
-        setRoster(getRoster().filter((item) => item.id !== player.id));
-        addPlayerToQueue(player);
+      } catch (error) {
+        if (draftStatus) draftStatus.textContent = mutationErrorMessage(error, 'Could not release player. No local changes were made.');
       }
       renderAll();
     });
@@ -201,11 +202,12 @@ function renderRecommended() {
     button.addEventListener('click', async () => {
       const player = samplePlayers.find((item) => item.id === button.dataset.queue);
       if (!player) return;
-      addPlayerToQueue(player);
+      const nextQueue = [...getQueue().filter((item) => item.id !== player.id), normalizePlayer(player)];
       try {
-        await saveDraftQueueApi(getQueue());
-      } catch {
-        // Local queue remains updated.
+        await saveDraftQueueApi(nextQueue);
+        setQueue(nextQueue);
+      } catch (error) {
+        if (draftStatus) draftStatus.textContent = mutationErrorMessage(error, 'Could not update draft queue. No local changes were made.');
       }
       renderAll();
     });
@@ -417,6 +419,34 @@ function renderAll() {
   renderDraftPicks();
   renderUpcomingPicks();
   renderRecommended();
+  renderDraftOutageState();
+}
+
+function renderDraftOutageState() {
+  const meta = apiCacheMeta('league');
+  const stale = Boolean(meta?.stale || mutationControlsDisabled());
+  let banner = document.getElementById('draft-stale-warning');
+  if (!stale) {
+    banner?.remove();
+    draftRoomContent?.querySelectorAll('[data-cff-outage-disabled="true"]').forEach((button) => {
+      button.disabled = false;
+      delete button.dataset.cffOutageDisabled;
+    });
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'draft-stale-warning';
+    banner.className = 'notice notice--warning';
+    draftRoomContent?.prepend(banner);
+  }
+  const fetched = meta?.fetchedAt ? ` Last server refresh: ${new Date(meta.fetchedAt).toLocaleString()}.` : '';
+  banner.textContent = `Showing cached draft data because the API is unavailable. Draft mutations are disabled until the service recovers.${fetched}`;
+  draftRoomContent?.querySelectorAll('button').forEach((button) => {
+    if (button.disabled) return;
+    button.disabled = true;
+    button.dataset.cffOutageDisabled = 'true';
+  });
 }
 
 refreshDraftBtn?.addEventListener('click', async () => {
@@ -428,8 +458,8 @@ undoLastPickBtn?.addEventListener('click', async () => {
   if (!isCurrentCommissioner()) return;
   try {
     await undoLastDraftPickApi();
-  } catch {
-    undoLastDraftPick();
+  } catch (error) {
+    if (draftOrderStatus) draftOrderStatus.textContent = mutationErrorMessage(error, 'Could not undo draft pick. No local changes were made.');
   }
   renderAll();
 });
@@ -442,10 +472,9 @@ randomizeDraftOrderBtn?.addEventListener('click', async () => {
     await saveDraftOrderApi(order);
     renderAll();
     if (draftOrderStatus) draftOrderStatus.textContent = 'Draft order randomized.';
-  } catch {
-    saveDraftOrder(order);
+  } catch (error) {
     renderAll();
-    if (draftOrderStatus) draftOrderStatus.textContent = 'Draft order randomized locally.';
+    if (draftOrderStatus) draftOrderStatus.textContent = mutationErrorMessage(error, 'Could not randomize draft order. No local changes were made.');
   }
 });
 
@@ -457,10 +486,9 @@ resetDraftOrderBtn?.addEventListener('click', async () => {
     await saveDraftOrderApi(order);
     renderAll();
     if (draftOrderStatus) draftOrderStatus.textContent = 'Draft order reset.';
-  } catch {
-    saveDraftOrder(order);
+  } catch (error) {
     renderAll();
-    if (draftOrderStatus) draftOrderStatus.textContent = 'Draft order reset locally.';
+    if (draftOrderStatus) draftOrderStatus.textContent = mutationErrorMessage(error, 'Could not reset draft order. No local changes were made.');
   }
 });
 
@@ -468,8 +496,8 @@ clearDraftBtn?.addEventListener('click', async () => {
   if (!isCurrentCommissioner()) return;
   try {
     await resetDraftApi();
-  } catch {
-    clearDraftState();
+  } catch (error) {
+    if (draftOrderStatus) draftOrderStatus.textContent = mutationErrorMessage(error, 'Could not reset draft. No local changes were made.');
   }
   renderAll();
 });

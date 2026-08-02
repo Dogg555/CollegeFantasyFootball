@@ -3,7 +3,6 @@
 #include <cctype>
 #include <cstdlib>
 #include <chrono>
-#include <deque>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -53,13 +52,6 @@ struct TokenRecord {
 
 std::unordered_map<std::string, TokenRecord> activeTokens; // token -> record
 constexpr std::chrono::hours kTokenTtl{24};
-
-struct RateLimitBucket {
-    std::deque<std::chrono::steady_clock::time_point> attempts;
-};
-
-std::mutex rateLimitMutex;
-std::unordered_map<std::string, RateLimitBucket> rateLimitBuckets;
 
 bool envFlagEnabled(const std::string &key) {
     const auto value = readEnv(key);
@@ -325,9 +317,9 @@ std::optional<std::string> dbPasswordHashForEmail(const std::string &email) {
     return std::string{PQgetvalue(result.get(), 0, 0)};
 }
 
-void dbPersistToken(const std::string &token, const std::string &email) {
+bool dbPersistToken(const std::string &token, const std::string &email) {
     auto conn = connectToDb();
-    if (!conn) return;
+    if (!conn) return false;
     dbCleanupExpiredTokens(conn.get());
     auto result = execParams(conn.get(),
                              "INSERT INTO auth_tokens (token, email, expires_at) "
@@ -336,7 +328,9 @@ void dbPersistToken(const std::string &token, const std::string &email) {
                              {token, email});
     if (!resultOk(result.get(), PGRES_COMMAND_OK)) {
         std::cerr << "[auth] token insert failed: " << PQerrorMessage(conn.get()) << std::endl;
+        return false;
     }
+    return true;
 }
 
 std::optional<std::string> dbEmailForToken(const std::string &token) {
@@ -529,6 +523,14 @@ Json::Value healthPayload(const std::optional<std::string> &jwtSecret,
     return payload;
 }
 
+drogon::HttpStatusCode healthStatusCode(const Json::Value &payload) {
+    const auto status = payload.isMember("status") ? payload["status"].asString() : "ok";
+    if (persistentDbRequired() && status != "ok") {
+        return drogon::k503ServiceUnavailable;
+    }
+    return drogon::k200OK;
+}
+
 Json::Value authReadinessPayload() {
     Json::Value payload;
     const auto passwordMax = maxPasswordLength();
@@ -579,6 +581,17 @@ Json::Value authReadinessPayload() {
         payload["message"] = "Authentication is ready.";
     }
     return payload;
+}
+
+bool authStorageUnavailable() {
+#ifdef CFF_HAS_POSTGRES
+    if (!persistentDbRequired()) return false;
+    if (!dbConfigured()) return true;
+    auto conn = connectToDb();
+    return !conn;
+#else
+    return persistentDbRequired();
+#endif
 }
 
 template <std::size_t N>
@@ -663,9 +676,22 @@ std::string randomToken() {
     return token;
 }
 
-std::string issueTokenForUser(const std::string &email) {
+std::optional<std::string> issueTokenForUser(const std::string &email) {
     const auto token = randomToken();
     const auto expiresAt = std::chrono::steady_clock::now() + kTokenTtl;
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        if (!dbPersistToken(token, email)) {
+            return std::nullopt;
+        }
+    } else if (persistentDbRequired()) {
+        return std::nullopt;
+    }
+#else
+    if (persistentDbRequired()) {
+        return std::nullopt;
+    }
+#endif
     std::lock_guard<std::mutex> lock(userMutex);
     const auto now = std::chrono::steady_clock::now();
     for (auto it = activeTokens.begin(); it != activeTokens.end();) {
@@ -676,11 +702,6 @@ std::string issueTokenForUser(const std::string &email) {
         }
     }
     activeTokens[token] = TokenRecord{email, expiresAt};
-#ifdef CFF_HAS_POSTGRES
-    if (dbConfigured()) {
-        dbPersistToken(token, email);
-    }
-#endif
     return token;
 }
 
@@ -781,54 +802,6 @@ std::string firstHeaderValue(std::string value) {
     return value;
 }
 
-std::string requestRateLimitKey(const drogon::HttpRequestPtr &req, const std::string &scope) {
-    auto client = firstHeaderValue(req->getHeader("x-forwarded-for"));
-    if (client.empty()) client = firstHeaderValue(req->getHeader("x-real-ip"));
-    if (client.empty()) client = firstHeaderValue(req->getHeader("cf-connecting-ip"));
-    if (client.empty()) client = "unknown-client";
-    return scope + ":" + client;
-}
-
-bool rateLimitAllowed(const drogon::HttpRequestPtr &req,
-                      const std::string &scope,
-                      std::size_t limit,
-                      std::chrono::seconds window) {
-    const auto now = std::chrono::steady_clock::now();
-    const auto cutoff = now - window;
-    const auto key = requestRateLimitKey(req, scope);
-    std::lock_guard<std::mutex> lock(rateLimitMutex);
-    auto &attempts = rateLimitBuckets[key].attempts;
-    while (!attempts.empty() && attempts.front() < cutoff) {
-        attempts.pop_front();
-    }
-    if (attempts.size() >= limit) {
-        return false;
-    }
-    attempts.push_back(now);
-    return true;
-}
-
-void sendRateLimitExceeded(std::function<void (const drogon::HttpResponsePtr &)> &callback) {
-    Json::Value error;
-    error["error"] = "Too many requests. Try again later.";
-    auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-    resp->setStatusCode(static_cast<drogon::HttpStatusCode>(429));
-    resp->addHeader("Retry-After", "60");
-    callback(resp);
-}
-
-bool enforceRateLimit(const drogon::HttpRequestPtr &req,
-                      std::function<void (const drogon::HttpResponsePtr &)> &callback,
-                      const std::string &scope,
-                      std::size_t limit,
-                      std::chrono::seconds window) {
-    if (rateLimitAllowed(req, scope, limit, window)) {
-        return true;
-    }
-    sendRateLimitExceeded(callback);
-    return false;
-}
-
 bool ensureCredentials(const Json::Value &body) {
     constexpr std::size_t kMaxEmail = 254;
     const std::size_t kMaxPassword = maxPasswordLength(); // bcrypt truncates longer passwords
@@ -878,6 +851,14 @@ void handleSignup(const drogon::HttpRequestPtr &req,
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
         if (!dbCreateUser(email, *passwordHash)) {
+            if (authStorageUnavailable()) {
+                Json::Value error;
+                error["error"] = "Authentication service is temporarily unavailable";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(drogon::k503ServiceUnavailable);
+                callback(resp);
+                return;
+            }
             Json::Value error;
             error["error"] = "Account already exists";
             auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
@@ -900,7 +881,15 @@ void handleSignup(const drogon::HttpRequestPtr &req,
         payload["emailSent"] = sentVerification;
         if (!emailVerificationRequired()) {
             const auto token = issueTokenForUser(email);
-            payload["token"] = token;
+            if (!token) {
+                Json::Value error;
+                error["error"] = "Authentication service is temporarily unavailable";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(drogon::k503ServiceUnavailable);
+                callback(resp);
+                return;
+            }
+            payload["token"] = *token;
             payload["valid"] = true;
         } else {
             payload["valid"] = false;
@@ -940,7 +929,15 @@ void handleSignup(const drogon::HttpRequestPtr &req,
     const auto token = issueTokenForUser(email);
     Json::Value payload;
     payload["email"] = email;
-    payload["token"] = token;
+    if (!token) {
+        Json::Value error;
+        error["error"] = "Authentication service is temporarily unavailable";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k503ServiceUnavailable);
+        callback(resp);
+        return;
+    }
+    payload["token"] = *token;
     payload["valid"] = true;
     payload["message"] = "Account created";
     auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
@@ -968,6 +965,14 @@ void handleLogin(const drogon::HttpRequestPtr &req,
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
         const auto passwordHash = dbPasswordHashForEmail(email);
+        if (!passwordHash && authStorageUnavailable()) {
+            Json::Value error;
+            error["error"] = "Authentication service is temporarily unavailable";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(drogon::k503ServiceUnavailable);
+            callback(resp);
+            return;
+        }
         passwordMatches = passwordHash && verifyPassword(password, *passwordHash);
         if (passwordMatches && emailVerificationRequired()) {
             const auto verified = dbEmailVerified(email);
@@ -1006,9 +1011,17 @@ void handleLogin(const drogon::HttpRequestPtr &req,
     }
 
     const auto token = issueTokenForUser(email);
+    if (!token) {
+        Json::Value error;
+        error["error"] = "Authentication service is temporarily unavailable";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k503ServiceUnavailable);
+        callback(resp);
+        return;
+    }
     Json::Value payload;
     payload["email"] = email;
-    payload["token"] = token;
+    payload["token"] = *token;
     payload["valid"] = true;
     payload["message"] = "Signed in";
     auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
@@ -1361,8 +1374,9 @@ int main(int argc, char* argv[]) {
                                   *ingestOnStartupEnv == "TRUE" || *ingestOnStartupEnv == "yes");
     const auto healthHandler = [jwtSecret, allowedOrigins](const drogon::HttpRequestPtr&,
                                                            std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(healthPayload(jwtSecret, allowedOrigins));
-        resp->setStatusCode(drogon::k200OK);
+        const auto payload = healthPayload(jwtSecret, allowedOrigins);
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+        resp->setStatusCode(healthStatusCode(payload));
         callback(resp);
     };
 
@@ -1397,6 +1411,17 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/auth/validate",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              auto resp = drogon::HttpResponse::newHttpResponse();
+                             if (authStorageUnavailable()) {
+                                 Json::Value error;
+                                 error["valid"] = false;
+                                 error["unavailable"] = true;
+                                 error["error"] = "Authentication service is temporarily unavailable";
+                                 resp->setStatusCode(drogon::k503ServiceUnavailable);
+                                 resp->setBody(error.toStyledString());
+                                 resp->addHeader("Content-Type", "application/json");
+                                 callback(resp);
+                                 return;
+                             }
                              std::string token;
                              hasBearerToken(req, token);
                              const bool authorized = isAuthorized(req, jwtSecret);

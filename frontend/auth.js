@@ -1,5 +1,6 @@
 const apiBase = window.CFF_API_BASE || '/api';
-const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO !== false;
+const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO === true
+  && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
 
 const signupForm = document.getElementById('signup-form');
 const signupEmail = document.getElementById('signup-email');

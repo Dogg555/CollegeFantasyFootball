@@ -10,9 +10,22 @@ const CFF_TRANSACTIONS_KEY = 'cff_transactions_by_league';
 const CFF_MATCHUPS_KEY = 'cff_matchups_by_league';
 const CFF_DRAFT_PICKS_KEY = 'cff_draft_picks_by_league';
 const CFF_DRAFT_META_KEY = 'cff_draft_meta_by_league';
+const CFF_API_CACHE_META_KEY = 'cff_api_cache_meta';
 const MAX_LEAGUES_PER_ACCOUNT = 3;
 const CFF_API_BASE = window.CFF_API_BASE || '/api';
-const CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
+const CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO === true;
+let lastAuthSessionResult = { authenticated: false, unavailable: false, expired: false };
+let apiServiceUnavailable = false;
+
+function localhostDemoAllowed() {
+  const host = window.location.hostname;
+  return CFF_ALLOW_LOCAL_DEMO && (host === 'localhost' || host === '127.0.0.1' || host === '::1');
+}
+
+function isLocalDemoSession() {
+  const token = getAuthState()?.token || '';
+  return localhostDemoAllowed() && String(token).startsWith('local-demo-');
+}
 
 const samplePlayers = [
   { id: 'p-001', name: 'Garrett Nussmeier', team: 'LSU', position: 'QB', conference: 'SEC', class: 'SR', rank: 1, projection: 24.8 },
@@ -142,7 +155,13 @@ async function apiRequest(path, options = {}) {
     ...authHeaders(),
     ...(options.headers || {})
   };
-  const resp = await fetch(`${CFF_API_BASE}${path}`, { ...options, headers });
+  let resp;
+  try {
+    resp = await fetch(`${CFF_API_BASE}${path}`, { ...options, headers });
+  } catch (error) {
+    apiServiceUnavailable = true;
+    throw error;
+  }
   let data = null;
   try {
     data = await resp.json();
@@ -153,9 +172,50 @@ async function apiRequest(path, options = {}) {
     const err = new Error(data?.error || `Request failed with ${resp.status}`);
     err.status = resp.status;
     err.data = data;
+    err.retryAfter = resp.headers.get('Retry-After') || '';
+    if (resp.status === 503) apiServiceUnavailable = true;
     throw err;
   }
+  apiServiceUnavailable = false;
   return data;
+}
+
+function mutationErrorMessage(error, fallback = 'Request failed. No local changes were made.') {
+  if (error?.status === 429) {
+    const retry = error.retryAfter ? ` Retry after ${error.retryAfter} seconds.` : ' Try again later.';
+    return `Too many requests.${retry}`;
+  }
+  if (error?.status === 503 || error?.unavailable) {
+    return 'Service is temporarily unavailable. No local changes were made.';
+  }
+  return error?.data?.error || error?.message || fallback;
+}
+
+function writeApiCacheMeta(scope, leagueId = getLeagueState()?.id || '') {
+  const meta = readJson(CFF_API_CACHE_META_KEY, {});
+  meta[scope] = {
+    schemaVersion: 1,
+    source: 'api',
+    fetchedAt: new Date().toISOString(),
+    leagueId,
+    stale: false
+  };
+  writeJson(CFF_API_CACHE_META_KEY, meta);
+}
+
+function markApiCacheStale(scope = 'league') {
+  const meta = readJson(CFF_API_CACHE_META_KEY, {});
+  const current = meta[scope] || { schemaVersion: 1, source: 'api', fetchedAt: '', leagueId: getLeagueState()?.id || '' };
+  meta[scope] = { ...current, stale: true };
+  writeJson(CFF_API_CACHE_META_KEY, meta);
+}
+
+function apiCacheMeta(scope = 'league') {
+  return readJson(CFF_API_CACHE_META_KEY, {})[scope] || null;
+}
+
+function mutationControlsDisabled() {
+  return Boolean(getAuthState()?.token && !isLocalDemoSession() && apiServiceUnavailable);
 }
 
 function setAuthState(auth) {
@@ -168,12 +228,24 @@ function setAuthState(auth) {
 }
 
 async function validateAuthSession() {
+  const result = await validateAuthSessionResult();
+  return result.authenticated === true;
+}
+
+async function validateAuthSessionResult() {
   const auth = getAuthState();
-  if (!auth?.token) return false;
+  if (!auth?.token) {
+    lastAuthSessionResult = { authenticated: false, unavailable: false, expired: false };
+    return lastAuthSessionResult;
+  }
   if (String(auth.token).startsWith('local-demo-')) {
-    if (CFF_ALLOW_LOCAL_DEMO) return true;
+    if (localhostDemoAllowed()) {
+      lastAuthSessionResult = { authenticated: true, unavailable: false, expired: false, demo: true };
+      return lastAuthSessionResult;
+    }
     clearSessionState();
-    return false;
+    lastAuthSessionResult = { authenticated: false, unavailable: false, expired: true };
+    return lastAuthSessionResult;
   }
   try {
     const data = await apiRequest('/auth/validate');
@@ -181,16 +253,21 @@ async function validateAuthSession() {
       if (data.email && data.email !== auth.email) {
         setAuthState({ ...auth, email: data.email });
       }
-      return true;
+      lastAuthSessionResult = { authenticated: true, unavailable: false, expired: false, email: data.email || auth.email };
+      return lastAuthSessionResult;
     }
     clearSessionState();
-    return false;
+    lastAuthSessionResult = { authenticated: false, unavailable: false, expired: true };
+    return lastAuthSessionResult;
   } catch (error) {
     if (error.status === 401 || error.status === 403) {
       clearSessionState();
-      return false;
+      lastAuthSessionResult = { authenticated: false, unavailable: false, expired: true, status: error.status };
+      return lastAuthSessionResult;
     }
-    return true;
+    lastAuthSessionResult = { authenticated: false, unavailable: true, expired: false, status: error.status || 0, message: error.message };
+    apiServiceUnavailable = true;
+    return lastAuthSessionResult;
   }
 }
 
@@ -710,9 +787,10 @@ function undoLastDraftPick() {
 
 async function draftPlayerApi(player) {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     return draftPlayer(player);
   }
+  if (!league?.id) throw new Error('No server league selected');
   const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/picks`, {
     method: 'POST',
     body: JSON.stringify({ player: normalizePlayer(player) })
@@ -737,7 +815,9 @@ async function releaseDraftedPlayerApi(playerId) {
   const player = getRoster().find((item) => item.id === playerId);
   if (!player) return false;
   await dropPlayerApi(playerId);
-  addPlayerToQueue(player);
+  const nextQueue = [...getQueue().filter((item) => item.id !== player.id), normalizePlayer(player)];
+  await saveDraftQueueApi(nextQueue);
+  setQueue(nextQueue);
   return true;
 }
 
@@ -1015,23 +1095,42 @@ function addTransaction(type, summary) {
 
 async function syncLeaguesFromApi() {
   if (!getAuthState()?.token) return getLeaguesForCurrentAccount();
-  const leagues = await apiRequest('/leagues');
+  let leagues;
+  try {
+    leagues = await apiRequest('/leagues');
+  } catch (error) {
+    markApiCacheStale('leagues');
+    throw error;
+  }
   replaceLeaguesForCurrentAccount(leagues || []);
+  writeApiCacheMeta('leagues');
   return getLeaguesForCurrentAccount();
 }
 
 async function syncActiveLeagueCollectionsFromApi() {
   const league = getLeagueState();
   if (!getAuthState()?.token || !league?.id) return;
-  const [roster, waivers, waiverPriority, trades, transactions, members, matchups] = await Promise.all([
-    apiRequest(`/leagues/${encodeURIComponent(league.id)}/roster`),
-    apiRequest(`/leagues/${encodeURIComponent(league.id)}/waivers`),
-    apiRequest(`/leagues/${encodeURIComponent(league.id)}/waiver-priority`),
-    apiRequest(`/leagues/${encodeURIComponent(league.id)}/trades`),
-    apiRequest(`/leagues/${encodeURIComponent(league.id)}/transactions`),
-    apiRequest(`/leagues/${encodeURIComponent(league.id)}/members`),
-    apiRequest(`/leagues/${encodeURIComponent(league.id)}/matchups`)
-  ]);
+  let roster;
+  let waivers;
+  let waiverPriority;
+  let trades;
+  let transactions;
+  let members;
+  let matchups;
+  try {
+    [roster, waivers, waiverPriority, trades, transactions, members, matchups] = await Promise.all([
+      apiRequest(`/leagues/${encodeURIComponent(league.id)}/roster`),
+      apiRequest(`/leagues/${encodeURIComponent(league.id)}/waivers`),
+      apiRequest(`/leagues/${encodeURIComponent(league.id)}/waiver-priority`),
+      apiRequest(`/leagues/${encodeURIComponent(league.id)}/trades`),
+      apiRequest(`/leagues/${encodeURIComponent(league.id)}/transactions`),
+      apiRequest(`/leagues/${encodeURIComponent(league.id)}/members`),
+      apiRequest(`/leagues/${encodeURIComponent(league.id)}/matchups`)
+    ]);
+  } catch (error) {
+    markApiCacheStale('league');
+    throw error;
+  }
   setRoster((roster || []).map(normalizePlayer));
   setLeagueScopedItemsForLeague(CFF_WAIVERS_KEY, league.id, waivers || []);
   setLeagueScopedItemsForLeague(CFF_WAIVER_PRIORITIES_KEY, league.id, waiverPriority || []);
@@ -1039,6 +1138,7 @@ async function syncActiveLeagueCollectionsFromApi() {
   setLeagueScopedItemsForLeague(CFF_TRANSACTIONS_KEY, league.id, transactions || []);
   setLeagueScopedItemsForLeague(CFF_MATCHUPS_KEY, league.id, matchups || []);
   saveLeagueForAccount({ ...league, members: members || league.members || [] });
+  writeApiCacheMeta('league', league.id);
 }
 
 function applyDraftState(state = {}) {
@@ -1061,10 +1161,11 @@ async function syncDraftFromApi() {
 
 async function saveDraftQueueApi(queue = getQueue()) {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     setQueue(queue);
     return null;
   }
+  if (!league?.id) throw new Error('No server league selected');
   const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/queue`, {
     method: 'PUT',
     body: JSON.stringify({ queue })
@@ -1075,10 +1176,11 @@ async function saveDraftQueueApi(queue = getQueue()) {
 
 async function saveDraftOrderApi(draftOrder = []) {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     saveDraftOrder(draftOrder);
     return null;
   }
+  if (!league?.id) throw new Error('No server league selected');
   const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/order`, {
     method: 'PUT',
     body: JSON.stringify({ draftOrder })
@@ -1089,10 +1191,11 @@ async function saveDraftOrderApi(draftOrder = []) {
 
 async function resetDraftApi() {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     clearDraftState();
     return null;
   }
+  if (!league?.id) throw new Error('No server league selected');
   const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/reset`, {
     method: 'POST'
   });
@@ -1107,10 +1210,11 @@ async function resetDraftApi() {
 
 async function undoLastDraftPickApi() {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     undoLastDraftPick();
     return null;
   }
+  if (!league?.id) throw new Error('No server league selected');
   const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/undo`, {
     method: 'POST'
   });
@@ -1125,8 +1229,11 @@ async function undoLastDraftPickApi() {
 
 async function saveLeagueToApi(league) {
   const normalized = normalizeLeague(league);
-  if (!getAuthState()?.token || normalized.id.startsWith('local-')) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     return saveLeagueForAccount(normalized);
+  }
+  if (normalized.id.startsWith('local-')) {
+    throw new Error('Local demo leagues cannot be saved to a production session');
   }
   const saved = normalizeLeague(await apiRequest(`/leagues/${encodeURIComponent(normalized.id)}`, {
     method: 'PUT',
@@ -1136,8 +1243,13 @@ async function saveLeagueToApi(league) {
 }
 
 async function removeLeagueFromApi(leagueId) {
-  if (getAuthState()?.token && leagueId && !leagueId.startsWith('local-')) {
+  if (getAuthState()?.token && !isLocalDemoSession() && leagueId && !leagueId.startsWith('local-')) {
     await apiRequest(`/leagues/${encodeURIComponent(leagueId)}`, { method: 'DELETE' });
+    removeLeagueForCurrentAccount(leagueId);
+    return;
+  }
+  if (getAuthState()?.token && !isLocalDemoSession() && String(leagueId || '').startsWith('local-')) {
+    throw new Error('Local demo leagues cannot be removed from a production session');
   }
   removeLeagueForCurrentAccount(leagueId);
 }
@@ -1145,7 +1257,7 @@ async function removeLeagueFromApi(leagueId) {
 async function inviteMemberApi(email, role = 'member') {
   const league = getLeagueState();
   if (!email || !league?.id) return false;
-  if (!getAuthState()?.token) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     const members = normalizeMembers([...(league.members || []), { email, role, status: 'Invited' }], [...(league.invitedEmails || []), email]);
     saveLeagueForAccount({ ...league, invitedEmails: [...new Set([...(league.invitedEmails || []), email])], members });
     return true;
@@ -1161,7 +1273,7 @@ async function inviteMemberApi(email, role = 'member') {
 async function updateMemberApi(email, changes = {}) {
   const league = getLeagueState();
   if (!email || !league?.id) return false;
-  if (!getAuthState()?.token) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     const members = normalizeMembers((league.members || []).map((member) => (
       member.email === email ? { ...member, ...changes } : member
     )), league.invitedEmails || []);
@@ -1202,7 +1314,8 @@ async function joinLeagueApi(leagueId) {
 async function addFreeAgentApi(player) {
   const league = getLeagueState();
   if (freeAgencyLocked(league)) return false;
-  if (!getAuthState()?.token || !league?.id) return addFreeAgent(player);
+  if (!getAuthState()?.token || isLocalDemoSession()) return addFreeAgent(player);
+  if (!league?.id) throw new Error('No server league selected');
   const roster = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/roster`, {
     method: 'POST',
     body: JSON.stringify({ player: normalizePlayer(player) })
@@ -1214,7 +1327,8 @@ async function addFreeAgentApi(player) {
 
 async function dropPlayerApi(playerId) {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) return dropPlayer(playerId);
+  if (!getAuthState()?.token || isLocalDemoSession()) return dropPlayer(playerId);
+  if (!league?.id) throw new Error('No server league selected');
   const roster = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/roster/drop`, {
     method: 'POST',
     body: JSON.stringify({ playerId })
@@ -1227,10 +1341,11 @@ async function dropPlayerApi(playerId) {
 async function submitWaiverClaimApi(addPlayer, dropPlayerId = '') {
   const league = getLeagueState();
   if (lineupLocked()) return false;
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     submitWaiverClaim(addPlayer, dropPlayerId);
     return true;
   }
+  if (!league?.id) throw new Error('No server league selected');
   await apiRequest(`/leagues/${encodeURIComponent(league.id)}/waivers`, {
     method: 'POST',
     body: JSON.stringify({ addPlayer: normalizePlayer(addPlayer), dropPlayerId })
@@ -1242,10 +1357,11 @@ async function submitWaiverClaimApi(addPlayer, dropPlayerId = '') {
 async function processWaiverClaimApi(claimId) {
   const league = getLeagueState();
   if (lineupLocked()) return false;
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     processWaiverClaim(claimId);
     return true;
   }
+  if (!league?.id) throw new Error('No server league selected');
   await apiRequest(`/leagues/${encodeURIComponent(league.id)}/waivers/${encodeURIComponent(claimId)}/process`, {
     method: 'POST'
   });
@@ -1255,10 +1371,11 @@ async function processWaiverClaimApi(claimId) {
 
 async function cancelWaiverClaimApi(claimId) {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     cancelWaiverClaim(claimId);
     return true;
   }
+  if (!league?.id) throw new Error('No server league selected');
   const claims = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/waivers/${encodeURIComponent(claimId)}/status`, {
     method: 'POST',
     body: JSON.stringify({ status: 'Cancelled' })
@@ -1272,10 +1389,11 @@ async function cancelWaiverClaimApi(claimId) {
 
 async function reorderWaiverClaimsApi(claimIds = []) {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     reorderWaiverClaims(claimIds);
     return true;
   }
+  if (!league?.id) throw new Error('No server league selected');
   const claims = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/waivers/reorder`, {
     method: 'POST',
     body: JSON.stringify({ claimIds })
@@ -1292,10 +1410,11 @@ async function processWaiversApi() {
   if (lineupLocked()) {
     return { processed: [], cancelled: [], claims: getWaiverClaims() };
   }
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     processAllWaiverClaims();
     return true;
   }
+  if (!league?.id) throw new Error('No server league selected');
   const result = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/waivers/process`, {
     method: 'POST'
   });
@@ -1325,7 +1444,7 @@ function saveWaiverPriority(priority = []) {
 
 async function resetWaiverPriorityApi() {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     const priority = (league?.members || [])
       .filter((member) => member.status !== 'Removed')
       .map((member, index) => ({
@@ -1338,6 +1457,7 @@ async function resetWaiverPriorityApi() {
     addTransaction('Waiver Priority', 'Reset waiver priority order');
     return priority;
   }
+  if (!league?.id) throw new Error('No server league selected');
   const priority = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/waiver-priority/reset`, {
     method: 'POST'
   });
@@ -1349,7 +1469,8 @@ async function resetWaiverPriorityApi() {
 async function submitTradeOfferApi(offerPlayerId, requestPlayerName, targetManager, requestPlayer = null, note = '') {
   const league = getLeagueState();
   const player = getRoster().find((item) => item.id === offerPlayerId);
-  if (!getAuthState()?.token || !league?.id) return submitTradeOffer(offerPlayerId, requestPlayerName, targetManager, requestPlayer, note);
+  if (!getAuthState()?.token || isLocalDemoSession()) return submitTradeOffer(offerPlayerId, requestPlayerName, targetManager, requestPlayer, note);
+  if (!league?.id) throw new Error('No server league selected');
   if (lineupLocked() || !player || !requestPlayer?.id || !isActiveTradeTarget(targetManager, league)) return false;
   await apiRequest(`/leagues/${encodeURIComponent(league.id)}/trades`, {
     method: 'POST',
@@ -1361,10 +1482,11 @@ async function submitTradeOfferApi(offerPlayerId, requestPlayerName, targetManag
 
 async function updateTradeStatusApi(tradeId, status) {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     updateTradeStatus(tradeId, status);
     return true;
   }
+  if (!league?.id) throw new Error('No server league selected');
   await apiRequest(`/leagues/${encodeURIComponent(league.id)}/trades/${encodeURIComponent(tradeId)}/status`, {
     method: 'POST',
     body: JSON.stringify({ status })
@@ -1412,10 +1534,11 @@ function dropPlayer(playerId) {
 async function updateRosterSlotApi(playerId, slot) {
   const league = getLeagueState();
   const requestedSlot = String(slot || '').toLowerCase();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     if (lineupLocked()) return false;
     return setRosterSlot(playerId, requestedSlot);
   }
+  if (!league?.id) throw new Error('No server league selected');
   const roster = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/roster/${encodeURIComponent(playerId)}/slot`, {
     method: 'POST',
     body: JSON.stringify({ slot: requestedSlot })
@@ -1432,12 +1555,13 @@ async function scoreWeekApi(week = 1, season = new Date().getFullYear()) {
     error.lineupErrors = errors;
     throw error;
   }
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     const others = getMatchups().filter((matchup) => Number(matchup.week || 1) !== Number(week));
     const matchups = generateLocalMatchups(league, week);
     saveMatchups([...others, ...matchups]);
     return { season, week, scores: [], matchups };
   }
+  if (!league?.id) throw new Error('No server league selected');
   const result = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/score/week/${encodeURIComponent(week)}`, {
     method: 'POST',
     body: JSON.stringify({ season })
@@ -1451,9 +1575,10 @@ async function scoreWeekApi(week = 1, season = new Date().getFullYear()) {
 
 async function generateSeasonScheduleApi(weeks = 12) {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     return generateLocalSeasonSchedule(league, weeks);
   }
+  if (!league?.id) throw new Error('No server league selected');
   const schedule = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/matchups/generate-season`, {
     method: 'POST',
     body: JSON.stringify({ weeks })
@@ -1472,7 +1597,7 @@ async function finalizeWeekApi(week = 1) {
     error.lineupErrors = errors;
     throw error;
   }
-  if (!getAuthState()?.token || !league?.id) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     const now = new Date().toISOString();
     const matchups = (getMatchups().length ? getMatchups() : generateLocalMatchups(league)).map((matchup) => (
       Number(matchup.week || 1) === Number(week)
@@ -1483,6 +1608,7 @@ async function finalizeWeekApi(week = 1) {
     addTransaction('Scoring Finalized', `Finalized week ${week}`);
     return matchups;
   }
+  if (!league?.id) throw new Error('No server league selected');
   const matchups = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/score/week/${encodeURIComponent(week)}/finalize`, {
     method: 'POST'
   });
