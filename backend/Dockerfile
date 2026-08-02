@@ -3,7 +3,7 @@ FROM debian:bookworm AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG BUILD_JOBS=1
-ARG ESPN_BOOTSTRAP_REF=f0cf70d178c8e9fec1ee54f3d415c07c89b6714e
+ARG ESPN_BOOTSTRAP_REF=d1d41576efd3c3dcb7f4e2cca36f8b37b5503f2d
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -58,9 +58,9 @@ RUN git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/c
  && rm -rf /tmp/cpr
 
 # Render builds from the repository root so the one-time ESPN scripts are
-# available to its pre-deploy command. Existing local CI may still build with
-# ./backend as context, so fetch the pinned, reviewed scripts when root scripts
-# are not present.
+# available to its pre-deploy command and startup recovery. Existing local CI
+# may still build with ./backend as context, so fetch the pinned resumable
+# scripts when root scripts are not present.
 WORKDIR /app
 COPY . /context
 RUN set -eux; \
@@ -115,9 +115,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /srv
 COPY --from=build --chown=cff:cff /app/backend/build/college_ff_server /srv/college_ff_server
 COPY --from=build --chown=cff:cff /app/backend/db /srv/db
+COPY --from=build --chown=cff:cff /app/backend/docker-entrypoint.sh /srv/docker-entrypoint.sh
 COPY --from=build --chown=cff:cff /app/scripts /srv/scripts
+RUN chmod 0755 /srv/docker-entrypoint.sh
 
 USER 10001:10001
 EXPOSE 8080
 ENV PORT=8080
-CMD ["sh", "-c", "sh /srv/db/migrate.sh && exec /srv/college_ff_server"]
+CMD ["/srv/docker-entrypoint.sh"]
