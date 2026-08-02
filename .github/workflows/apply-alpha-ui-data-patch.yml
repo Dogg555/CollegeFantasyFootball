@@ -43,13 +43,13 @@ jobs:
           from pathlib import Path
           path = Path('frontend/league.html')
           content = path.read_text(encoding='utf-8')
-          needle = '  <main class="layout" style="max-width: 1080px">'
-          first = content.find(needle)
-          second = content.find(needle, first + len(needle))
-          if first < 0 or second < 0:
-              raise SystemExit('Unable to locate the second league main layout')
-          content = content[:second] + '  <main class="layout league-dashboard" style="max-width: 1080px">' + content[second + len(needle):]
-          path.write_text(content, encoding='utf-8')
+          if 'class="layout league-dashboard"' not in content:
+              needle = '  <main class="layout" style="max-width: 1080px">'
+              position = content.rfind(needle)
+              if position < 0:
+                  raise SystemExit('Unable to locate the league dashboard layout')
+              content = content[:position] + '  <main class="layout league-dashboard" style="max-width: 1080px">' + content[position + len(needle):]
+              path.write_text(content, encoding='utf-8')
           PY
       - name: Validate generated changes
         run: |
