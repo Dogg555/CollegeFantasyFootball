@@ -546,10 +546,15 @@ void dbSyncInvitedMembers(PGconn *conn,
                           const std::string &commissionerEmail,
                           const Json::Value &invitedEmails) {
     if (!invitedEmails.isArray()) return;
+    const auto normalizedCommissionerEmail = canonicalEmail(commissionerEmail);
     for (const auto &email : invitedEmails) {
-        if (email.isString() && !email.asString().empty() && email.asString() != commissionerEmail) {
-            dbUpsertMember(conn, leagueId, email.asString(), "member", "invited", commissionerEmail);
-        }
+        if (!email.isString()) continue;
+        const auto memberEmail = canonicalEmail(email.asString());
+        if (memberEmail.empty() || memberEmail == normalizedCommissionerEmail) continue;
+        // League settings retain approved members in invitedEmails. Never demote an
+        // active membership while synchronizing that compatibility list.
+        if (dbIsActiveMember(conn, leagueId, memberEmail)) continue;
+        dbUpsertMember(conn, leagueId, memberEmail, "member", "invited", normalizedCommissionerEmail);
     }
 }
 #endif
