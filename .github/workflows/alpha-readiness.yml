@@ -1,0 +1,121 @@
+name: Alpha release readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      require_email:
+        description: Require configured and working transactional email checks
+        required: false
+        default: true
+        type: boolean
+      backup_restore_verified:
+        description: Confirm a real off-platform backup was restored successfully
+        required: true
+        default: false
+        type: boolean
+      run_browser_suite:
+        description: Run desktop and mobile browser checks
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-release-readiness
+  cancel-in-progress: false
+
+jobs:
+  alpha-gates:
+    name: Deployed Alpha gates
+    runs-on: ubuntu-24.04
+    env:
+      CFF_API_BASE_URL: ${{ secrets.CFF_STAGING_API_BASE_URL }}
+      CFF_FRONTEND_BASE_URL: ${{ secrets.CFF_STAGING_FRONTEND_BASE_URL }}
+      CFF_ADMIN_API_TOKEN: ${{ secrets.CFF_STAGING_ADMIN_API_TOKEN }}
+      CFF_SMOKE_ACCOUNT_EMAIL: ${{ secrets.CFF_STAGING_SMOKE_EMAIL }}
+      CFF_SMOKE_ACCOUNT_PASSWORD: ${{ secrets.CFF_STAGING_SMOKE_PASSWORD }}
+      CFF_SMOKE_VERIFICATION_EMAIL_BASE: ${{ secrets.CFF_STAGING_VERIFICATION_EMAIL_BASE }}
+      CFF_SMOKE_TEST_EMAIL_VERIFICATION: ${{ inputs.require_email }}
+      CFF_ALPHA_REQUIRE_EMAIL: ${{ inputs.require_email }}
+      CFF_ALPHA_BACKUP_VERIFIED: ${{ inputs.backup_restore_verified }}
+      CFF_ALPHA_MIN_ACTIVE_PLAYERS: "1000"
+      CFF_ALPHA_MAX_MONTHLY_CFBD_CALLS: "125000"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Require deployed environment configuration
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in CFF_API_BASE_URL CFF_FRONTEND_BASE_URL CFF_ADMIN_API_TOKEN; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required repository secret for $name"
+              missing=1
+            fi
+          done
+          if [ "${CFF_ALPHA_REQUIRE_EMAIL}" = "true" ]; then
+            for name in CFF_SMOKE_ACCOUNT_EMAIL CFF_SMOKE_ACCOUNT_PASSWORD CFF_SMOKE_VERIFICATION_EMAIL_BASE; do
+              if [ -z "${!name:-}" ]; then
+                echo "::error::Email Alpha gates require $name"
+                missing=1
+              fi
+            done
+          fi
+          exit "$missing"
+
+      - name: Evaluate infrastructure and data readiness
+        id: readiness
+        continue-on-error: true
+        run: python scripts/alpha_readiness.py
+
+      - name: Run complete deployed API lifecycle
+        run: python scripts/api_smoke_tests.py
+
+      - name: Run deployed security, CORS, account and league acceptance
+        run: python scripts/render_smoke_tests.py
+
+      - name: Install browser test dependencies
+        if: inputs.run_browser_suite
+        run: |
+          python -m pip install --disable-pip-version-check playwright==1.54.0
+          python -m playwright install --with-deps chromium
+
+      - name: Run desktop and mobile browser suite
+        if: inputs.run_browser_suite
+        run: python scripts/frontend_browser_smoke.py
+
+      - name: Upload Alpha evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha-readiness-${{ github.run_id }}
+          path: |
+            alpha-readiness-artifacts
+            browser-artifacts
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish Alpha summary
+        if: always()
+        run: |
+          if [ -f alpha-readiness-artifacts/alpha-readiness.md ]; then
+            cat alpha-readiness-artifacts/alpha-readiness.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "# Alpha readiness report unavailable" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Email gates required: $CFF_ALPHA_REQUIRE_EMAIL" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Off-platform restore confirmed: $CFF_ALPHA_BACKUP_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Browser suite requested: ${{ inputs.run_browser_suite }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce readiness result
+        if: steps.readiness.outcome != 'success'
+        run: |
+          echo "::error::One or more mandatory Alpha infrastructure/data gates failed. Review the uploaded report."
+          exit 1

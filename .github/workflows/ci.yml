@@ -36,6 +36,7 @@ jobs:
       - name: Python deployment syntax checks
         run: |
           python -m py_compile \
+            scripts/alpha_readiness.py \
             scripts/api_smoke_tests.py \
             scripts/authorization_security_tests.py \
             scripts/render_deploy_and_wait.py \
@@ -78,24 +79,31 @@ jobs:
 
           services = {service['name']: service for service in blueprint['services']}
           api = services['college-ff-api']
-          daily = services['college-ff-cfbd-ingest']
+          roster = services['college-ff-cfbd-ingest']
           live = services['college-ff-live-ingest']
+          backup = services['college-ff-db-backup']
 
           api_env = {item.get('key'): item for item in api['envVars'] if item.get('key')}
           assert api_env['CFBD_INGEST_ON_STARTUP']['value'] == 'false'
           assert api_env['CFBD_INGEST_INTERVAL_HOURS']['value'] == '0'
 
-          assert daily['type'] == 'cron'
-          assert daily['runtime'] == 'python'
-          assert daily['schedule'] == '0 8 * * *'
-          assert 'ops_ingest.py --run' in daily['startCommand']
+          assert roster['type'] == 'cron'
+          assert roster['runtime'] == 'python'
+          assert roster['schedule'] == '0 8 * * 1'
+          assert 'ops_ingest.py --run' in roster['startCommand']
 
           assert live['type'] == 'cron'
           assert live['runtime'] == 'python'
           assert live['schedule'] == '*/2 * * 1,8,9,10,11,12 *'
           assert 'ops_live_ingest.py' in live['startCommand']
 
-          for service in (daily, live):
+          assert backup['type'] == 'cron'
+          assert backup['schedule'] == '0 7 * * *'
+          backup_env = {item['key']: item for item in backup['envVars']}
+          assert backup_env['CFF_BACKUP_SSE']['value'] == 'AES256'
+          assert backup_env['CFF_BACKUP_RETENTION_DAYS']['value'] == '30'
+
+          for service in (roster, live):
               env = {item['key']: item for item in service['envVars']}
               assert env['CFF_API_HOSTPORT']['fromService'] == {
                   'type': 'web',
@@ -107,6 +115,9 @@ jobs:
                   'name': 'college-ff-api',
                   'envVarKey': 'CFF_ADMIN_API_TOKEN',
               }
+
+          with open('.github/workflows/alpha-readiness.yml', encoding='utf-8') as handle:
+              yaml.safe_load(handle)
           PY
       - name: Validate Render frontend build
         env:
