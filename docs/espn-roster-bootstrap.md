@@ -6,7 +6,7 @@ The importer is intentionally separate from the normal CFBD pipeline because ESP
 
 ## Automatic Render run
 
-The API service runs this sequence during its next Render pre-deploy phase:
+After this change is merged, the next API deployment runs this sequence during Render's pre-deploy phase:
 
 ```sh
 sh /srv/db/migrate.sh && python3 /srv/scripts/run_espn_roster_once.py
