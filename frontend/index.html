@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="scoreboard.css" />
 </head>
 <body>
   <div class="topbar">
@@ -107,9 +108,30 @@
       </div>
     </section>
 
-    <section class="card">
-      <h2>Live Scores</h2>
-      <div id="live-scores" class="list">Loading live scores...</div>
+    <section class="card scoreboard-card" aria-labelledby="scoreboard-heading">
+      <div class="card__header">
+        <div>
+          <h2 id="scoreboard-heading">College Football Schedule</h2>
+          <div class="muted small">Browse one week and kickoff group at a time. Games rotate automatically.</div>
+        </div>
+        <span class="pill">Cached live data</span>
+      </div>
+      <div class="scoreboard-controls">
+        <div class="scoreboard-week-nav" aria-label="Choose schedule week">
+          <button class="button button--ghost scoreboard-button" id="score-week-prev" type="button" aria-label="Previous week">‹</button>
+          <label class="visually-hidden" for="score-week-select">Schedule week</label>
+          <select class="scoreboard-select" id="score-week-select" aria-label="Schedule week"></select>
+          <button class="button button--ghost scoreboard-button" id="score-week-next" type="button" aria-label="Next week">›</button>
+        </div>
+        <div class="scoreboard-slide-nav" aria-label="Rotate kickoff groups">
+          <button class="button button--ghost scoreboard-button" id="score-slide-prev" type="button" aria-label="Previous kickoff group">Previous</button>
+          <button class="button button--ghost" id="score-rotation-toggle" type="button" aria-pressed="false">Pause rotation</button>
+          <button class="button button--ghost scoreboard-button" id="score-slide-next" type="button" aria-label="Next kickoff group">Next</button>
+        </div>
+      </div>
+      <div class="scoreboard-meta muted small" id="scoreboard-meta" aria-live="polite">Loading schedule…</div>
+      <div id="live-scores" class="list scoreboard-list" aria-live="polite">Loading the weekly schedule…</div>
+      <div id="scoreboard-dots" class="scoreboard-dots" aria-label="Kickoff group position"></div>
     </section>
 
     <section class="card">
@@ -209,5 +231,6 @@
   <script src="config.js"></script>
   <script src="state.js"></script>
   <script src="app.js"></script>
+  <script src="scoreboard.js"></script>
 </body>
 </html>

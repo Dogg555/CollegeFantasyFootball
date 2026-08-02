@@ -1,9 +1,10 @@
 #pragma once
 
+#include <cstddef>
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <vector>
-#include <optional>
-#include <nlohmann/json.hpp>
 
 namespace cff {
 
@@ -18,37 +19,46 @@ struct CfbdPlayer {
     std::string year;
     std::string height;
     std::optional<int> weight;
+    int season = 0;
     nlohmann::json raw;
 };
 
 struct IngestResult {
     std::size_t ingested = 0;
     std::size_t updated = 0;
+    std::size_t retired = 0;
     std::size_t apiCalls = 0;
+    std::size_t teamsExpected = 0;
+    std::size_t teamsFetched = 0;
+    bool complete = false;
     std::vector<std::string> errors;
 };
 
-// Fetches players from CFBD using the provided base URL, API key, and season.
-// maxPages protects API quotas (e.g., monthly call limits). Defaults to a
-// reasonable ceiling; callers can lower it via env.
+// Fetch the current FBS team list and then each team's season roster. The
+// maxTeams guardrail protects the monthly CFBD allowance. teamsExpected and
+// teamsFetched let callers determine whether it is safe to retire stale rows.
 std::vector<CfbdPlayer> fetchPlayersFromCFBD(const std::string &baseUrl,
                                              const std::string &apiKey,
                                              const std::string &season,
-                                             int maxPages,
+                                             int maxTeams,
                                              std::vector<std::string> &errors,
-                                             std::size_t &apiCalls);
+                                             std::size_t &apiCalls,
+                                             std::size_t &teamsExpected,
+                                             std::size_t &teamsFetched);
 
-// Upserts the provided players into Postgres using DB_URL. Ensures the table
-// and indexes exist before inserting.
+// Upsert players into Postgres. Missing players are marked inactive only when
+// the caller confirms that every expected FBS roster was fetched successfully.
 IngestResult upsertPlayersToPostgres(const std::vector<CfbdPlayer> &players,
                                      const std::string &dbUrl,
+                                     int season,
+                                     bool completeImport,
                                      std::vector<std::string> &errors);
 
-// Runs a single-shot ingest using environment variables for configuration.
+// Runs one season-aware roster refresh using:
 // - CFBD_API_KEY (required)
-// - CFBD_BASE_URL (optional; defaults to https://api.collegefootballdata.com)
-// - CFBD_SEASON (optional; defaults to current year)
-// - CFBD_MAX_PAGES (optional; defaults to 200 to stay under API quotas)
+// - CFBD_API_BASE_URL or CFBD_BASE_URL (optional)
+// - CFBD_SEASON (optional; defaults to current UTC year)
+// - CFBD_MAX_TEAMS (optional; defaults to 200)
 // - DB_URL (required)
 IngestResult runCfbdIngestOnce();
 

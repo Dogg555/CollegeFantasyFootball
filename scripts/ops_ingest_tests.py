@@ -4,12 +4,14 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 from unittest import mock
 
 
 SCRIPT_PATH = Path(__file__).with_name("ops_ingest.py")
+REPO_ROOT = SCRIPT_PATH.parent.parent
 SPEC = importlib.util.spec_from_file_location("ops_ingest", SCRIPT_PATH)
 OPS_INGEST = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -78,12 +80,41 @@ class OpsIngestTests(unittest.TestCase):
         calls, output = self.run_main({
             ("GET", "/health"): {"status": "ok", "database": "ok"},
             ("GET", "/api/health"): {"status": "ok", "database": "ok"},
-            ("POST", "/api/admin/ingest/cfbd"): {"status": "partial", "errors": ["one page failed"]},
+            ("POST", "/api/admin/ingest/cfbd"): {"status": "partial", "errors": ["one roster failed"]},
             ("GET", "/api/admin/ingest/cfbd/status"): {"status": "partial"},
         }, argv=["--run", "--allow-partial"])
 
         self.assertIn('"status": "partial"', output)
         self.assertEqual(sum(1 for call in calls if call[0] == "POST"), 1)
+
+    def test_player_refresh_uses_current_fbs_roster_endpoints(self):
+        source = (REPO_ROOT / "backend" / "src" / "cfbd_ingest.cpp").read_text(encoding="utf-8")
+        self.assertIn('baseUrl + "/teams/fbs"', source)
+        self.assertIn('normalizedBase + "/roster"', source)
+        self.assertNotIn('normalizedBase + "/players"', source)
+        self.assertIn("stale players were not retired", source)
+
+        migration = (REPO_ROOT / "backend" / "db" / "migrations" / "004_current_roster_players.sql").read_text(encoding="utf-8")
+        self.assertIn("active BOOLEAN", migration)
+        self.assertIn("last_seen_at", migration)
+
+    def test_live_cache_combines_schedule_and_scoreboard(self):
+        source = (REPO_ROOT / "backend" / "src" / "live_scores.cpp").read_text(encoding="utf-8")
+        self.assertIn('baseUrl + "/scoreboard"', source)
+        self.assertIn('baseUrl + "/games"', source)
+        self.assertIn("mergeGames", source)
+        self.assertIn("refreshHours", source)
+
+    def test_scoreboard_groups_games_by_week_and_kickoff(self):
+        completed = subprocess.run(
+            ["node", str(REPO_ROOT / "scripts" / "scoreboard_ui_tests.js")],
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
+        self.assertIn("scoreboard UI tests passed", completed.stdout)
 
 
 if __name__ == "__main__":
