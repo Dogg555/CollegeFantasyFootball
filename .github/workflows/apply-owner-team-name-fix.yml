@@ -1,0 +1,40 @@
+name: Apply owner team-name hotfix
+
+on:
+  push:
+    branches: [agent/preserve-active-members]
+    paths:
+      - scripts/apply_owner_team_name_fix.py
+      - .github/workflows/apply-owner-team-name-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/preserve-active-members
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply guarded owner hotfix
+        run: python scripts/apply_owner_team_name_fix.py
+      - name: Validate patch output
+        run: |
+          python -m py_compile scripts/authorization_security_tests.py
+          git diff --check
+          grep -F 'safeRole != "commissioner" || safeStatus != "active"' backend/src/handlers/league_handler.cpp
+          grep -F 'owner team-name update failed' scripts/authorization_security_tests.py
+      - name: Commit source and regression test
+        run: |
+          rm scripts/apply_owner_team_name_fix.py
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Allow safe owner team-name updates"
+          git push origin HEAD:agent/preserve-active-members
