@@ -26,6 +26,7 @@
 #include <postgresql/libpq-fe.h>
 #endif
 #include "cfbd_ingest.h"
+#include "email_delivery.h"
 #include "live_scores.h"
 #include "league_models.h"
 #include "handlers/league_handler.h"
@@ -178,40 +179,14 @@ std::optional<std::string> frontendBaseUrl() {
 }
 
 bool emailDeliveryConfigured() {
-    const auto apiKey = readEnv("RESEND_API_KEY");
-    const auto from = readEnv("CFF_EMAIL_FROM");
-    const auto frontend = frontendBaseUrl();
-    return apiKey && !apiKey->empty() && from && !from->empty() && frontend.has_value();
+    return frontendBaseUrl().has_value() && cff::emailDeliveryConfigured();
 }
 
 bool sendEmail(const std::string &to,
                const std::string &subject,
                const std::string &text,
                const std::string &html) {
-    const auto apiKey = readEnv("RESEND_API_KEY");
-    const auto from = readEnv("CFF_EMAIL_FROM");
-    if (!apiKey || apiKey->empty() || !from || from->empty()) {
-        std::cerr << "[email] RESEND_API_KEY and CFF_EMAIL_FROM are required to send email." << std::endl;
-        return false;
-    }
-
-    Json::Value payload;
-    payload["from"] = *from;
-    payload["to"].append(to);
-    payload["subject"] = subject;
-    payload["text"] = text;
-    payload["html"] = html;
-
-    const auto response = cpr::Post(
-        cpr::Url{"https://api.resend.com/emails"},
-        cpr::Header{{"Authorization", "Bearer " + *apiKey}, {"Content-Type", "application/json"}},
-        cpr::Body{jsonToString(payload)}
-    );
-    if (response.status_code < 200 || response.status_code >= 300) {
-        std::cerr << "[email] send failed status=" << response.status_code << " body=" << response.text << std::endl;
-        return false;
-    }
-    return true;
+    return cff::sendTransactionalEmail(to, subject, text, html);
 }
 
 bool sendVerificationEmail(const std::string &email, const std::string &token) {
