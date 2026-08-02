@@ -19,7 +19,7 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: ALLOWED_ORIGINS
-        value: https://collegefantasyfootball.com,https://www.collegefantasyfootball.com,https://college-ff-frontend.onrender.com
+        value: https://college-fantasy-football.com,https://www.college-fantasy-football.com,https://college-ff-frontend.onrender.com
       - key: CFBD_API_KEY
         sync: false
       - key: CFBD_ROSTER_SEASON
@@ -55,7 +55,7 @@ services:
       - key: CFF_EMAIL_FROM
         sync: false
       - key: CFF_FRONTEND_BASE_URL
-        value: https://collegefantasyfootball.com
+        value: https://college-fantasy-football.com
       - key: CFF_REQUIRE_DB
         value: "true"
       - key: CFF_ALLOW_SHARED_SECRET_AUTH
@@ -85,7 +85,8 @@ services:
     buildCommand: sh scripts/render-build-frontend.sh
     staticPublishPath: ./frontend-dist
     domains:
-      - collegefantasyfootball.com
+      - college-fantasy-football.com
+      - www.college-fantasy-football.com
     envVars:
       - key: CFF_API_BASE
         value: https://api.college-fantasy-football.com/api
