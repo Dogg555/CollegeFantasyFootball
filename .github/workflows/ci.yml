@@ -43,42 +43,70 @@ jobs:
             scripts/frontend_browser_smoke.py \
             scripts/offsite_backup.py \
             scripts/ops_ingest.py \
-            scripts/ops_ingest_tests.py
-      - name: Test scheduled ingestion runner
-        run: python scripts/ops_ingest_tests.py
+            scripts/ops_ingest_tests.py \
+            scripts/ops_live_ingest.py \
+            scripts/ops_live_ingest_tests.py
+      - name: Test scheduled ingestion runners
+        run: |
+          python scripts/ops_ingest_tests.py
+          python scripts/ops_live_ingest_tests.py
       - name: Validate Render Blueprint cron configuration
         run: |
           python -m pip install --disable-pip-version-check pyyaml
           python - <<'PY'
           import yaml
 
+          class UniqueKeyLoader(yaml.SafeLoader):
+              pass
+
+          def construct_mapping(loader, node, deep=False):
+              mapping = {}
+              for key_node, value_node in node.value:
+                  key = loader.construct_object(key_node, deep=deep)
+                  if key in mapping:
+                      raise AssertionError(f'duplicate YAML key: {key}')
+                  mapping[key] = loader.construct_object(value_node, deep=deep)
+              return mapping
+
+          UniqueKeyLoader.add_constructor(
+              yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+              construct_mapping,
+          )
+
           with open('render.yaml', encoding='utf-8') as handle:
-              blueprint = yaml.safe_load(handle)
+              blueprint = yaml.load(handle, Loader=UniqueKeyLoader)
 
           services = {service['name']: service for service in blueprint['services']}
           api = services['college-ff-api']
-          ingest = services['college-ff-cfbd-ingest']
+          daily = services['college-ff-cfbd-ingest']
+          live = services['college-ff-live-ingest']
 
           api_env = {item.get('key'): item for item in api['envVars'] if item.get('key')}
           assert api_env['CFBD_INGEST_ON_STARTUP']['value'] == 'false'
           assert api_env['CFBD_INGEST_INTERVAL_HOURS']['value'] == '0'
 
-          assert ingest['type'] == 'cron'
-          assert ingest['runtime'] == 'python'
-          assert ingest['schedule'] == '0 10 * * *'
-          assert 'ops_ingest.py --run' in ingest['startCommand']
+          assert daily['type'] == 'cron'
+          assert daily['runtime'] == 'python'
+          assert daily['schedule'] == '0 8 * * *'
+          assert 'ops_ingest.py --run' in daily['startCommand']
 
-          ingest_env = {item['key']: item for item in ingest['envVars']}
-          assert ingest_env['CFF_API_HOSTPORT']['fromService'] == {
-              'type': 'web',
-              'name': 'college-ff-api',
-              'property': 'hostport',
-          }
-          assert ingest_env['CFF_ADMIN_API_TOKEN']['fromService'] == {
-              'type': 'web',
-              'name': 'college-ff-api',
-              'envVarKey': 'CFF_ADMIN_API_TOKEN',
-          }
+          assert live['type'] == 'cron'
+          assert live['runtime'] == 'python'
+          assert live['schedule'] == '*/2 * * 1,8,9,10,11,12 *'
+          assert 'ops_live_ingest.py' in live['startCommand']
+
+          for service in (daily, live):
+              env = {item['key']: item for item in service['envVars']}
+              assert env['CFF_API_HOSTPORT']['fromService'] == {
+                  'type': 'web',
+                  'name': 'college-ff-api',
+                  'property': 'hostport',
+              }
+              assert env['CFF_ADMIN_API_TOKEN']['fromService'] == {
+                  'type': 'web',
+                  'name': 'college-ff-api',
+                  'envVarKey': 'CFF_ADMIN_API_TOKEN',
+              }
           PY
       - name: Validate Render frontend build
         env:
@@ -149,6 +177,7 @@ jobs:
             -e PORT=8080 \
             -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
             -e JWT_SECRET=ci-secret \
+            -e CFF_ADMIN_API_TOKEN=ci-live-score-admin-token \
             -e CFF_REQUIRE_DB=true \
             -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
             -e CFF_REQUIRE_EMAIL_VERIFICATION=false \
@@ -177,6 +206,25 @@ jobs:
           done
           docker logs college-ff-api
           exit 1
+
+      - name: Verify cached live score endpoints
+        env:
+          CFF_ADMIN_API_TOKEN: ci-live-score-admin-token
+        run: |
+          scores="$(curl -fsS http://127.0.0.1:8080/api/scores/live)"
+          status="$(curl -fsS http://127.0.0.1:8080/api/admin/ingest/cfbd/live/status -H "Authorization: Bearer ${CFF_ADMIN_API_TOKEN}")"
+          python - "$scores" "$status" <<'PY'
+          import json
+          import sys
+
+          scores = json.loads(sys.argv[1])
+          status = json.loads(sys.argv[2])
+          assert isinstance(scores, list)
+          assert status['databaseConfigured'] is True
+          assert status['configured'] is False
+          assert status['status'] == 'never'
+          assert status['monthlyApiCalls'] == 0
+          PY
 
       - name: Run full API smoke suite against Docker
         env:

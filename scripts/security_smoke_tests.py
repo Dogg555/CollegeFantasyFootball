@@ -145,6 +145,20 @@ def main() -> int:
         admin_statuses.append(result.status)
     require(admin_statuses[-1] == 429, f"admin endpoint was not throttled: {admin_statuses}")
 
+    live_admin_statuses = []
+    for _ in range(5):
+        result = request(
+            "/api/admin/ingest/cfbd/live",
+            method="POST",
+            payload={},
+            headers={"Authorization": "Bearer invalid-live-admin-token"},
+        )
+        live_admin_statuses.append(result.status)
+    require(live_admin_statuses[:4] == [403, 403, 403, 403],
+            f"live ingestion cadence was throttled too early: {live_admin_statuses}")
+    require(live_admin_statuses[-1] == 429,
+            f"live ingestion endpoint was not bounded: {live_admin_statuses}")
+
     print("Security smoke tests passed")
     return 0
 

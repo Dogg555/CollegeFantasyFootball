@@ -22,6 +22,7 @@ add_executable(college_ff_server
     src/league_models.cpp
     src/player_catalog.cpp
     src/cfbd_ingest.cpp
+    src/live_scores.cpp
 )
 
 target_include_directories(college_ff_server PRIVATE src)

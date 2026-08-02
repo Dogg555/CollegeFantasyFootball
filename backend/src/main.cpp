@@ -26,6 +26,7 @@
 #include <postgresql/libpq-fe.h>
 #endif
 #include "cfbd_ingest.h"
+#include "live_scores.h"
 #include "league_models.h"
 #include "handlers/league_handler.h"
 #include "player_catalog.h"
@@ -1213,115 +1214,6 @@ bool requireAdmin(const drogon::HttpRequestPtr &req,
     return true;
 }
 
-Json::Value fallbackScoreboardPayload() {
-    Json::Value payload(Json::arrayValue);
-    Json::Value game;
-    game["away"] = "Oregon";
-    game["home"] = "Ohio State";
-    game["quarter"] = 2;
-    game["clock"] = "07:18";
-    game["awayScore"] = 17;
-    game["homeScore"] = 14;
-    game["source"] = "fallback";
-    payload.append(game);
-
-    game.clear();
-    game["away"] = "LSU";
-    game["home"] = "Alabama";
-    game["quarter"] = 3;
-    game["clock"] = "11:02";
-    game["awayScore"] = 24;
-    game["homeScore"] = 24;
-    game["source"] = "fallback";
-    payload.append(game);
-    return payload;
-}
-
-std::string jsonStringAt(const Json::Value &value,
-                         std::initializer_list<std::string> keys,
-                         const std::string &fallback = "") {
-    for (const auto &key : keys) {
-        if (!value.isMember(key) || value[key].isNull()) continue;
-        const auto &item = value[key];
-        if (item.isString()) return item.asString();
-        if (item.isInt()) return std::to_string(item.asInt());
-        if (item.isUInt()) return std::to_string(item.asUInt());
-    }
-    return fallback;
-}
-
-int jsonIntAt(const Json::Value &value,
-              std::initializer_list<std::string> keys,
-              int fallback = 0) {
-    for (const auto &key : keys) {
-        if (!value.isMember(key) || value[key].isNull()) continue;
-        const auto &item = value[key];
-        if (item.isInt()) return item.asInt();
-        if (item.isUInt()) return static_cast<int>(item.asUInt());
-        if (item.isString()) {
-            char *end = nullptr;
-            const auto parsed = std::strtol(item.asCString(), &end, 10);
-            if (end != item.asCString()) return static_cast<int>(parsed);
-        }
-    }
-    return fallback;
-}
-
-std::string teamNameFromScoreboardSide(const Json::Value &game,
-                                       const std::string &side,
-                                       const std::string &fallback) {
-    const auto direct = jsonStringAt(game, {side + "Team", side + "_team", side});
-    if (!direct.empty()) return direct;
-    if (game.isMember(side + "Team") && game[side + "Team"].isObject()) {
-        return jsonStringAt(game[side + "Team"], {"school", "name", "team"}, fallback);
-    }
-    if (game.isMember(side) && game[side].isObject()) {
-        return jsonStringAt(game[side], {"school", "name", "team"}, fallback);
-    }
-    return fallback;
-}
-
-Json::Value fetchCfbdScoreboardPayload() {
-    const auto apiKey = readEnv("CFBD_API_KEY");
-    if (!apiKey || apiKey->empty()) {
-        return fallbackScoreboardPayload();
-    }
-    const auto baseUrl = readEnv("CFBD_API_BASE_URL").value_or("https://api.collegefootballdata.com");
-    auto resp = cpr::Get(
-        cpr::Url{baseUrl + "/scoreboard"},
-        cpr::Header{{"Authorization", "Bearer " + *apiKey}},
-        cpr::Parameters{{"classification", "fbs"}}
-    );
-    if (resp.error || resp.status_code < 200 || resp.status_code >= 300) {
-        std::cerr << "[cfbd] scoreboard fetch failed: status=" << resp.status_code
-                  << " error=" << resp.error.message << std::endl;
-        return fallbackScoreboardPayload();
-    }
-
-    Json::CharReaderBuilder builder;
-    Json::Value root;
-    std::string errors;
-    std::istringstream stream(resp.text);
-    if (!Json::parseFromStream(builder, stream, &root, &errors) || !root.isArray()) {
-        std::cerr << "[cfbd] scoreboard parse failed: " << errors << std::endl;
-        return fallbackScoreboardPayload();
-    }
-
-    Json::Value payload(Json::arrayValue);
-    for (const auto &game : root) {
-        Json::Value out;
-        out["away"] = teamNameFromScoreboardSide(game, "away", "Away");
-        out["home"] = teamNameFromScoreboardSide(game, "home", "Home");
-        out["awayScore"] = jsonIntAt(game, {"awayScore", "awayPoints", "away_score", "away_points"});
-        out["homeScore"] = jsonIntAt(game, {"homeScore", "homePoints", "home_score", "home_points"});
-        out["quarter"] = jsonIntAt(game, {"period", "quarter"}, 0);
-        out["clock"] = jsonStringAt(game, {"clock", "displayClock"}, "");
-        out["status"] = jsonStringAt(game, {"status", "gameStatus"}, "scheduled");
-        out["source"] = "cfbd";
-        payload.append(out);
-    }
-    return payload.empty() ? fallbackScoreboardPayload() : payload;
-}
 } // namespace
 #endif
 
@@ -1530,6 +1422,39 @@ int main(int argc, char* argv[]) {
                              resp->setStatusCode(drogon::k200OK);
                              callback(resp);
 #endif
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/admin/ingest/cfbd/live",
+                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             std::string adminIdentity;
+                             if (!requireAdmin(req, callback, jwtSecret, adminIdentity)) {
+                                 return;
+                             }
+                             const auto ingestResult = cff::runLiveScoreIngestOnce();
+                             Json::Value payload;
+                             payload["status"] = ingestResult.errors.empty() ? "ok" : "partial";
+                             payload["games"] = static_cast<Json::UInt64>(ingestResult.games);
+                             payload["liveGames"] = static_cast<Json::UInt64>(ingestResult.liveGames);
+                             payload["apiCalls"] = static_cast<Json::UInt64>(ingestResult.apiCalls);
+                             if (!ingestResult.errors.empty()) {
+                                 Json::Value errors(Json::arrayValue);
+                                 for (const auto &error : ingestResult.errors) errors.append(error);
+                                 payload["errors"] = errors;
+                             }
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+                             resp->setStatusCode(drogon::k200OK);
+                             callback(resp);
+                         },
+                         {drogon::Post})
+        .registerHandler("/api/admin/ingest/cfbd/live/status",
+                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             std::string adminIdentity;
+                             if (!requireAdmin(req, callback, jwtSecret, adminIdentity)) {
+                                 return;
+                             }
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::liveScoreIngestStatus());
+                             resp->setStatusCode(drogon::k200OK);
+                             callback(resp);
                          },
                          {drogon::Get})
         .registerHandler("/api/leagues",
@@ -1956,7 +1881,7 @@ int main(int argc, char* argv[]) {
                          {drogon::Get})
         .registerHandler("/api/scores/live",
                          [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(fetchCfbdScoreboardPayload());
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::cachedLiveScorePayload());
                              resp->setStatusCode(drogon::k200OK);
                              callback(resp);
                          },
@@ -2050,6 +1975,8 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/health", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd/status", preflightHandler, {drogon::Options})
+        .registerHandler("/api/admin/ingest/cfbd/live", preflightHandler, {drogon::Options})
+        .registerHandler("/api/admin/ingest/cfbd/live/status", preflightHandler, {drogon::Options})
         .registerHandler("/api/players", preflightHandler, {drogon::Options})
         .run();
 #else
