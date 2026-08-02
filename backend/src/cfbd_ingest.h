@@ -34,9 +34,10 @@ struct IngestResult {
     std::vector<std::string> errors;
 };
 
-// Fetch the current FBS team list and then each team's season roster. The
-// maxTeams guardrail protects the monthly CFBD allowance. teamsExpected and
-// teamsFetched let callers determine whether it is safe to retire stale rows.
+// Check the authenticated key's remaining quota, fetch the current FBS team
+// map, then retrieve every selected FBS roster through one bulk
+// classification-filtered request. teamsExpected and teamsFetched let callers
+// determine whether it is safe to retire stale rows.
 std::vector<CfbdPlayer> fetchPlayersFromCFBD(const std::string &baseUrl,
                                              const std::string &apiKey,
                                              const std::string &season,

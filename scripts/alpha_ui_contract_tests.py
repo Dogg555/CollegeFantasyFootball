@@ -13,6 +13,7 @@ ci = text(".github/workflows/ci.yml")
 main = text("backend/src/main.cpp")
 player_h = text("backend/src/player_catalog.h")
 player_cpp = text("backend/src/player_catalog.cpp")
+cfbd_ingest = text("backend/src/cfbd_ingest.cpp")
 live_h = text("backend/src/live_scores.h")
 index = text("frontend/index.html")
 players = text("frontend/players.html")
@@ -31,6 +32,14 @@ assert 'req->getParameter("offset")' in main
 assert 'Json::Value playerCatalogMeta();' in player_h
 assert 'std::size_t offset = 0' in player_h
 assert 'OFFSET $' in player_cpp
+assert 'baseUrl + "/info"' in cfbd_ingest
+assert '"remainingCalls", "remaining_calls"' in cfbd_ingest
+assert 'response.status_code == 429' in cfbd_ingest
+assert 'cpr::Parameters{{"year", season}, {"classification", "fbs"}}' in cfbd_ingest
+assert 'CFBD bulk FBS roster' in cfbd_ingest
+assert 'cpr::Parameters{{"team", team.school}' not in cfbd_ingest
+run_start = cfbd_ingest.index('IngestResult runCfbdIngestOnce')
+assert cfbd_ingest.index('if (players.empty()) {', run_start) < cfbd_ingest.index('upsertPlayersToPostgres(', run_start)
 assert 'Json::Value cachedLiveScoreMeta();' in live_h
 assert 'id="scoreboard-freshness"' in index
 assert 'id="load-more-players"' in players
@@ -42,4 +51,4 @@ assert 'league-dashboard' in league
 assert 'league-tab-select' in alpha_js
 assert '@media (max-width: 720px)' in alpha_css
 assert (ROOT / 'docs/manual-alpha-lifecycle-test-plan.md').exists()
-print('Alpha UI, data, cron, and test contracts passed')
+print('Alpha UI, data, cron, quota, and bulk-roster contracts passed')
