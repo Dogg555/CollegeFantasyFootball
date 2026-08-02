@@ -123,22 +123,30 @@ async function submitAuthForm(path, email, password, statusEl, redirectTo) {
       authenticated = true;
     }
     const verifyRequired = data.emailVerificationRequired && !data.emailVerified;
+    const verificationDelivered = data.emailSent === true;
     const verifyCopy = verifyRequired
-      ? data.emailSent ? ' Check your email to verify before signing in.' : ' Email verification is required, but email delivery is not configured.'
+      ? verificationDelivered
+        ? ' Check your email to verify before signing in.'
+        : ' Your account was created, but the verification email could not be delivered. Fix the email provider and then request a new verification email.'
       : '';
-    setStatus(statusEl, `${data.message || 'Success'}${verifyCopy}`, data.emailVerificationRequired && !data.emailSent);
+    setStatus(statusEl, `${data.message || 'Success'}${verifyCopy}`, verifyRequired && !verificationDelivered);
     if (verifyRequired && !authenticated) {
-      const next = new URL('verify-email.html', window.location.href);
+      const targetPage = verificationDelivered ? 'verify-email.html' : 'resend-verification.html';
+      const next = new URL(targetPage, window.location.href);
       next.searchParams.set('email', email);
-      setTimeout(() => { window.location.href = next.pathname + next.search; }, 600);
+      setTimeout(() => { window.location.href = next.pathname + next.search; }, 1000);
       return;
     }
   } catch (error) {
     if (error.status) {
-      const verifyHint = error.status === 403 && /verification/i.test(error.data?.error || error.message)
+      const message = error.data?.error || error.message;
+      const verifyHint = error.status === 403 && /verification/i.test(message)
         ? ' Use the verification link from your email or request a new one.'
         : '';
-      setStatus(statusEl, `${error.data?.error || error.message}${verifyHint}`, true);
+      const existingAccountHint = path === '/auth/signup' && error.status === 409 && /account already exists/i.test(message)
+        ? ' A previous signup may already have created this unverified account. Use Resend verification instead of signing up again.'
+        : '';
+      setStatus(statusEl, `${message}${verifyHint}${existingAccountHint}`, true);
       return;
     }
     if (!allowLocalDemo) {
