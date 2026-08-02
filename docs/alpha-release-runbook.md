@@ -13,7 +13,7 @@ The Render Blueprint defines:
 - daily encrypted `college-ff-db-backup`
 - PostgreSQL `college-ff-db`
 
-The full roster sync runs weekly at `0 8 * * 1` UTC. Use Render **Trigger Run** for preseason, transfer, or emergency refreshes. Live score polling remains separate.
+The full roster sync runs weekly at `0 10 * * 2` UTC. Use Render **Trigger Run** for preseason, transfer, or emergency refreshes. Live score polling remains separate.
 
 ## Required GitHub Actions secrets
 

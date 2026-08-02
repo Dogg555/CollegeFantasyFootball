@@ -395,6 +395,53 @@ Json::Value cachedLiveScorePayload() {
     }
 }
 
+Json::Value cachedLiveScoreMeta() {
+    Json::Value payload;
+    const auto dbUrl = env("DB_URL");
+    payload["databaseConfigured"] = dbUrl.has_value();
+    if (!dbUrl) {
+        payload["status"] = "unavailable";
+        return payload;
+    }
+    try {
+        pqxx::connection connection{*dbUrl};
+        pqxx::read_transaction transaction{connection};
+        const auto rows = transaction.exec(
+            "SELECT status,COALESCE(fetched_at::text,''),game_count,live_game_count,"
+            "COALESCE(EXTRACT(EPOCH FROM(NOW()-fetched_at))::bigint,-1),"
+            "COALESCE(schedule_fetched_at::text,''),schedule_game_count,"
+            "COALESCE(EXTRACT(EPOCH FROM(NOW()-schedule_fetched_at))::bigint,-1) "
+            "FROM live_score_cache WHERE id=1"
+        );
+        if (rows.empty()) {
+            payload["status"] = "never";
+            payload["gameCount"] = 0;
+            payload["liveGameCount"] = 0;
+            payload["scheduleGameCount"] = 0;
+            payload["fresh"] = false;
+            payload["scheduleFresh"] = false;
+            return payload;
+        }
+        const auto age = rows[0][4].as<long long>();
+        const auto scheduleAge = rows[0][7].as<long long>();
+        payload["status"] = rows[0][0].c_str();
+        payload["fetchedAt"] = rows[0][1].c_str();
+        payload["gameCount"] = rows[0][2].as<int>();
+        payload["liveGameCount"] = rows[0][3].as<int>();
+        payload["ageSeconds"] = static_cast<Json::Int64>(age);
+        payload["scheduleFetchedAt"] = rows[0][5].c_str();
+        payload["scheduleGameCount"] = rows[0][6].as<int>();
+        payload["scheduleAgeSeconds"] = static_cast<Json::Int64>(scheduleAge);
+        payload["fresh"] = age >= 0 && age <= 600;
+        payload["scheduleFresh"] = scheduleAge >= 0 &&
+            scheduleAge <= static_cast<long long>(refreshHours()) * 7200;
+        return payload;
+    } catch (const std::exception &error) {
+        payload["status"] = "unavailable";
+        return payload;
+    }
+}
+
 Json::Value liveScoreIngestStatus() {
     Json::Value payload;
     const auto apiKey = env("CFBD_API_KEY");

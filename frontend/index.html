@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="alpha-ui.css" />
   <link rel="stylesheet" href="scoreboard.css" />
 </head>
 <body>
@@ -130,6 +131,7 @@
         </div>
       </div>
       <div class="scoreboard-meta muted small" id="scoreboard-meta" aria-live="polite">Loading schedule…</div>
+      <div class="scoreboard-freshness muted small" id="scoreboard-freshness" aria-live="polite">Checking cache freshness…</div>
       <div id="live-scores" class="list scoreboard-list" aria-live="polite">Loading the weekly schedule…</div>
       <div id="scoreboard-dots" class="scoreboard-dots" aria-label="Kickoff group position"></div>
     </section>
@@ -231,6 +233,7 @@
   <script src="config.js"></script>
   <script src="state.js"></script>
   <script src="app.js"></script>
+  <script src="alpha-ui.js"></script>
   <script src="scoreboard.js"></script>
 </body>
 </html>

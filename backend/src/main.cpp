@@ -1879,6 +1879,20 @@ int main(int argc, char* argv[]) {
                              callback(resp);
                          },
                          {drogon::Get})
+        .registerHandler("/api/scores/live/meta",
+                         [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::cachedLiveScoreMeta());
+                             resp->setStatusCode(drogon::k200OK);
+                             callback(resp);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/players/meta",
+                         [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::playerCatalogMeta());
+                             resp->setStatusCode(drogon::k200OK);
+                             callback(resp);
+                         },
+                         {drogon::Get})
         .registerHandler("/api/players",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
 #ifndef CFF_HAS_POSTGRES
@@ -1890,17 +1904,9 @@ int main(int argc, char* argv[]) {
                              return;
 #else
                              const auto query = req->getParameter("query");
-                             if (query.empty()) {
-                                 Json::Value error;
-                                 error["error"] = "Query parameter is required";
-                                 auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-                                 resp->setStatusCode(drogon::k400BadRequest);
-                                 callback(resp);
-                                 return;
-                             }
-
                              auto positionFilter = getOptionalParam(req, "position");
                              auto conferenceFilter = getOptionalParam(req, "conference");
+                             auto teamFilter = getOptionalParam(req, "team");
 
                              std::size_t limit = 25;
                              const auto limitParam = req->getParameter("limit");
@@ -1908,11 +1914,21 @@ int main(int argc, char* argv[]) {
                                  char *end = nullptr;
                                  const auto parsed = std::strtoul(limitParam.c_str(), &end, 10);
                                  if (end != limitParam.c_str() && parsed > 0) {
-                                     limit = std::min<std::size_t>(parsed, 50);
+                                     limit = std::min<std::size_t>(parsed, 100);
                                  }
                              }
 
-                             const auto results = cff::searchPlayers(query, positionFilter, conferenceFilter, limit);
+                             std::size_t offset = 0;
+                             const auto offsetParam = req->getParameter("offset");
+                             if (!offsetParam.empty()) {
+                                 char *end = nullptr;
+                                 const auto parsed = std::strtoul(offsetParam.c_str(), &end, 10);
+                                 if (end != offsetParam.c_str()) offset = std::min<std::size_t>(parsed, 5000);
+                             }
+
+                             const auto results = cff::searchPlayers(
+                                 query, positionFilter, conferenceFilter, teamFilter, limit, offset
+                             );
                              Json::Value payload(Json::arrayValue);
                              for (const auto &player : results) {
                                  payload.append(player.toJson());
@@ -1965,12 +1981,14 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/leagues/{1}/score/week/{2}/finalize", preflightTwoParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/transactions", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/scores/live", preflightHandler, {drogon::Options})
+        .registerHandler("/api/scores/live/meta", preflightHandler, {drogon::Options})
         .registerHandler("/api/health", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd/status", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd/live", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd/live/status", preflightHandler, {drogon::Options})
         .registerHandler("/api/players", preflightHandler, {drogon::Options})
+        .registerHandler("/api/players/meta", preflightHandler, {drogon::Options})
         .run();
 #else
     // Stub output to avoid hard dependency on Drogon in early scaffolding.

@@ -26,6 +26,12 @@ struct PlayerCard {
 std::vector<PlayerCard> searchPlayers(const std::string &query,
                                       const std::optional<std::string> &positionFilter,
                                       const std::optional<std::string> &conferenceFilter,
-                                      std::size_t limit = 25);
+                                      const std::optional<std::string> &teamFilter,
+                                      std::size_t limit = 25,
+                                      std::size_t offset = 0);
+
+// Public, non-sensitive summary used by the player browser to show roster
+// coverage and sync freshness without exposing admin ingestion details.
+Json::Value playerCatalogMeta();
 
 } // namespace cff

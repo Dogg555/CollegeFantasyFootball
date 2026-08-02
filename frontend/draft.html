@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Draft Room - College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="alpha-ui.css" />
 </head>
 <body>
   <div class="topbar">
@@ -105,8 +106,8 @@
     </div>
   </header>
 
-  <main class="layout layout--wide">
-    <section class="card">
+  <main class="layout layout--wide draft-dashboard">
+    <section class="card draft-primary draft-queue-card">
       <div class="card__header">
         <h2>Draft Queue</h2>
         <span class="pill pill--muted" id="draft-status">Targets</span>
@@ -114,7 +115,7 @@
       <div id="draft-queue" class="list">Queue players from the Players page.</div>
     </section>
 
-    <section class="card card--accent">
+    <section class="card card--accent draft-primary draft-roster-card">
       <div class="card__header">
         <h2>Your Roster</h2>
         <span class="pill">Live board</span>
@@ -128,7 +129,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card draft-secondary" data-mobile-collapsible>
       <div class="card__header">
         <h2>Draft Order</h2>
         <span class="pill pill--muted" id="draft-order-count">0 managers</span>
@@ -141,7 +142,7 @@
       <div id="draft-order-status" class="muted small" role="status"></div>
     </section>
 
-    <section class="card">
+    <section class="card draft-secondary" data-mobile-collapsible>
       <div class="card__header">
         <h2>Draft Picks</h2>
         <span class="pill pill--muted" id="draft-current-pick">Pick 1</span>
@@ -149,7 +150,7 @@
       <div id="draft-pick-list" class="list">No picks made yet.</div>
     </section>
 
-    <section class="card">
+    <section class="card draft-side" data-mobile-collapsible>
       <div class="card__header">
         <h2>Upcoming Picks</h2>
         <span class="pill pill--muted" id="upcoming-pick-count">Next 5</span>
@@ -157,7 +158,7 @@
       <div id="upcoming-pick-list" class="list">Upcoming picks will appear when draft order is set.</div>
     </section>
 
-    <section class="card">
+    <section class="card draft-side" data-mobile-collapsible>
       <div class="card__header">
         <h2>Recommended Board</h2>
         <span class="pill pill--muted">Fallback pool</span>
@@ -170,6 +171,7 @@
   </div>
   <script src="config.js"></script>
   <script src="state.js"></script>
+  <script src="alpha-ui.js"></script>
   <script src="draft.js"></script>
 </body>
 </html>

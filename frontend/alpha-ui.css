@@ -1,0 +1,252 @@
+/* Alpha release responsive dashboards */
+:root {
+  --alpha-gap: clamp(12px, 2vw, 22px);
+  --alpha-sticky-offset: 76px;
+}
+
+.league-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  background: color-mix(in srgb, var(--surface, #fff) 94%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.league-tab-select-wrap {
+  display: none;
+  margin-bottom: 14px;
+}
+
+.league-tab-select {
+  width: 100%;
+  min-height: 44px;
+}
+
+.league-dashboard,
+.draft-dashboard {
+  align-items: start;
+  gap: var(--alpha-gap);
+}
+
+.league-dashboard {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.league-dashboard > .card--accent,
+.league-dashboard > #commissioner-settings,
+.league-dashboard > #commissioner-locked {
+  grid-column: 1 / -1;
+}
+
+.draft-dashboard {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+}
+
+.draft-primary {
+  grid-column: 1;
+}
+
+.draft-secondary,
+.draft-side {
+  grid-column: 2;
+}
+
+.draft-roster-card {
+  grid-row: span 2;
+}
+
+.card__header .mobile-card-toggle {
+  display: none;
+  min-width: 44px;
+  min-height: 40px;
+}
+
+.alpha-status-dock {
+  display: none;
+}
+
+.catalog-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.catalog-stat {
+  padding: 12px;
+  border: 1px solid var(--border, #d8dee9);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface, #fff) 92%, var(--accent, #2563eb) 8%);
+}
+
+.catalog-stat strong,
+.catalog-stat span {
+  display: block;
+}
+
+.catalog-stat strong {
+  font-size: 1.15rem;
+}
+
+.player-results-footer,
+.scoreboard-freshness {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.data-freshness {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #16a34a 12%, transparent);
+}
+
+.data-freshness::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #16a34a;
+}
+
+.data-freshness.is-stale {
+  background: color-mix(in srgb, #d97706 14%, transparent);
+}
+
+.data-freshness.is-stale::before {
+  background: #d97706;
+}
+
+@media (max-width: 900px) {
+  .league-dashboard,
+  .draft-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .league-dashboard > *,
+  .draft-primary,
+  .draft-secondary,
+  .draft-side {
+    grid-column: 1;
+  }
+
+  .catalog-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  :root {
+    --alpha-sticky-offset: 58px;
+  }
+
+  .league-tabs {
+    display: none;
+  }
+
+  .league-tab-select-wrap {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 21;
+    padding: 8px 0;
+    background: var(--surface, #fff);
+  }
+
+  .layout,
+  .layout--wide {
+    padding-inline: 12px;
+  }
+
+  .card {
+    border-radius: 14px;
+  }
+
+  .row {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .row > .actions,
+  .row > button,
+  .row > a.button {
+    width: 100%;
+  }
+
+  .row .actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .row .actions .button {
+    width: 100%;
+  }
+
+  [data-mobile-collapsible] .mobile-card-toggle {
+    display: inline-flex;
+  }
+
+  [data-mobile-collapsible].is-collapsed > :not(.card__header) {
+    display: none !important;
+  }
+
+  .alpha-status-dock {
+    position: sticky;
+    bottom: 10px;
+    z-index: 30;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 12px;
+    margin: 0 12px 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border, #d8dee9);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--surface, #fff) 95%, transparent);
+    box-shadow: 0 14px 35px rgb(15 23 42 / 18%);
+    backdrop-filter: blur(14px);
+  }
+
+  .alpha-status-dock__manager {
+    font-weight: 700;
+  }
+
+  .alpha-status-dock__clock {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+    align-self: center;
+    font-size: 1.15rem;
+    font-weight: 800;
+  }
+
+  .catalog-meta {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .search {
+    grid-template-columns: 1fr;
+  }
+
+  .search .button,
+  .search select,
+  .search input {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 440px) {
+  .catalog-meta,
+  .row .actions {
+    grid-template-columns: 1fr;
+  }
+}

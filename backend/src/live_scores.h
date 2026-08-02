@@ -20,6 +20,7 @@ struct LiveScoreIngestResult {
 // full season schedule. The public payload is a merged, week-aware cache.
 LiveScoreIngestResult runLiveScoreIngestOnce();
 Json::Value cachedLiveScorePayload();
+Json::Value cachedLiveScoreMeta();
 Json::Value liveScoreIngestStatus();
 
 } // namespace cff
