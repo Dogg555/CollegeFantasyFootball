@@ -66,8 +66,9 @@ jobs:
           env = {item["key"]: item for item in api["envVars"] if "key" in item}
 
           assert api["dockerContext"] == "."
-          assert "run_espn_roster_once.py" in api["preDeployCommand"]
-          assert env["ESPN_ROSTER_AUTO_ONCE"]["value"] == "true"
+          assert api["preDeployCommand"].count("run_espn_roster_once.py") == 1
+          assert env["CFF_RUN_MIGRATIONS_ON_STARTUP"]["value"] == "false"
+          assert env["ESPN_ROSTER_AUTO_ONCE"]["value"] == "false"
           assert env["ESPN_ROSTER_SEASON"]["value"] == "2026"
           assert env["ESPN_ROSTER_ALLOW_PARTIAL"]["value"] == "false"
           PY
