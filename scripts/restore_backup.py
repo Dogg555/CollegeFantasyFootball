@@ -48,14 +48,13 @@ def sha256_file(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def database_identity(url: str) -> tuple[str, str, int | None, str, str]:
+def database_identity(url: str) -> tuple[str, str, int | None, str]:
     parsed = urllib.parse.urlsplit(url)
     return (
         parsed.scheme.lower(),
         (parsed.hostname or "").lower(),
         parsed.port,
         urllib.parse.unquote(parsed.path or ""),
-        urllib.parse.unquote(parsed.username or ""),
     )
 
 
@@ -246,7 +245,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except GateFailure as exc:
+    except Exception as exc:
         write_failure_report("Backup restore validation", "backup-restore-validation", exc)
         print(json.dumps({"status": "failed", "error": str(exc)}, indent=2), file=os.sys.stderr)
         raise SystemExit(1)
