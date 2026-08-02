@@ -149,6 +149,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-client
 
+      - name: Create legacy collision test database
+        run: psql postgresql://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE cff_collision_test'
+
+      - name: Validate legacy identity collision migration
+        env:
+          DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff_collision_test
+        run: sh scripts/migration_collision_tests.sh
+
       - name: Apply migrations transactionally
         run: sh backend/db/migrate.sh
 
