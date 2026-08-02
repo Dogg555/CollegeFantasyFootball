@@ -1,0 +1,127 @@
+/* Grouped league workspace navigation. Loaded after beta-ui.css. */
+.beta-ui .league-tabs.league-tabs--grouped {
+  top: 88px;
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 0.78fr)
+    minmax(330px, 1.7fr)
+    minmax(275px, 1.4fr)
+    minmax(170px, 0.88fr);
+  gap: 10px;
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+.beta-ui .league-nav-group {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 13px;
+  background: rgba(13, 20, 28, 0.9);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.beta-ui .league-nav-group.is-active-group {
+  border-color: rgba(246, 198, 95, 0.28);
+  background: rgba(18, 27, 36, 0.96);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
+}
+
+.beta-ui .league-nav-group__label {
+  display: block;
+  padding: 3px 8px 6px;
+  color: #7f8d99;
+  font-size: 0.66rem;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.beta-ui .league-nav-group__tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+
+.beta-ui .league-tabs--grouped .league-tab {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 0.88rem;
+  text-align: center;
+}
+
+.beta-ui .league-tabs--grouped .league-tab.is-group-start {
+  margin-left: 0;
+}
+
+.beta-ui .league-tabs--grouped .league-tab.is-group-start::after {
+  display: none;
+}
+
+.beta-ui .league-nav-group[data-nav-group='league'] .league-tab:hover,
+.beta-ui .league-nav-group[data-nav-group='league'] .league-tab.is-active {
+  border-color: rgba(246, 198, 95, 0.22);
+  background: rgba(246, 198, 95, 0.13);
+  color: #fff5dc;
+}
+
+.beta-ui .league-nav-group[data-nav-group='team'] .league-tab:hover,
+.beta-ui .league-nav-group[data-nav-group='team'] .league-tab.is-active {
+  border-color: rgba(98, 223, 160, 0.22);
+  background: rgba(98, 223, 160, 0.12);
+  color: #dbffeb;
+}
+
+.beta-ui .league-nav-group[data-nav-group='competition'] .league-tab:hover,
+.beta-ui .league-nav-group[data-nav-group='competition'] .league-tab.is-active {
+  border-color: rgba(118, 150, 255, 0.25);
+  background: rgba(118, 150, 255, 0.13);
+  color: #e4eaff;
+}
+
+.beta-ui .league-nav-group[data-nav-group='manage'] .league-tab:hover,
+.beta-ui .league-nav-group[data-nav-group='manage'] .league-tab.is-active {
+  border-color: rgba(205, 218, 229, 0.18);
+  background: rgba(205, 218, 229, 0.09);
+  color: #f2f6f8;
+}
+
+@media (max-width: 1120px) {
+  .beta-ui .league-tabs.league-tabs--grouped {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .beta-ui .league-nav-group__tabs {
+    flex-wrap: wrap;
+  }
+
+  .beta-ui .league-tabs--grouped .league-tab {
+    flex: 1 1 112px;
+  }
+}
+
+@media (max-width: 760px) {
+  .beta-ui .league-tabs.league-tabs--grouped {
+    display: none;
+  }
+
+  .beta-ui .league-tab-select-wrap .field > span:first-child {
+    color: #8f9ca7;
+    font-size: 0.7rem;
+    font-weight: 850;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+}
