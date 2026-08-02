@@ -13,6 +13,7 @@
 #endif
 
 namespace {
+
 std::string toLower(const std::string &input) {
     std::string lowered = input;
     std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
@@ -34,35 +35,27 @@ std::vector<std::string> tokenizeQuery(const std::string &query) {
             current.push_back(ch);
         }
     }
-    if (!current.empty()) {
-        tokens.push_back(toLower(current));
-    }
+    if (!current.empty()) tokens.push_back(toLower(current));
     return tokens;
 }
 
 std::size_t clampLimit(std::size_t limit) {
     constexpr std::size_t kMax = 100;
     constexpr std::size_t kDefault = 25;
-    if (limit == 0) {
-        return kDefault;
-    }
+    if (limit == 0) return kDefault;
     return std::min(limit, kMax);
 }
 
 #ifdef CFF_HAS_POSTGRES
 struct PgConnDeleter {
-    void operator()(PGconn* conn) const {
-        if (conn) {
-            PQfinish(conn);
-        }
+    void operator()(PGconn *connection) const {
+        if (connection) PQfinish(connection);
     }
 };
 
 struct PgResultDeleter {
-    void operator()(PGresult* res) const {
-        if (res) {
-            PQclear(res);
-        }
+    void operator()(PGresult *result) const {
+        if (result) PQclear(result);
     }
 };
 
@@ -70,17 +63,18 @@ using PgConnPtr = std::unique_ptr<PGconn, PgConnDeleter>;
 using PgResultPtr = std::unique_ptr<PGresult, PgResultDeleter>;
 
 PgConnPtr connectToDb() {
-    const char* url = std::getenv("DB_URL");
+    const char *url = std::getenv("DB_URL");
     if (!url) {
         std::cerr << "[players] DB_URL is not set; player search unavailable." << std::endl;
         return nullptr;
     }
-    auto conn = PgConnPtr{PQconnectdb(url)};
-    if (PQstatus(conn.get()) != CONNECTION_OK) {
-        std::cerr << "[players] Failed to connect to Postgres: " << PQerrorMessage(conn.get()) << std::endl;
+    auto connection = PgConnPtr{PQconnectdb(url)};
+    if (PQstatus(connection.get()) != CONNECTION_OK) {
+        std::cerr << "[players] Failed to connect to Postgres: "
+                  << PQerrorMessage(connection.get()) << std::endl;
         return nullptr;
     }
-    return conn;
+    return connection;
 }
 
 std::string buildLikeToken(const std::string &token) {
@@ -88,14 +82,13 @@ std::string buildLikeToken(const std::string &token) {
 }
 
 std::vector<const char*> buildParamPointers(const std::vector<std::string> &params) {
-    std::vector<const char*> ptrs;
-    ptrs.reserve(params.size());
-    for (const auto &p : params) {
-        ptrs.push_back(p.c_str());
-    }
-    return ptrs;
+    std::vector<const char*> pointers;
+    pointers.reserve(params.size());
+    for (const auto &param : params) pointers.push_back(param.c_str());
+    return pointers;
 }
 #endif
+
 } // namespace
 
 namespace cff {
@@ -108,6 +101,8 @@ Json::Value PlayerCard::toJson() const {
     json["position"] = position;
     json["conference"] = conference;
     json["class"] = classYear;
+    json["season"] = season;
+    json["updatedAt"] = updatedAt;
     return json;
 }
 
@@ -116,100 +111,106 @@ std::vector<PlayerCard> searchPlayers(const std::string &query,
                                       const std::optional<std::string> &conferenceFilter,
                                       std::size_t limit) {
     const auto tokens = tokenizeQuery(query);
-    if (tokens.empty()) {
-        return {};
-    }
-
     std::vector<PlayerCard> results;
 
 #ifdef CFF_HAS_POSTGRES
-    auto conn = connectToDb();
-    if (!conn) {
-        return results;
-    }
+    auto connection = connectToDb();
+    if (!connection) return results;
 
     std::string sql = R"SQL(
         SELECT
-            COALESCE(p.id, '') AS id,
-            COALESCE(p.full_name, '') AS name,
-            COALESCE(p.team, '') AS team,
-            COALESCE(p.position, '') AS position,
-            COALESCE(p.conference, '') AS conference,
-            COALESCE(p.year, '') AS class
-        FROM players p
+            COALESCE(player.id, '') AS id,
+            COALESCE(player.full_name, '') AS name,
+            COALESCE(player.team, '') AS team,
+            COALESCE(player.position, '') AS position,
+            COALESCE(player.conference, '') AS conference,
+            COALESCE(player.year, '') AS class,
+            COALESCE(player.season, 0) AS season,
+            COALESCE(player.updated_at::text, '') AS updated_at
+        FROM players AS player
     )SQL";
 
     std::vector<std::string> params;
-    std::vector<std::string> whereClauses;
-    params.reserve(tokens.size() + 2); // filters and tokens
+    std::vector<std::string> whereClauses{"player.active = TRUE"};
+    params.reserve(tokens.size() + 3);
 
     for (const auto &token : tokens) {
         params.push_back(buildLikeToken(token));
-        const auto idx = params.size();
+        const auto index = params.size();
         whereClauses.push_back(
-            "(p.full_name ILIKE $" + std::to_string(idx) +
-            " OR p.team ILIKE $" + std::to_string(idx) +
-            " OR p.position ILIKE $" + std::to_string(idx) +
-            " OR p.conference ILIKE $" + std::to_string(idx) + ")"
+            "(player.full_name ILIKE $" + std::to_string(index) +
+            " OR player.team ILIKE $" + std::to_string(index) +
+            " OR player.position ILIKE $" + std::to_string(index) +
+            " OR player.conference ILIKE $" + std::to_string(index) + ")"
         );
     }
 
     if (positionFilter && !positionFilter->empty()) {
         params.push_back(*positionFilter);
-        const auto idx = params.size();
-        whereClauses.push_back("p.position ILIKE $" + std::to_string(idx));
+        whereClauses.push_back("player.position ILIKE $" + std::to_string(params.size()));
     }
 
     if (conferenceFilter && !conferenceFilter->empty()) {
         params.push_back(*conferenceFilter);
-        const auto idx = params.size();
-        whereClauses.push_back("p.conference ILIKE $" + std::to_string(idx));
+        whereClauses.push_back("player.conference ILIKE $" + std::to_string(params.size()));
     }
 
-    if (!whereClauses.empty()) {
-        sql += " WHERE ";
-        for (std::size_t i = 0; i < whereClauses.size(); ++i) {
-            sql += whereClauses[i];
-            if (i + 1 < whereClauses.size()) {
-                sql += " AND ";
-            }
-        }
+    sql += " WHERE ";
+    for (std::size_t index = 0; index < whereClauses.size(); ++index) {
+        if (index > 0) sql += " AND ";
+        sql += whereClauses[index];
     }
 
-    sql += " ORDER BY p.full_name ASC LIMIT $" + std::to_string(params.size() + 1);
+    sql += R"SQL(
+        ORDER BY
+            player.season DESC NULLS LAST,
+            CASE UPPER(COALESCE(player.position, ''))
+                WHEN 'QB' THEN 1
+                WHEN 'RB' THEN 2
+                WHEN 'WR' THEN 3
+                WHEN 'TE' THEN 4
+                WHEN 'K' THEN 5
+                ELSE 6
+            END,
+            player.full_name ASC
+        LIMIT $
+    )SQL";
+    sql += std::to_string(params.size() + 1);
 
-    const auto clamped = clampLimit(limit);
-    params.push_back(std::to_string(clamped));
+    params.push_back(std::to_string(clampLimit(limit)));
+    const auto paramPointers = buildParamPointers(params);
+    PgResultPtr result{PQexecParams(
+        connection.get(),
+        sql.c_str(),
+        static_cast<int>(params.size()),
+        nullptr,
+        paramPointers.data(),
+        nullptr,
+        nullptr,
+        0
+    )};
 
-    const auto paramPtrs = buildParamPointers(params);
-    PgResultPtr res{PQexecParams(conn.get(),
-                                 sql.c_str(),
-                                 static_cast<int>(params.size()),
-                                 nullptr,
-                                 paramPtrs.data(),
-                                 nullptr,
-                                 nullptr,
-                                 0)};
-
-    if (PQresultStatus(res.get()) != PGRES_TUPLES_OK) {
-        std::cerr << "[players] Query failed: " << PQerrorMessage(conn.get()) << std::endl;
+    if (PQresultStatus(result.get()) != PGRES_TUPLES_OK) {
+        std::cerr << "[players] Query failed: " << PQerrorMessage(connection.get()) << std::endl;
         return results;
     }
 
-    const auto rows = PQntuples(res.get());
+    const auto rows = PQntuples(result.get());
     results.reserve(static_cast<std::size_t>(rows));
-
-    for (int i = 0; i < rows; ++i) {
+    for (int row = 0; row < rows; ++row) {
         PlayerCard player;
-        player.id = PQgetvalue(res.get(), i, 0);
-        player.name = PQgetvalue(res.get(), i, 1);
-        player.team = PQgetvalue(res.get(), i, 2);
-        player.position = PQgetvalue(res.get(), i, 3);
-        player.conference = PQgetvalue(res.get(), i, 4);
-        player.classYear = PQgetvalue(res.get(), i, 5);
+        player.id = PQgetvalue(result.get(), row, 0);
+        player.name = PQgetvalue(result.get(), row, 1);
+        player.team = PQgetvalue(result.get(), row, 2);
+        player.position = PQgetvalue(result.get(), row, 3);
+        player.conference = PQgetvalue(result.get(), row, 4);
+        player.classYear = PQgetvalue(result.get(), row, 5);
+        player.season = std::atoi(PQgetvalue(result.get(), row, 6));
+        player.updatedAt = PQgetvalue(result.get(), row, 7);
         results.push_back(std::move(player));
     }
 #else
+    (void)query;
     (void)positionFilter;
     (void)conferenceFilter;
     (void)limit;
