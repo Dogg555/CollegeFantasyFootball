@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "backend/Dockerfile"
+      - "backend/docker-entrypoint.sh"
       - "render.yaml"
       - "scripts/espn_roster_ingest.py"
       - "scripts/espn_roster_ingest_tests.py"
@@ -16,11 +17,13 @@ on:
     branches: [main]
     paths:
       - "backend/Dockerfile"
+      - "backend/docker-entrypoint.sh"
       - "render.yaml"
       - "scripts/espn_roster_ingest.py"
       - "scripts/espn_roster_ingest_tests.py"
       - "scripts/espn_team_directory.py"
       - "scripts/run_espn_roster_once.py"
+      - "scripts/run_espn_roster_once_tests.py"
       - ".github/workflows/espn-roster-bootstrap.yml"
   workflow_dispatch:
 
@@ -39,6 +42,7 @@ jobs:
 
       - name: Compile and test import helpers
         run: |
+          sh -n backend/docker-entrypoint.sh
           python -m py_compile \
             scripts/espn_roster_ingest.py \
             scripts/espn_roster_ingest_tests.py \
@@ -73,6 +77,7 @@ jobs:
 
       - name: Verify packaged runtime helpers
         run: |
+          docker run --rm --entrypoint sh college-ff-api-espn -n /srv/docker-entrypoint.sh
           docker run --rm --entrypoint python3 college-ff-api-espn -c "import psycopg"
           docker run --rm --entrypoint python3 college-ff-api-espn -m py_compile \
             /srv/scripts/espn_roster_ingest.py \
