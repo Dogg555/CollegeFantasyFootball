@@ -32,7 +32,9 @@ document.getElementById('nav-logout')?.addEventListener('click', () => {
 
 async function fetchPlayers(term = '', position = '') {
   const params = new URLSearchParams({ limit: '50' });
-  if (term) params.set('query', term);
+  // The API requires a query value. PostgreSQL's ILIKE wildcard returns the
+  // complete active player pool when the user is browsing without search text.
+  params.set('query', term || '%');
   if (position) params.set('position', position);
   const response = await fetch(`${apiBase}/players?${params.toString()}`, {
     headers: { Accept: 'application/json' },

@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   normalizeGame,
   availableWeeks,
@@ -35,4 +37,19 @@ const paged = buildSlides(fiveAtSameTime, 3, 4);
 assert.equal(paged.length, 2);
 assert.deepEqual(paged.map((slide) => slide.games.length), [4, 1]);
 
-console.log('scoreboard UI tests passed');
+const playerSource = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'players.js'),
+  'utf8'
+);
+assert.match(
+  playerSource,
+  /params\.set\('query', term \|\| '%'\);/,
+  'empty player-pool browsing must send the API-required wildcard query'
+);
+assert.doesNotMatch(
+  playerSource,
+  /if \(term\) params\.set\('query', term\);/,
+  'the browse request must not omit query when no search text is present'
+);
+
+console.log('scoreboard UI tests passed; player browse regression passed');
