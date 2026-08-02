@@ -440,7 +440,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except GateFailure as exc:
+    except Exception as exc:
         write_failure_report("Full fantasy lifecycle validation", "full-lifecycle-validation", exc)
         print(f"Full lifecycle validation failed: {exc}", file=os.sys.stderr)
         raise SystemExit(1)
