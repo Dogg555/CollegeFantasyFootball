@@ -18,7 +18,7 @@ CFBD enforces monthly call limits. When `/info` reports fewer than three remaini
 
 After a successful run, check:
 
-- `GET /api/admin/ingest/cfbd/status` reports `status: success`.
-- `teamsFetched` equals `teamsExpected`.
-- `rowCount` is greater than zero.
-- `GET /api/players/meta` reports active players and FBS team coverage.
+- `GET /api/admin/ingest/cfbd/status` returns top-level `status: "ok"` and `configured: true`.
+- In that response, the newest player entry in `runs` has `status: "success"`, `rowCount` greater than zero, and a small `apiCalls` value (normally three).
+- `GET /api/players/meta` reports active players, the expected season, and FBS team coverage.
+- If the newest player run is `partial`, inspect its `error` field for quota, authentication, network, or roster-coverage details before retrying.
