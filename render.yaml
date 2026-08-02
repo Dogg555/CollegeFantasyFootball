@@ -61,7 +61,7 @@ services:
       - key: CFF_ALLOW_SHARED_SECRET_AUTH
         value: "false"
       - key: CFF_REQUIRE_EMAIL_VERIFICATION
-        value: "false"
+        sync: false
       - key: CFF_EXPOSE_AUTH_TOKENS
         value: "false"
       - key: CFF_LOG_AUTH_TOKENS
