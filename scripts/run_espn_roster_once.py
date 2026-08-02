@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run and verify the one-time ESPN Division I FBS roster bootstrap."""
+"""Run and verify the resumable ESPN Division I FBS roster bootstrap."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def main() -> int:
         ) from error
 
     season = configured_season()
-    lock_name = "cff:espn-roster-bootstrap-fbs"
+    lock_name = f"cff:espn-roster-bootstrap-fbs:{season}"
 
     with psycopg.connect(database_url, autocommit=True) as connection:
         with connection.cursor() as cursor:
@@ -116,17 +116,17 @@ def main() -> int:
                 command.append("--allow-unexpected-team-count")
 
             print(
-                f"[espn-bootstrap] starting one-time {season} Division I FBS import",
+                f"[espn-bootstrap] starting resumable {season} Division I FBS import",
                 flush=True,
             )
             print(
-                "[espn-bootstrap] roster lines are fetch progress; database rows become visible only after the final transaction commits",
+                "[espn-bootstrap] each completed team is committed immediately; a restart resumes with the remaining teams",
                 flush=True,
             )
             subprocess.run(command, check=True)
 
             print(
-                "[espn-bootstrap] importer exited; verifying committed rows through Postgres",
+                "[espn-bootstrap] importer exited; verifying committed FBS rows",
                 flush=True,
             )
             cursor.execute(
@@ -144,19 +144,9 @@ def main() -> int:
             verified_rows = int(verified[0]) if verified and verified[0] is not None else 0
             if verified_rows <= 0:
                 raise BootstrapError(
-                    "The importer exited successfully, but Postgres returned zero active ESPN FBS players after commit"
+                    "The importer exited successfully, but Postgres returned zero active ESPN FBS players"
                 )
 
-            cursor.execute(
-                """
-                INSERT INTO ingestion_runs (
-                    resource, season, finished_at, status, call_count,
-                    row_count, error_message
-                )
-                VALUES ('players_espn_fbs', %s, NOW(), 'success', 0, %s, NULL)
-                """,
-                (season, verified_rows),
-            )
             print(
                 f"[espn-bootstrap] verified {verified_rows} active ESPN FBS players in Postgres; future deployments will skip the import",
                 flush=True,
