@@ -100,11 +100,20 @@ jobs:
             -e CFF_AUTH_REQUEST_BODY_BYTES=8192 \
             college-ff-api-security
 
-      - name: Run focused security smoke tests
+      - name: Run focused security and authorization tests
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
           CFF_SECURITY_TEST_ORIGIN: https://frontend.example.test
-        run: python scripts/security_smoke_tests.py
+        run: |
+          python scripts/security_smoke_tests.py
+          python scripts/authorization_security_tests.py
+
+      - name: Verify raw authentication tokens are not stored
+        run: |
+          raw_tokens="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 psql -h 127.0.0.1 -U postgres -d cff -tAc "SELECT COUNT(*) FROM auth_tokens WHERE token LIKE 'token-%'")"
+          raw_recovery="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 psql -h 127.0.0.1 -U postgres -d cff -tAc "SELECT COUNT(*) FROM users WHERE email_verification_token LIKE 'token-%' OR password_reset_token LIKE 'token-%'")"
+          test "$raw_tokens" = "0"
+          test "$raw_recovery" = "0"
 
       - name: Backend logs
         if: always()
