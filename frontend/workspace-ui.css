@@ -1,0 +1,204 @@
+/* Draft-room navigation and privacy-safe league member presentation. */
+
+.draft-room-menu-shell {
+  width: min(1180px, 100%);
+  max-width: none !important;
+  padding: 20px clamp(16px, 3vw, 32px) 10px;
+}
+
+.draft-room-menu {
+  position: sticky;
+  top: 88px;
+  z-index: 22;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(10, 16, 23, 0.94);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px) saturate(135%);
+}
+
+.draft-room-menu__identity {
+  display: grid;
+  gap: 2px;
+  min-width: 116px;
+  padding: 3px 10px;
+  border-right: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.draft-room-menu__eyebrow {
+  color: #7f8d99;
+  font-size: 0.64rem;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.draft-room-menu__status {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.draft-room-menu__links,
+.draft-room-menu__actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.draft-room-menu__actions {
+  justify-content: flex-end;
+}
+
+.draft-room-menu__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 760;
+  line-height: 1.15;
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.draft-room-menu__link:hover,
+.draft-room-menu__link.is-active {
+  border-color: rgba(246, 198, 95, 0.24);
+  background: rgba(246, 198, 95, 0.12);
+  color: #fff4d8;
+}
+
+.draft-room-menu__link--players {
+  border-color: rgba(98, 223, 160, 0.19);
+  color: #c9f8dc;
+}
+
+.draft-room-menu__link--players:hover {
+  border-color: rgba(98, 223, 160, 0.32);
+  background: rgba(98, 223, 160, 0.11);
+  color: #e4ffef;
+}
+
+.draft-room-menu__link--league {
+  border-color: rgba(118, 150, 255, 0.18);
+}
+
+.draft-room-menu__link--league:hover {
+  border-color: rgba(118, 150, 255, 0.3);
+  background: rgba(118, 150, 255, 0.11);
+  color: #e7ebff;
+}
+
+.draft-room-menu__link.is-disabled,
+.draft-room-menu__link[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.36;
+  pointer-events: auto;
+}
+
+.draft-room-menu.is-locked .draft-room-menu__status {
+  color: #f0c978;
+}
+
+#draft-overview,
+#draft-locked,
+#draft-queue-section,
+#draft-roster-section,
+#draft-order-section,
+#draft-picks-section {
+  scroll-margin-top: 176px;
+}
+
+.activity-member-card__email {
+  margin-top: 3px;
+}
+
+.activity-member-you {
+  color: var(--accent);
+  font-size: 0.74em;
+  font-weight: 800;
+}
+
+.activity-member-row .pill {
+  flex: 0 0 auto;
+}
+
+[data-league-panel='managers'][hidden],
+[data-league-tab='managers'][hidden] {
+  display: none !important;
+}
+
+@media (max-width: 1080px) {
+  .draft-room-menu {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .draft-room-menu__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    padding-top: 7px;
+    border-top: 1px solid rgba(255, 255, 255, 0.075);
+  }
+
+  .draft-room-menu__links {
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+}
+
+@media (max-width: 760px) {
+  .draft-room-menu-shell {
+    padding: 12px 14px 5px;
+  }
+
+  .draft-room-menu {
+    position: relative;
+    top: auto;
+    display: block;
+    overflow-x: auto;
+    padding: 7px;
+    white-space: nowrap;
+  }
+
+  .draft-room-menu__identity {
+    display: none;
+  }
+
+  .draft-room-menu__links,
+  .draft-room-menu__actions {
+    display: inline-flex;
+    overflow: visible;
+  }
+
+  .draft-room-menu__actions {
+    padding: 0 0 0 5px;
+    border: 0;
+  }
+
+  .draft-room-menu__link {
+    min-height: 42px;
+  }
+
+  #draft-overview,
+  #draft-locked,
+  #draft-queue-section,
+  #draft-roster-section,
+  #draft-order-section,
+  #draft-picks-section {
+    scroll-margin-top: 86px;
+  }
+}
