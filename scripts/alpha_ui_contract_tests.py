@@ -15,6 +15,7 @@ player_h = text("backend/src/player_catalog.h")
 player_cpp = text("backend/src/player_catalog.cpp")
 cfbd_ingest = text("backend/src/cfbd_ingest.cpp")
 live_h = text("backend/src/live_scores.h")
+config = text("frontend/config.js")
 index = text("frontend/index.html")
 players = text("frontend/players.html")
 players_js = text("frontend/players.js")
@@ -52,6 +53,8 @@ assert 'league-dashboard' in league
 assert 'league-tab-select' in alpha_js
 assert "new Set(['league.html', 'draft.html'])" in alpha_js
 assert 'assets/favicon.svg' in alpha_js
+assert 'data-cff-modern' in config
+assert 'assets/favicon.svg' in config
 assert '@media (max-width: 760px)' in alpha_css
 assert '<svg' in favicon and 'linearGradient' in favicon
 assert (ROOT / 'docs/manual-alpha-lifecycle-test-plan.md').exists()
