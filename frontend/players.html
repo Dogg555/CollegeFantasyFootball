@@ -56,17 +56,23 @@
         <div class="catalog-stat"><strong id="player-meta-season">-</strong><span class="muted small">Season</span></div>
         <div class="catalog-stat"><strong id="player-meta-updated">-</strong><span class="muted small">Last sync</span></div>
       </div>
-      <form id="search-form" class="search">
-        <input id="search-input" type="search" placeholder="Search players, teams, or conferences" />
-        <select id="position-filter" aria-label="Position filter">
-          <option value="">All positions</option>
-          <option value="QB">QB</option>
-          <option value="RB">RB</option>
-          <option value="WR">WR</option>
-          <option value="TE">TE</option>
-          <option value="K">K</option>
-        </select>
-        <button class="button" type="submit">Search</button>
+      <form id="search-form" class="search player-search-form">
+        <label class="player-search-field player-search-field--query" for="search-input">
+          <span>Player, team, or conference</span>
+          <input id="search-input" type="search" placeholder="Search players, teams, or conferences" autocomplete="off" />
+        </label>
+        <label class="player-search-field player-search-field--position" for="position-filter">
+          <span>Position</span>
+          <select id="position-filter">
+            <option value="">All positions</option>
+            <option value="QB">QB</option>
+            <option value="RB">RB</option>
+            <option value="WR">WR</option>
+            <option value="TE">TE</option>
+            <option value="K">K</option>
+          </select>
+        </label>
+        <button class="button player-search-submit" type="submit">Search players</button>
       </form>
       <div id="search-results" class="list">Loading current-season players...</div>
       <div class="player-results-footer">
