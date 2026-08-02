@@ -3,7 +3,7 @@ FROM debian:bookworm AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG BUILD_JOBS=1
-ARG ESPN_BOOTSTRAP_REF=7d396b6c4249e032e2aafc5b9e41f993f4bfcbc4
+ARG ESPN_BOOTSTRAP_REF=9d4a1c0de3d4d0793bf4404ab92a831f9c8387c6
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -68,12 +68,16 @@ RUN set -eux; \
     if [ -d /context/backend ]; then \
         cp -a /context/backend/. /app/backend/; \
         cp /context/scripts/espn_roster_ingest.py /app/scripts/; \
+        cp /context/scripts/espn_team_directory.py /app/scripts/; \
         cp /context/scripts/run_espn_roster_once.py /app/scripts/; \
     else \
         cp -a /context/. /app/backend/; \
         curl -fsSL \
           "https://raw.githubusercontent.com/Dogg555/CollegeFantasyFootball/${ESPN_BOOTSTRAP_REF}/scripts/espn_roster_ingest.py" \
           -o /app/scripts/espn_roster_ingest.py; \
+        curl -fsSL \
+          "https://raw.githubusercontent.com/Dogg555/CollegeFantasyFootball/${ESPN_BOOTSTRAP_REF}/scripts/espn_team_directory.py" \
+          -o /app/scripts/espn_team_directory.py; \
         curl -fsSL \
           "https://raw.githubusercontent.com/Dogg555/CollegeFantasyFootball/${ESPN_BOOTSTRAP_REF}/scripts/run_espn_roster_once.py" \
           -o /app/scripts/run_espn_roster_once.py; \
