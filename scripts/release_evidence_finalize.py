@@ -16,12 +16,14 @@ class FinalizationFailure(RuntimeError):
 
 ALPHA_DIR = Path(os.environ.get("CFF_FINALIZER_ALPHA_DIR", "alpha-source"))
 BACKUP_DIR = Path(os.environ.get("CFF_FINALIZER_BACKUP_DIR", "backup-source"))
+RENDER_DIR = Path(os.environ.get("CFF_FINALIZER_RENDER_DIR", "render-source"))
 OUTPUT_DIR = Path(
     os.environ.get("CFF_FINALIZER_OUTPUT_DIR", "release-candidate-evidence")
 )
 DEPLOYED_COMMIT = os.environ.get("CFF_FINALIZER_DEPLOYED_COMMIT", "").strip()
 ALPHA_RUN_ID = os.environ.get("CFF_FINALIZER_ALPHA_RUN_ID", "").strip()
 BACKUP_RUN_ID = os.environ.get("CFF_FINALIZER_BACKUP_RUN_ID", "").strip()
+RENDER_RUN_ID = os.environ.get("CFF_FINALIZER_RENDER_RUN_ID", "").strip()
 EXPECTED_BACKUP_SHA256 = os.environ.get(
     "CFF_FINALIZER_BACKUP_SHA256", ""
 ).strip().lower()
@@ -108,6 +110,7 @@ def validate_inputs() -> None:
     for name, value in (
         ("CFF_FINALIZER_ALPHA_RUN_ID", ALPHA_RUN_ID),
         ("CFF_FINALIZER_BACKUP_RUN_ID", BACKUP_RUN_ID),
+        ("CFF_FINALIZER_RENDER_RUN_ID", RENDER_RUN_ID),
     ):
         if not value.isdigit():
             raise FinalizationFailure(f"{name} must be numeric")
@@ -141,7 +144,12 @@ def main() -> int:
     report_paths: dict[str, Path] = {}
     reports: dict[str, dict[str, Any]] = {}
     for key, filename in REQUIRED_REPORTS.items():
-        root = BACKUP_DIR if key == "backupRestore" else ALPHA_DIR
+        if key == "backupRestore":
+            root = BACKUP_DIR
+        elif key == "browser":
+            root = RENDER_DIR
+        else:
+            root = ALPHA_DIR
         path, payload = load_report(root, filename)
         report_paths[key] = path
         reports[key] = payload
@@ -210,12 +218,9 @@ def main() -> int:
             "sha256": sha256_file(destination),
         }
 
-    alpha_run_url = (
-        f"{SERVER_URL}/{REPOSITORY}/actions/runs/{ALPHA_RUN_ID}"
-    )
-    backup_run_url = (
-        f"{SERVER_URL}/{REPOSITORY}/actions/runs/{BACKUP_RUN_ID}"
-    )
+    alpha_run_url = f"{SERVER_URL}/{REPOSITORY}/actions/runs/{ALPHA_RUN_ID}"
+    backup_run_url = f"{SERVER_URL}/{REPOSITORY}/actions/runs/{BACKUP_RUN_ID}"
+    render_run_url = f"{SERVER_URL}/{REPOSITORY}/actions/runs/{RENDER_RUN_ID}"
     manifest = {
         "status": "passed",
         "classification": "alpha-evidence-ready",
@@ -225,6 +230,10 @@ def main() -> int:
             "alphaReadiness": {
                 "runId": ALPHA_RUN_ID,
                 "url": alpha_run_url,
+            },
+            "renderValidation": {
+                "runId": RENDER_RUN_ID,
+                "url": render_run_url,
             },
             "backupRestore": {
                 "runId": BACKUP_RUN_ID,
@@ -260,6 +269,7 @@ def main() -> int:
             "- Status: passed",
             f"- Exact deployed commit: `{DEPLOYED_COMMIT}`",
             f"- Alpha readiness run: {alpha_run_url}",
+            f"- Render validation run: {render_run_url}",
             f"- Backup restore run: {backup_run_url}",
             f"- Backup evidence SHA-256: `{EXPECTED_BACKUP_SHA256}`",
             f"- Required GitHub Actions secrets present: {len(secret_inventory)}",
