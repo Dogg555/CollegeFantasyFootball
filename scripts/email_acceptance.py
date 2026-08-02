@@ -139,7 +139,7 @@ class Inbox:
         while time.monotonic() < deadline:
             self.connection.noop()
             self.connection.select(self.folder)
-            status, rows = self.connection.uid("search", None, f"UID {after_uid + 1}:*")
+            status, rows = self.connection.uid("search", None, "UID", f"{after_uid + 1}:*")
             if status == "OK" and rows and rows[0]:
                 uids = sorted((int(value) for value in rows[0].split()), reverse=True)
                 for uid in uids:
@@ -304,7 +304,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except GateFailure as exc:
+    except Exception as exc:
         write_failure_report("Transactional email acceptance", "transactional-email-acceptance", exc)
         print(f"Transactional email acceptance failed: {exc}", file=os.sys.stderr)
         raise SystemExit(1)
