@@ -1,0 +1,47 @@
+name: Apply Alpha UI and data patch
+
+on:
+  push:
+    branches: [agent/alpha-ui-data-testing]
+    paths:
+      - scripts/apply_alpha_ui_data_patch.py
+      - .github/workflows/apply-alpha-ui-data-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/alpha-ui-data-testing
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply guarded source patch
+        run: python scripts/apply_alpha_ui_data_patch.py
+      - name: Validate generated changes
+        run: |
+          python -m py_compile scripts/alpha_ui_contract_tests.py scripts/public_data_meta_tests.py
+          node --check frontend/alpha-ui.js
+          node --check frontend/players.js
+          node --check frontend/scoreboard.js
+          node scripts/scoreboard_ui_tests.js
+          python scripts/alpha_ui_contract_tests.py
+          git diff --check
+      - name: Commit generated source changes
+        run: |
+          rm scripts/apply_alpha_ui_data_patch.py
+          rm .github/workflows/apply-alpha-ui-data-patch.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Improve Alpha UI data and test coverage"
+          git push origin HEAD:agent/alpha-ui-data-testing
