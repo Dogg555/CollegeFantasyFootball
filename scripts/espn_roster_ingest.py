@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-time ESPN Division I FBS roster bootstrap."""
+"""Resumable one-time ESPN Division I FBS roster bootstrap."""
 
 from __future__ import annotations
 
@@ -22,8 +22,11 @@ from espn_team_directory import fbs_teams_url
 ESPN_BASE_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/football/college-football"
 )
-USER_AGENT = "CollegeFantasyFootball-roster-bootstrap/1.2"
+USER_AGENT = "CollegeFantasyFootball-roster-bootstrap/1.3"
 EXPECTED_FBS_TEAM_RANGE = range(120, 171)
+SCOPE = "division-i-fbs"
+RESOURCE = "players_espn_fbs"
+TERMINAL_PROGRESS_STATUSES = ("success", "empty")
 
 
 @dataclass(frozen=True)
@@ -142,7 +145,6 @@ def _team_nodes(
         yield wrapped_team, conference
         return
 
-    # Some ESPN responses use direct team objects instead of {"team": ...}.
     if _first_text(value, ("id", "uid")) and _first_text(
         value, ("location", "shortDisplayName")
     ):
@@ -282,7 +284,7 @@ def parse_player(
     raw.update(
         {
             "cffSource": "espn",
-            "cffScope": "division-i-fbs",
+            "cffScope": SCOPE,
             "cffTeam": team.school,
             "cffConference": team.conference,
             "cffSeason": season,
@@ -305,89 +307,86 @@ def parse_player(
     )
 
 
-def fetch_rosters(
-    teams: Sequence[Team],
-    *,
-    season: int,
-    timeout: float,
-    retries: int,
-    delay: float,
-) -> tuple[list[Player], int, list[str], int]:
+def parse_roster(payload: Mapping[str, Any], team: Team, season: int) -> list[Player]:
     players: dict[str, Player] = {}
-    failures: list[str] = []
-    successful_teams = 0
-    calls = 0
-    for index, team in enumerate(teams, start=1):
-        url = f"{ESPN_BASE_URL}/teams/{urllib.parse.quote(team.id)}/roster"
-        try:
-            payload = fetch_json(url, timeout=timeout, retries=retries)
-            calls += 1
-            roster = [
-                player
-                for athlete in _roster_items(payload)
-                if (player := parse_player(athlete, team, season)) is not None
-            ]
-            if not roster:
-                failures.append(f"{team.school} (empty roster)")
-                print(
-                    f"[{index}/{len(teams)}] {team.school}: empty roster",
-                    file=sys.stderr,
-                    flush=True,
-                )
-            else:
-                successful_teams += 1
-                for player in roster:
-                    players[player.id] = player
-                print(
-                    f"[{index}/{len(teams)}] {team.school}: {len(roster)} players",
-                    flush=True,
-                )
-        except IngestError as error:
-            calls += 1
-            failures.append(f"{team.school} ({error})")
-            print(
-                f"[{index}/{len(teams)}] {team.school}: {error}",
-                file=sys.stderr,
-                flush=True,
-            )
-        if delay > 0 and index < len(teams):
-            time.sleep(delay)
-    ordered = sorted(players.values(), key=lambda item: (item.team, item.full_name))
-    return ordered, calls, failures, successful_teams
+    for athlete in _roster_items(payload):
+        player = parse_player(athlete, team, season)
+        if player is not None:
+            players[player.id] = player
+    return sorted(players.values(), key=lambda item: item.full_name.casefold())
 
 
-def write_export(
-    path: Path,
-    teams: Sequence[Team],
-    players: Sequence[Player],
-    season: int,
-) -> None:
-    payload = {
-        "source": "espn",
-        "scope": "division-i-fbs",
-        "season": season,
-        "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "teams": [asdict(team) for team in teams],
-        "players": [asdict(player) for player in players],
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-
-
-def upsert_players(
-    database_url: str,
-    players: Sequence[Player],
-    season: int,
-    call_count: int,
-) -> tuple[int, int]:
+def _load_psycopg():
     try:
         import psycopg  # type: ignore[import-not-found]
     except ImportError as error:
         raise IngestError("The runtime image must include psycopg") from error
+    return psycopg
 
+
+def completed_team_ids(database_url: str, season: int) -> set[str]:
+    psycopg = _load_psycopg()
+    with psycopg.connect(database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT team_id
+                FROM espn_roster_progress
+                WHERE season = %s
+                  AND scope = %s
+                  AND status = ANY(%s)
+                """,
+                (season, SCOPE, list(TERMINAL_PROGRESS_STATUSES)),
+            )
+            return {str(row[0]) for row in cursor.fetchall()}
+
+
+def record_progress(
+    database_url: str,
+    team: Team,
+    season: int,
+    status: str,
+    player_count: int,
+    error_message: str | None,
+) -> None:
+    psycopg = _load_psycopg()
+    with psycopg.connect(database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO espn_roster_progress (
+                    season, scope, team_id, team_name, conference,
+                    status, player_count, error_message, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (season, scope, team_id) DO UPDATE SET
+                    team_name = EXCLUDED.team_name,
+                    conference = EXCLUDED.conference,
+                    status = EXCLUDED.status,
+                    player_count = EXCLUDED.player_count,
+                    error_message = EXCLUDED.error_message,
+                    updated_at = NOW()
+                """,
+                (
+                    season,
+                    SCOPE,
+                    team.id,
+                    team.school,
+                    team.conference,
+                    status,
+                    player_count,
+                    error_message,
+                ),
+            )
+
+
+def upsert_team_players(
+    database_url: str,
+    team: Team,
+    players: Sequence[Player],
+    season: int,
+) -> tuple[int, int]:
+    psycopg = _load_psycopg()
     inserted = 0
     updated = 0
     with psycopg.connect(database_url) as connection:
@@ -398,17 +397,6 @@ def upsert_players(
             )
             cursor.execute(
                 "ALTER TABLE players ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
-            )
-            # Any ESPN rows from an earlier broader test import are hidden first;
-            # the FBS rows seen below are reactivated by their upserts.
-            cursor.execute(
-                """
-                UPDATE players
-                SET active = FALSE, updated_at = NOW()
-                WHERE season = %s
-                  AND raw->>'cffSource' = 'espn'
-                """,
-                (season,),
             )
             for player in players:
                 cursor.execute(
@@ -461,14 +449,106 @@ def upsert_players(
                     updated += 1
             cursor.execute(
                 """
+                INSERT INTO espn_roster_progress (
+                    season, scope, team_id, team_name, conference,
+                    status, player_count, error_message, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, 'success', %s, NULL, NOW())
+                ON CONFLICT (season, scope, team_id) DO UPDATE SET
+                    team_name = EXCLUDED.team_name,
+                    conference = EXCLUDED.conference,
+                    status = 'success',
+                    player_count = EXCLUDED.player_count,
+                    error_message = NULL,
+                    updated_at = NOW()
+                """,
+                (
+                    season,
+                    SCOPE,
+                    team.id,
+                    team.school,
+                    team.conference,
+                    len(players),
+                ),
+            )
+    return inserted, updated
+
+
+def finalize_import(
+    database_url: str,
+    season: int,
+    call_count: int,
+) -> tuple[int, int, int]:
+    psycopg = _load_psycopg()
+    with psycopg.connect(database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE players
+                SET active = FALSE, updated_at = NOW()
+                WHERE season = %s
+                  AND raw->>'cffSource' = 'espn'
+                  AND COALESCE(raw->>'cffScope', '') <> %s
+                """,
+                (season, SCOPE),
+            )
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'success'),
+                    COUNT(*) FILTER (WHERE status = 'empty')
+                FROM espn_roster_progress
+                WHERE season = %s AND scope = %s
+                """,
+                (season, SCOPE),
+            )
+            progress_row = cursor.fetchone() or (0, 0)
+            successful_teams = int(progress_row[0] or 0)
+            empty_teams = int(progress_row[1] or 0)
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM players
+                WHERE season = %s
+                  AND active = TRUE
+                  AND raw->>'cffSource' = 'espn'
+                  AND raw->>'cffScope' = %s
+                """,
+                (season, SCOPE),
+            )
+            player_row = cursor.fetchone()
+            player_count = int(player_row[0] if player_row else 0)
+            cursor.execute(
+                """
                 INSERT INTO ingestion_runs (
                     resource, season, finished_at, status, call_count,
                     row_count, error_message
-                ) VALUES ('players_espn', %s, NOW(), 'success', %s, %s, NULL)
+                ) VALUES (%s, %s, NOW(), 'success', %s, %s, NULL)
                 """,
-                (season, call_count, inserted + updated),
+                (RESOURCE, season, call_count, player_count),
             )
-    return inserted, updated
+    return successful_teams, empty_teams, player_count
+
+
+def write_export(
+    path: Path,
+    teams: Sequence[Team],
+    players: Sequence[Player],
+    season: int,
+) -> None:
+    payload = {
+        "source": "espn",
+        "scope": SCOPE,
+        "season": season,
+        "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "teams": [asdict(team) for team in teams],
+        "playersFetchedThisRun": [asdict(player) for player in players],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -501,61 +581,132 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise IngestError("--season must be between 2000 and 2100")
     if args.timeout <= 0 or args.retries <= 0 or args.delay < 0:
         raise IngestError("timeout/retries must be positive and delay cannot be negative")
+    if not args.dry_run and not args.database_url:
+        raise IngestError("DB_URL or --database-url is required unless --dry-run is used")
 
     teams, team_calls = fetch_fbs_teams(
         timeout=args.timeout,
         retries=args.retries,
         allow_unexpected_team_count=args.allow_unexpected_team_count,
     )
-    players, roster_calls, failed_teams, successful_teams = fetch_rosters(
-        teams,
-        season=args.season,
-        timeout=args.timeout,
-        retries=args.retries,
-        delay=args.delay,
+    completed = (
+        set() if args.dry_run else completed_team_ids(args.database_url, args.season)
     )
-    total_calls = team_calls + roster_calls
-    write_export(args.output, teams, players, args.season)
-    print(
-        f"Wrote {len(players)} players from {successful_teams}/{len(teams)} FBS teams to {args.output}",
-        flush=True,
-    )
-
-    if failed_teams:
+    if completed:
         print(
-            f"Skipped {len(failed_teams)} FBS teams with unavailable or empty rosters.",
-            file=sys.stderr,
+            f"Resuming FBS import: {len(completed)} teams already completed; "
+            f"{len(teams) - len(completed)} remain.",
             flush=True,
         )
-    if not players or successful_teams == 0:
-        raise IngestError("ESPN returned no usable FBS rosters; Postgres was not changed")
-    if args.dry_run:
-        print("Dry run complete; Postgres was not changed.", flush=True)
-        return 0
-    if not args.database_url:
-        raise IngestError("DB_URL or --database-url is required unless --dry-run is used")
 
-    inserted, updated = upsert_players(
+    calls = team_calls
+    fetched_players: list[Player] = []
+    failures: list[str] = []
+    inserted = 0
+    updated = 0
+    processed = 0
+
+    remaining_teams = [team for team in teams if team.id not in completed]
+    for index, team in enumerate(remaining_teams, start=1):
+        url = f"{ESPN_BASE_URL}/teams/{urllib.parse.quote(team.id)}/roster"
+        try:
+            payload = fetch_json(url, timeout=args.timeout, retries=args.retries)
+            calls += 1
+            roster = parse_roster(payload, team, args.season)
+            fetched_players.extend(roster)
+            processed += 1
+            if not roster:
+                if not args.dry_run:
+                    record_progress(
+                        args.database_url,
+                        team,
+                        args.season,
+                        "empty",
+                        0,
+                        None,
+                    )
+                print(
+                    f"[{index}/{len(remaining_teams)}] {team.school}: empty roster; checkpointed",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                if not args.dry_run:
+                    team_inserted, team_updated = upsert_team_players(
+                        args.database_url,
+                        team,
+                        roster,
+                        args.season,
+                    )
+                    inserted += team_inserted
+                    updated += team_updated
+                print(
+                    f"[{index}/{len(remaining_teams)}] {team.school}: "
+                    f"{len(roster)} players; checkpointed",
+                    flush=True,
+                )
+        except IngestError as error:
+            calls += 1
+            failures.append(f"{team.school} ({error})")
+            if not args.dry_run:
+                record_progress(
+                    args.database_url,
+                    team,
+                    args.season,
+                    "failed",
+                    0,
+                    str(error),
+                )
+            print(
+                f"[{index}/{len(remaining_teams)}] {team.school}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+        if args.delay > 0 and index < len(remaining_teams):
+            time.sleep(args.delay)
+
+    write_export(args.output, teams, fetched_players, args.season)
+
+    if args.dry_run:
+        print(
+            f"Dry run complete: fetched {len(fetched_players)} players from "
+            f"{processed} teams; Postgres was not changed.",
+            flush=True,
+        )
+        return 0
+
+    if failures and not args.allow_partial:
+        raise IngestError(
+            f"{len(failures)} FBS team roster requests failed. Completed teams were "
+            "checkpointed; the next deployment will retry only failed teams."
+        )
+
+    successful_teams, empty_teams, player_count = finalize_import(
         args.database_url,
-        players,
         args.season,
-        total_calls,
+        calls,
     )
+    if player_count <= 0:
+        raise IngestError("No active ESPN FBS players exist after import")
+
     print(
         json.dumps(
             {
                 "status": "success",
                 "source": "espn",
-                "scope": "division-i-fbs",
+                "scope": SCOPE,
                 "season": args.season,
                 "teamsDiscovered": len(teams),
+                "teamsAlreadyCompleted": len(completed),
+                "teamsProcessedThisRun": processed,
                 "teamsImported": successful_teams,
-                "teamsSkipped": len(failed_teams),
-                "players": len(players),
-                "inserted": inserted,
-                "updated": updated,
-                "apiCalls": total_calls,
-                "partial": bool(failed_teams),
+                "teamsEmpty": empty_teams,
+                "teamsFailed": len(failures),
+                "players": player_count,
+                "insertedThisRun": inserted,
+                "updatedThisRun": updated,
+                "apiCallsThisRun": calls,
+                "partial": bool(failures),
             },
             indent=2,
         ),
