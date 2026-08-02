@@ -31,10 +31,10 @@
     <div class="hero__content">
       <div class="hero__copy">
         <p class="pill pill--muted">Players</p>
-        <h1>Search the player pool</h1>
+        <h1>Search the current player pool</h1>
         <p class="subtitle">
-          Find college players by name, team, position, or conference. Results come from the
-          same database that powers drafts and rosters.
+          Browse active FBS rosters or search by player, team, position, and conference. The daily roster
+          sync keeps draft and waiver results aligned with the current season.
         </p>
       </div>
     </div>
@@ -43,23 +43,27 @@
   <main class="layout" style="max-width: 960px">
     <section class="card">
       <div class="card__header">
-        <h2>Player Search</h2>
-        <span class="pill">Live data</span>
+        <div>
+          <h2>Player Search</h2>
+          <div id="player-data-status" class="muted small">Loading active FBS rosters…</div>
+        </div>
+        <span class="pill">Current rosters</span>
       </div>
       <form id="search-form" class="search">
-        <input id="search-input" type="search" placeholder="Search players (name, team, position)" />
+        <input id="search-input" type="search" placeholder="Search players, teams, or conferences" />
         <select id="position-filter" aria-label="Position filter">
           <option value="">All positions</option>
           <option value="QB">QB</option>
           <option value="RB">RB</option>
           <option value="WR">WR</option>
           <option value="TE">TE</option>
+          <option value="K">K</option>
         </select>
         <button class="button" type="submit">Search</button>
       </form>
-      <div id="search-results" class="list">Try searching for a player.</div>
+      <div id="search-results" class="list">Loading current-season players…</div>
       <p class="muted small" style="margin-top: 12px">
-        Tip: filter by position or conference using keywords like "QB SEC" or "Ohio State WR".
+        Leave search blank to browse the active pool, then narrow it by position or keywords such as “SEC” or “Ohio State”.
       </p>
     </section>
 
@@ -73,7 +77,6 @@
         <a class="button button--primary" href="league.html">View league</a>
       </div>
     </section>
-
   </main>
 
   <footer class="footer">Built for college fantasy managers.</footer>
