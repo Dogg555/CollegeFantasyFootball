@@ -8,6 +8,7 @@ const {
   availableWeeks,
   chooseDefaultWeek,
   buildSlides,
+  formatAge,
 } = require('../frontend/scoreboard.js');
 
 const games = [
@@ -25,6 +26,9 @@ assert.equal(slides.length, 2, 'separate kickoff times should become separate sl
 assert.equal(slides[0].games.length, 2);
 assert.equal(slides[1].games.length, 1);
 assert.ok(slides[0].games[0].startDate <= slides[1].games[0].startDate);
+assert.equal(formatAge(45), '45 sec ago');
+assert.equal(formatAge(120), '2 min ago');
+assert.equal(formatAge(7200), '2 hr ago');
 
 const fiveAtSameTime = Array.from({ length: 5 }, (_, index) => normalizeGame({
   id: `same-${index}`,
@@ -43,13 +47,18 @@ const playerSource = fs.readFileSync(
 );
 assert.match(
   playerSource,
-  /params\.set\('query', term \|\| '%'\);/,
-  'empty player-pool browsing must send the API-required wildcard query'
+  /offset: String\(offset\)/,
+  'player browsing must send a stable page offset'
 );
-assert.doesNotMatch(
+assert.match(
   playerSource,
-  /if \(term\) params\.set\('query', term\);/,
-  'the browse request must not omit query when no search text is present'
+  /loadMorePlayers\?\.addEventListener/,
+  'player browsing must expose a load-more interaction'
+);
+assert.match(
+  playerSource,
+  /fetch\(`\$\{apiBase\}\/players\/meta`/,
+  'player page must load public catalog metadata'
 );
 
-console.log('scoreboard UI tests passed; player browse regression passed');
+console.log('scoreboard UI tests passed; paginated player browse regression passed');

@@ -1,5 +1,6 @@
 const apiBase = window.CFF_API_BASE || '/api';
 const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO !== false;
+const PAGE_SIZE = 50;
 
 const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
@@ -8,8 +9,17 @@ const searchResultsEl = document.getElementById('search-results');
 const queueList = document.getElementById('queue-list');
 const queueCount = document.getElementById('queue-count');
 const playerDataStatus = document.getElementById('player-data-status');
+const loadMorePlayers = document.getElementById('load-more-players');
+const playerResultCount = document.getElementById('player-result-count');
+const playerMetaCount = document.getElementById('player-meta-count');
+const playerMetaTeams = document.getElementById('player-meta-teams');
+const playerMetaSeason = document.getElementById('player-meta-season');
+const playerMetaUpdated = document.getElementById('player-meta-updated');
 
 let lastResults = [];
+let currentOffset = 0;
+let hasMore = false;
+let loadingPlayers = false;
 
 function safeText(value, fallback = '') {
   return escapeHtml(value ?? fallback);
@@ -30,11 +40,9 @@ document.getElementById('nav-logout')?.addEventListener('click', () => {
   renderQueue();
 });
 
-async function fetchPlayers(term = '', position = '') {
-  const params = new URLSearchParams({ limit: '50' });
-  // The API requires a query value. PostgreSQL's ILIKE wildcard returns the
-  // complete active player pool when the user is browsing without search text.
-  params.set('query', term || '%');
+async function fetchPlayers(term = '', position = '', offset = 0) {
+  const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
+  if (term) params.set('query', term);
   if (position) params.set('position', position);
   const response = await fetch(`${apiBase}/players?${params.toString()}`, {
     headers: { Accept: 'application/json' },
@@ -47,40 +55,91 @@ async function fetchPlayers(term = '', position = '') {
   }));
 }
 
-async function loadPlayerPool() {
-  if (!searchResultsEl) return;
+async function fetchPlayerMeta() {
+  const response = await fetch(`${apiBase}/players/meta`, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error(`Player metadata failed with ${response.status}.`);
+  return response.json();
+}
+
+function formatSyncTime(value) {
+  if (!value) return 'Not synced';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Recently';
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(parsed);
+}
+
+function renderPlayerMeta(meta = {}) {
+  if (playerMetaCount) playerMetaCount.textContent = Number(meta.activePlayers || 0).toLocaleString();
+  if (playerMetaTeams) playerMetaTeams.textContent = Number(meta.teams || 0).toLocaleString();
+  if (playerMetaSeason) playerMetaSeason.textContent = meta.season || '—';
+  if (playerMetaUpdated) playerMetaUpdated.textContent = formatSyncTime(meta.lastUpdated);
+  if (playerDataStatus) {
+    playerDataStatus.textContent = meta.status === 'ok'
+      ? `${Number(meta.activePlayers || 0).toLocaleString()} active players across ${Number(meta.teams || 0).toLocaleString()} teams`
+      : 'Player catalog metadata unavailable';
+  }
+}
+
+async function loadPlayerMeta() {
+  try {
+    renderPlayerMeta(await fetchPlayerMeta());
+  } catch {
+    renderPlayerMeta({ status: 'unavailable' });
+  }
+}
+
+async function loadPlayerPool({ append = false } = {}) {
+  if (!searchResultsEl || loadingPlayers) return;
+  loadingPlayers = true;
   const term = searchInput?.value.trim() || '';
   const position = positionFilter?.value || '';
-  searchResultsEl.textContent = term ? 'Searching current rosters...' : 'Loading current-season players...';
+  const offset = append ? currentOffset : 0;
+  if (!append) searchResultsEl.textContent = term ? 'Searching current rosters...' : 'Loading current-season players...';
+  if (loadMorePlayers) loadMorePlayers.disabled = true;
+
   try {
-    lastResults = await fetchPlayers(term, position);
+    const batch = await fetchPlayers(term, position, offset);
+    const combined = append ? [...lastResults, ...batch] : batch;
+    const unique = new Map(combined.map((player) => [player.id, player]));
+    lastResults = [...unique.values()];
+    currentOffset = offset + batch.length;
+    hasMore = batch.length === PAGE_SIZE;
     renderSearchResults(lastResults);
-    const seasons = lastResults.map((player) => player.season).filter(Boolean);
-    const season = seasons.length ? Math.max(...seasons) : null;
-    if (playerDataStatus) {
-      playerDataStatus.textContent = season
-        ? `${season} active FBS rosters / refreshed by the weekly roster sync`
-        : 'Active FBS rosters / refreshed by the weekly roster sync';
+    if (playerResultCount) playerResultCount.textContent = `${lastResults.length.toLocaleString()} player${lastResults.length === 1 ? '' : 's'} shown`;
+    if (loadMorePlayers) {
+      loadMorePlayers.hidden = !hasMore;
+      loadMorePlayers.disabled = false;
     }
-  } catch (error) {
-    if (allowLocalDemo) {
+  } catch {
+    if (allowLocalDemo && !append) {
       lastResults = applyPositionFilter(filterSamplePlayers(term), position);
       renderSearchResults(lastResults, true);
       if (playerDataStatus) playerDataStatus.textContent = 'Offline sample pool';
-      return;
+      if (playerResultCount) playerResultCount.textContent = `${lastResults.length} sample players shown`;
+    } else if (!append) {
+      lastResults = [];
+      searchResultsEl.textContent = 'The current player database is temporarily unavailable.';
+      if (playerDataStatus) playerDataStatus.textContent = 'Player sync unavailable';
+      if (playerResultCount) playerResultCount.textContent = '0 players shown';
     }
-    lastResults = [];
-    searchResultsEl.textContent = 'The current player database is temporarily unavailable.';
-    if (playerDataStatus) playerDataStatus.textContent = 'Player sync unavailable';
+    if (loadMorePlayers) loadMorePlayers.hidden = true;
+  } finally {
+    loadingPlayers = false;
   }
 }
 
 searchForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  currentOffset = 0;
   await loadPlayerPool();
 });
 
-positionFilter?.addEventListener('change', loadPlayerPool);
+positionFilter?.addEventListener('change', async () => {
+  currentOffset = 0;
+  await loadPlayerPool();
+});
+
+loadMorePlayers?.addEventListener('click', () => loadPlayerPool({ append: true }));
 
 function applyPositionFilter(players, position) {
   if (!position) return players;
@@ -97,7 +156,7 @@ function renderSearchResults(players = [], fallback = false) {
   const notice = fallback
     ? '<div class="row"><div><strong>Offline player pool</strong><div class="muted">Showing sample players until the current roster database is reachable.</div></div></div>'
     : '';
-  searchResultsEl.innerHTML = notice + players.slice(0, 50).map((player, index) => {
+  searchResultsEl.innerHTML = notice + players.map((player, index) => {
     const queued = queuedIds.has(player.id);
     const seasonLabel = player.season ? ` / ${safeNumber(player.season)}` : '';
     return `
@@ -180,7 +239,7 @@ async function initPlayersPage() {
     // Keep the local player queue available when the API is offline.
   }
   renderQueue();
-  await loadPlayerPool();
+  await Promise.all([loadPlayerMeta(), loadPlayerPool()]);
 }
 
 initPlayersPage();

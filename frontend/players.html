@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Players - College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="alpha-ui.css" />
 </head>
 <body>
   <div class="topbar">
@@ -49,6 +50,12 @@
         </div>
         <span class="pill">Current rosters</span>
       </div>
+      <div id="player-catalog-meta" class="catalog-meta" aria-live="polite">
+        <div class="catalog-stat"><strong id="player-meta-count">—</strong><span class="muted small">Active players</span></div>
+        <div class="catalog-stat"><strong id="player-meta-teams">—</strong><span class="muted small">FBS teams</span></div>
+        <div class="catalog-stat"><strong id="player-meta-season">—</strong><span class="muted small">Season</span></div>
+        <div class="catalog-stat"><strong id="player-meta-updated">—</strong><span class="muted small">Last sync</span></div>
+      </div>
       <form id="search-form" class="search">
         <input id="search-input" type="search" placeholder="Search players, teams, or conferences" />
         <select id="position-filter" aria-label="Position filter">
@@ -62,6 +69,10 @@
         <button class="button" type="submit">Search</button>
       </form>
       <div id="search-results" class="list">Loading current-season players…</div>
+      <div class="player-results-footer">
+        <span class="muted small" id="player-result-count">0 players shown</span>
+        <button class="button button--ghost" id="load-more-players" type="button" hidden>Load more players</button>
+      </div>
       <p class="muted small" style="margin-top: 12px">
         Leave search blank to browse the active pool, then narrow it by position or keywords such as “SEC” or “Ohio State”.
       </p>
@@ -82,6 +93,7 @@
   <footer class="footer">Built for college fantasy managers.</footer>
   <script src="config.js"></script>
   <script src="state.js"></script>
+  <script src="alpha-ui.js"></script>
   <script src="players.js"></script>
 </body>
 </html>

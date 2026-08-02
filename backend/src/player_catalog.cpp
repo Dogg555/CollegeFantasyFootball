@@ -46,6 +46,11 @@ std::size_t clampLimit(std::size_t limit) {
     return std::min(limit, kMax);
 }
 
+std::size_t clampOffset(std::size_t offset) {
+    constexpr std::size_t kMax = 5000;
+    return std::min(offset, kMax);
+}
+
 #ifdef CFF_HAS_POSTGRES
 struct PgConnDeleter {
     void operator()(PGconn *connection) const {
@@ -109,7 +114,9 @@ Json::Value PlayerCard::toJson() const {
 std::vector<PlayerCard> searchPlayers(const std::string &query,
                                       const std::optional<std::string> &positionFilter,
                                       const std::optional<std::string> &conferenceFilter,
-                                      std::size_t limit) {
+                                      const std::optional<std::string> &teamFilter,
+                                      std::size_t limit,
+                                      std::size_t offset) {
     const auto tokens = tokenizeQuery(query);
     std::vector<PlayerCard> results;
 
@@ -132,7 +139,7 @@ std::vector<PlayerCard> searchPlayers(const std::string &query,
 
     std::vector<std::string> params;
     std::vector<std::string> whereClauses{"player.active = TRUE"};
-    params.reserve(tokens.size() + 3);
+    params.reserve(tokens.size() + 5);
 
     for (const auto &token : tokens) {
         params.push_back(buildLikeToken(token));
@@ -155,6 +162,11 @@ std::vector<PlayerCard> searchPlayers(const std::string &query,
         whereClauses.push_back("player.conference ILIKE $" + std::to_string(params.size()));
     }
 
+    if (teamFilter && !teamFilter->empty()) {
+        params.push_back(*teamFilter);
+        whereClauses.push_back("player.team ILIKE $" + std::to_string(params.size()));
+    }
+
     sql += " WHERE ";
     for (std::size_t index = 0; index < whereClauses.size(); ++index) {
         if (index > 0) sql += " AND ";
@@ -173,11 +185,14 @@ std::vector<PlayerCard> searchPlayers(const std::string &query,
                 ELSE 6
             END,
             player.full_name ASC
-        LIMIT $
     )SQL";
-    sql += std::to_string(params.size() + 1);
+    const auto limitIndex = params.size() + 1;
+    const auto offsetIndex = params.size() + 2;
+    sql += " LIMIT $" + std::to_string(limitIndex);
+    sql += " OFFSET $" + std::to_string(offsetIndex);
 
     params.push_back(std::to_string(clampLimit(limit)));
+    params.push_back(std::to_string(clampOffset(offset)));
     const auto paramPointers = buildParamPointers(params);
     PgResultPtr result{PQexecParams(
         connection.get(),
@@ -213,11 +228,61 @@ std::vector<PlayerCard> searchPlayers(const std::string &query,
     (void)query;
     (void)positionFilter;
     (void)conferenceFilter;
+    (void)teamFilter;
     (void)limit;
+    (void)offset;
     std::cerr << "[players] Built without PostgreSQL; player search is disabled." << std::endl;
 #endif
 
     return results;
+}
+
+Json::Value playerCatalogMeta() {
+    Json::Value payload;
+#ifdef CFF_HAS_POSTGRES
+    auto connection = connectToDb();
+    payload["databaseConfigured"] = static_cast<bool>(connection);
+    if (!connection) {
+        payload["status"] = "unavailable";
+        return payload;
+    }
+
+    PgResultPtr summary{PQexec(connection.get(), R"SQL(
+        SELECT COUNT(*), COALESCE(MAX(season), 0),
+               COALESCE(MAX(updated_at)::text, ''),
+               COUNT(DISTINCT NULLIF(team, '')),
+               COUNT(DISTINCT NULLIF(conference, ''))
+        FROM players WHERE active = TRUE
+    )SQL")};
+    if (PQresultStatus(summary.get()) != PGRES_TUPLES_OK || PQntuples(summary.get()) == 0) {
+        payload["status"] = "unavailable";
+        return payload;
+    }
+    payload["status"] = "ok";
+    payload["activePlayers"] = static_cast<Json::Int64>(std::atoll(PQgetvalue(summary.get(), 0, 0)));
+    payload["season"] = std::atoi(PQgetvalue(summary.get(), 0, 1));
+    payload["lastUpdated"] = PQgetvalue(summary.get(), 0, 2);
+    payload["teams"] = static_cast<Json::Int64>(std::atoll(PQgetvalue(summary.get(), 0, 3)));
+    payload["conferences"] = static_cast<Json::Int64>(std::atoll(PQgetvalue(summary.get(), 0, 4)));
+
+    Json::Value positions(Json::objectValue);
+    PgResultPtr positionRows{PQexec(connection.get(), R"SQL(
+        SELECT UPPER(COALESCE(NULLIF(position, ''), 'OTHER')), COUNT(*)
+        FROM players WHERE active = TRUE
+        GROUP BY 1 ORDER BY 2 DESC, 1 ASC
+    )SQL")};
+    if (PQresultStatus(positionRows.get()) == PGRES_TUPLES_OK) {
+        for (int row = 0; row < PQntuples(positionRows.get()); ++row) {
+            positions[PQgetvalue(positionRows.get(), row, 0)] =
+                static_cast<Json::Int64>(std::atoll(PQgetvalue(positionRows.get(), row, 1)));
+        }
+    }
+    payload["positions"] = positions;
+#else
+    payload["databaseConfigured"] = false;
+    payload["status"] = "unavailable";
+#endif
+    return payload;
 }
 
 } // namespace cff

@@ -9,6 +9,16 @@
     return Number.isFinite(parsed) ? parsed : fallback;
   }
 
+  function formatAge(value) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds < 0) return 'unknown';
+    if (seconds < 60) return `${Math.round(seconds)} sec ago`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)} hr ago`;
+    const days = Math.round(seconds / 86400);
+    return `${days} day${days === 1 ? '' : 's'} ago`;
+  }
+
   function parseStartDate(value) {
     if (!value) return null;
     const parsed = new Date(value);
@@ -118,6 +128,7 @@
     chooseDefaultWeek,
     buildSlides,
     timeGroupKey,
+    formatAge,
   };
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -136,6 +147,7 @@
   const slideNext = document.getElementById('score-slide-next');
   const rotationToggle = document.getElementById('score-rotation-toggle');
   const meta = document.getElementById('scoreboard-meta');
+  const freshness = document.getElementById('scoreboard-freshness');
   const dots = document.getElementById('scoreboard-dots');
 
   if (!scoreList) return;
@@ -302,6 +314,15 @@
     selectWeek(selectedWeek);
   }
 
+  function renderFreshness(payload = {}) {
+    if (!freshness) return;
+    const age = formatAge(payload.ageSeconds);
+    const scheduleAge = formatAge(payload.scheduleAgeSeconds);
+    const liveCount = Number(payload.liveGameCount || 0);
+    const stale = payload.fresh === false;
+    freshness.innerHTML = `<span class="data-freshness${stale ? ' is-stale' : ''}">${stale ? 'Score cache delayed' : 'Score cache current'} · ${age}</span><span>${Number(payload.scheduleGameCount || 0)} scheduled games · schedule ${scheduleAge}${liveCount ? ` · ${liveCount} live` : ''}</span>`;
+  }
+
   async function loadScoreboard() {
     scoreList.innerHTML = '<div class="scoreboard-empty">Loading the weekly schedule…</div>';
     try {
@@ -310,6 +331,13 @@
       });
       if (!response.ok) throw new Error(`Scoreboard request failed with ${response.status}`);
       renderLiveScores(await response.json(), false);
+      try {
+        const metaResponse = await root.fetch(`${apiBase}/scores/live/meta`, { headers: { Accept: 'application/json' } });
+        if (metaResponse.ok) renderFreshness(await metaResponse.json());
+        else if (freshness) freshness.textContent = 'Schedule freshness unavailable';
+      } catch {
+        if (freshness) freshness.textContent = 'Schedule freshness unavailable';
+      }
     } catch (error) {
       if (allowLocalDemo && Array.isArray(root.sampleScores)) {
         renderLiveScores(root.sampleScores, true);

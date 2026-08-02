@@ -37,6 +37,8 @@ jobs:
         run: |
           python -m py_compile \
             scripts/alpha_readiness.py \
+            scripts/alpha_ui_contract_tests.py \
+            scripts/public_data_meta_tests.py \
             scripts/api_smoke_tests.py \
             scripts/authorization_security_tests.py \
             scripts/render_deploy_and_wait.py \
@@ -51,6 +53,10 @@ jobs:
         run: |
           python scripts/ops_ingest_tests.py
           python scripts/ops_live_ingest_tests.py
+      - name: Test scoreboard and Alpha UI contracts
+        run: |
+          node scripts/scoreboard_ui_tests.js
+          python scripts/alpha_ui_contract_tests.py
       - name: Validate Render Blueprint cron configuration
         run: |
           python -m pip install --disable-pip-version-check pyyaml
@@ -89,7 +95,7 @@ jobs:
 
           assert roster['type'] == 'cron'
           assert roster['runtime'] == 'python'
-          assert roster['schedule'] == '0 8 * * 1'
+          assert roster['schedule'] == '0 10 * * 2'
           assert 'ops_ingest.py --run' in roster['startCommand']
 
           assert live['type'] == 'cron'
@@ -129,10 +135,12 @@ jobs:
           sh scripts/render-build-frontend.sh
           node --check frontend-dist/config.js
           test -f frontend-dist/polish.css
+          test -f frontend-dist/alpha-ui.css
           test -f frontend-dist/build-info.json
           grep -F "window.CFF_API_BASE = 'https://example.invalid/api';" frontend-dist/config.js
           grep -F "window.CFF_ALLOW_LOCAL_DEMO = false;" frontend-dist/config.js
           grep -F "Shared pre-beta UX" frontend-dist/polish.css
+          grep -F "Alpha release responsive dashboards" frontend-dist/alpha-ui.css
           python - <<'PY'
           import json
           with open('frontend-dist/build-info.json', encoding='utf-8') as handle:
@@ -243,6 +251,7 @@ jobs:
         run: |
           python scripts/api_smoke_tests.py
           python scripts/authorization_security_tests.py
+          python scripts/public_data_meta_tests.py
 
       - name: Backend logs
         if: always()
