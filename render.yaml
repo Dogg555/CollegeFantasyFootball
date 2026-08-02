@@ -96,6 +96,15 @@ services:
   - type: cron
     name: college-ff-cfbd-ingest
     runtime: python
+    schedule: "0 8 * * *"
+    plan: starter
+    buildCommand: python -m py_compile scripts/ops_ingest.py
+    startCommand: python scripts/ops_ingest.py --run
+    envVars:
+      - key: CFF_API_BASE_URL
+        sync: false
+      - key: CFF_ADMIN_API_TOKEN
+        sync: false
     plan: starter
     schedule: "0 10 * * *"
     buildCommand: python -m py_compile scripts/ops_ingest.py
