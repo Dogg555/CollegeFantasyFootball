@@ -14,6 +14,98 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = helpers;
   if (typeof document === 'undefined') return;
 
+  const pageName = root.location.pathname.split('/').pop() || 'index.html';
+  const privatePages = new Set(['league.html', 'draft.html']);
+  const isPrivatePage = privatePages.has(pageName);
+
+  if (isPrivatePage) {
+    document.documentElement.classList.add('cff-private-pending');
+  }
+
+  function redirectToSignIn() {
+    const next = `${pageName}${root.location.search || ''}${root.location.hash || ''}`;
+    root.location.replace(`signin.html?next=${encodeURIComponent(next)}`);
+  }
+
+  async function guardPrivatePage() {
+    if (!isPrivatePage) return true;
+
+    const auth = typeof root.getAuthState === 'function' ? root.getAuthState() : null;
+    if (!auth?.token) {
+      redirectToSignIn();
+      return false;
+    }
+
+    try {
+      const valid = typeof root.validateAuthSession === 'function'
+        ? await root.validateAuthSession()
+        : Boolean(auth?.token);
+      if (!valid) {
+        redirectToSignIn();
+        return false;
+      }
+    } catch {
+      redirectToSignIn();
+      return false;
+    }
+
+    document.documentElement.classList.remove('cff-private-pending');
+    return true;
+  }
+
+  const privateGuard = guardPrivatePage();
+
+  function setupBranding() {
+    if (!document.querySelector('link[rel~="icon"]')) {
+      const icon = document.createElement('link');
+      icon.rel = 'icon';
+      icon.type = 'image/svg+xml';
+      icon.href = 'assets/favicon.svg';
+      document.head.appendChild(icon);
+    }
+
+    if (!document.querySelector('meta[name="theme-color"]')) {
+      const theme = document.createElement('meta');
+      theme.name = 'theme-color';
+      theme.content = '#0d1116';
+      document.head.appendChild(theme);
+    }
+
+    document.querySelectorAll('.brand__logo').forEach((logo) => {
+      logo.setAttribute('aria-hidden', 'true');
+      logo.title = 'College Fantasy Football';
+    });
+  }
+
+  function simplifyPageCopy() {
+    const footer = document.querySelector('.footer');
+    if (footer) footer.textContent = 'College Fantasy Football';
+
+    if (pageName === 'index.html') {
+      const heroPill = document.querySelector('.hero__copy > .pill');
+      const heroSubtitle = document.querySelector('.hero__copy > .subtitle');
+      const heroHint = document.querySelector('.hero__copy > .muted.small');
+      const createCard = document.querySelector('main .card--accent');
+      const createCopy = createCard?.querySelector(':scope > p.muted');
+      const scheduleHint = document.querySelector('#scoreboard-heading + .muted.small');
+
+      if (heroPill) heroPill.textContent = 'College fantasy';
+      if (heroSubtitle) heroSubtitle.textContent = 'Create a league, build your roster, and follow the college football season.';
+      if (heroHint) heroHint.textContent = 'Set your rules, invite managers, and schedule the draft.';
+      if (createCopy) createCopy.textContent = 'Choose the league size, scoring format, draft type, and invite list.';
+      if (scheduleHint) scheduleHint.textContent = 'Choose a week to view games grouped by kickoff time.';
+    }
+
+    if (pageName === 'players.html') {
+      const heroHeading = document.querySelector('.hero__copy h1');
+      const heroSubtitle = document.querySelector('.hero__copy .subtitle');
+      const helper = document.querySelector('.card > p.muted.small');
+      if (heroHeading) heroHeading.textContent = 'Players';
+      if (heroSubtitle) heroSubtitle.textContent = 'Search current FBS rosters by player, team, position, or conference.';
+      if (helper) helper.textContent = 'Leave the search blank to browse all active players.';
+    }
+  }
+
   function setupLeagueMobileNav() {
     const tabs = document.querySelector('.league-tabs');
     if (!tabs || document.querySelector('.league-tab-select')) return;
@@ -21,8 +113,7 @@
     if (!targets.length) return;
 
     const wrap = document.createElement('div');
-    wrap.className = 'league-tab-select-wrap layout';
-    wrap.style.maxWidth = '1080px';
+    wrap.className = 'league-tab-select-wrap';
     const label = document.createElement('label');
     label.className = 'field';
     label.innerHTML = '<span>League section</span>';
@@ -38,7 +129,7 @@
     });
     label.appendChild(select);
     wrap.appendChild(label);
-    tabs.closest('main')?.insertAdjacentElement('afterend', wrap);
+    tabs.insertAdjacentElement('beforebegin', wrap);
 
     select.addEventListener('change', () => {
       const target = targets[Number(select.value)];
@@ -112,14 +203,18 @@
     update();
   }
 
-  function init() {
+  async function init() {
+    const allowed = await privateGuard;
+    if (!allowed) return;
     document.documentElement.classList.add('alpha-ui-ready');
+    setupBranding();
+    simplifyPageCopy();
     setupLeagueMobileNav();
     setupCollapsibleCards();
     setupDraftStatusDock();
   }
 
   root.CFF_ALPHA_UI = helpers;
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { void init(); });
+  else void init();
 })(typeof window !== 'undefined' ? window : globalThis);
