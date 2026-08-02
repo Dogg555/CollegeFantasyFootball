@@ -16,6 +16,7 @@ endif()
 
 add_executable(college_ff_server
     src/main.cpp
+    src/email_delivery.cpp
     src/security_hardening.cpp
     src/json_utils.cpp
     src/handlers/league_handler.cpp
@@ -28,6 +29,7 @@ add_executable(college_ff_server
 target_include_directories(college_ff_server PRIVATE src)
 
 find_package(PostgreSQL REQUIRED)
+find_package(CURL REQUIRED)
 
 # Prefer CMake configs when available; fall back to pkg-config for pqxx and cpr.
 find_package(pqxx CONFIG QUIET)
@@ -49,6 +51,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 target_link_libraries(college_ff_server PRIVATE
     PostgreSQL::PostgreSQL
+    CURL::libcurl
 )
 
 if (pqxx_FOUND)
