@@ -2,6 +2,21 @@
 -- normalization in migration 002. This migration is safe to run against already
 -- normalized databases and is intentionally ordered before 002.
 
+-- User accounts cannot be merged safely because their password hashes may differ.
+-- Abort before changing any dependent identity data when such a collision exists.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT lower(btrim(email))
+    FROM users
+    GROUP BY lower(btrim(email))
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION 'Cannot normalize account emails because case-insensitive duplicates exist';
+  END IF;
+END
+$$;
+
 CREATE TEMP TABLE cff_normalized_league_members ON COMMIT DROP AS
 SELECT
   league_id,
