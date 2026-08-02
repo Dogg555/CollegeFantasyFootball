@@ -4,7 +4,7 @@ window.CFF_API_BASE = window.CFF_API_BASE || '/api';
 window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
 
 (() => {
-  const scripts = ['polish-core.js', 'polish-forms.js', 'polish-state.js'];
+  const scripts = ['polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js'];
 
   function ensureBranding() {
     if (!document.querySelector('link[rel~="icon"]')) {
@@ -17,41 +17,40 @@ window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
     if (!document.querySelector('meta[name="theme-color"]')) {
       const theme = document.createElement('meta');
       theme.name = 'theme-color';
-      theme.content = '#0d1116';
+      theme.content = '#080d12';
       document.head.appendChild(theme);
     }
+  }
+
+  function writeStylesheet(href, attribute) {
+    if (document.querySelector(`link[href="${href}"]`)) return;
+    document.write(`<link rel="stylesheet" href="${href}" ${attribute}>`);
+  }
+
+  function appendStylesheet(href, datasetKey) {
+    if (document.querySelector(`link[href="${href}"]`)) return;
+    const stylesheet = document.createElement('link');
+    stylesheet.rel = 'stylesheet';
+    stylesheet.href = href;
+    if (datasetKey) stylesheet.dataset[datasetKey] = 'true';
+    document.head.appendChild(stylesheet);
   }
 
   ensureBranding();
 
   if (document.readyState === 'loading') {
-    if (!document.querySelector('link[data-cff-polish]')) {
-      document.write('<link rel="stylesheet" href="polish.css" data-cff-polish="true">');
-    }
-    if (!document.querySelector('link[href="alpha-ui.css"]')) {
-      document.write('<link rel="stylesheet" href="alpha-ui.css" data-cff-modern="true">');
-    }
+    writeStylesheet('polish.css', 'data-cff-polish="true"');
+    writeStylesheet('alpha-ui.css', 'data-cff-modern="true"');
+    writeStylesheet('beta-ui.css', 'data-cff-beta="true"');
     scripts.forEach((source) => {
       document.write(`<script src="${source}"><\/script>`);
     });
     return;
   }
 
-  if (!document.querySelector('link[data-cff-polish]')) {
-    const stylesheet = document.createElement('link');
-    stylesheet.rel = 'stylesheet';
-    stylesheet.href = 'polish.css';
-    stylesheet.dataset.cffPolish = 'true';
-    document.head.appendChild(stylesheet);
-  }
-
-  if (!document.querySelector('link[href="alpha-ui.css"]')) {
-    const modern = document.createElement('link');
-    modern.rel = 'stylesheet';
-    modern.href = 'alpha-ui.css';
-    modern.dataset.cffModern = 'true';
-    document.head.appendChild(modern);
-  }
+  appendStylesheet('polish.css', 'cffPolish');
+  appendStylesheet('alpha-ui.css', 'cffModern');
+  appendStylesheet('beta-ui.css', 'cffBeta');
 
   scripts.reduce((chain, source) => chain.then(() => new Promise((resolve, reject) => {
     if (document.querySelector(`script[src="${source}"]`)) {
