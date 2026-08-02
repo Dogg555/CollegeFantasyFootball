@@ -1,10 +1,29 @@
 #!/usr/bin/env python3
 import unittest
+import urllib.parse
 
 from espn_roster_ingest import Team, parse_player, parse_teams
+from espn_team_directory import conference_teams_url
 
 
 class EspnRosterIngestTests(unittest.TestCase):
+    def test_builds_conference_filtered_team_directory_url(self):
+        parsed = urllib.parse.urlparse(conference_teams_url(1))
+        self.assertEqual(parsed.scheme, "https")
+        self.assertEqual(parsed.netloc, "site.web.api.espn.com")
+        self.assertEqual(
+            parsed.path,
+            "/apis/site/v2/sports/football/college-football/teams",
+        )
+        self.assertEqual(
+            urllib.parse.parse_qs(parsed.query),
+            {
+                "groups": ["1"],
+                "groupType": ["conference"],
+                "enable": ["groups"],
+            },
+        )
+
     def test_parses_team_directory_shape(self):
         payload = {
             "sports": [
