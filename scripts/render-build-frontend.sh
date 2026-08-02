@@ -33,17 +33,29 @@ window.CFF_BUILD_COMMIT = '${BUILD_COMMIT}';
 EOF_CONFIG
 cat frontend/config.js >> frontend-dist/config.js
 
-# Load compatibility helpers before the page controller. This protects users
-# from mixed static assets during a rolling deploy or an over-aggressive cache.
-if grep -q '<script src="league.js"></script>' frontend-dist/league.html; then
-  sed -i 's|<script src="league.js"></script>|<script src="runtime-compat.js"></script>\
-  <script src="league.js"></script>|' frontend-dist/league.html
+# Load compatibility helpers before the league page controller. Use awk and a
+# temporary file instead of an in-place multiline sed expression so the build
+# works consistently across GNU, BusyBox, and BSD-style tooling.
+LEAGUE_HTML="frontend-dist/league.html"
+if [ -f "${LEAGUE_HTML}" ] && ! grep -q 'runtime-compat.js' "${LEAGUE_HTML}"; then
+  LEAGUE_TMP="${LEAGUE_HTML}.tmp"
+  awk '
+    /<script src="league\.js"><\/script>/ {
+      print "  <script src=\"runtime-compat.js\"></script>"
+    }
+    { print }
+  ' "${LEAGUE_HTML}" > "${LEAGUE_TMP}"
+  mv "${LEAGUE_TMP}" "${LEAGUE_HTML}"
 fi
 
-# Version every directly referenced JavaScript asset so HTML, state helpers,
-# and page controllers always come from the same frontend build.
-find frontend-dist -type f -name '*.html' -exec sed -i -E \
-  "s#src=\"([^\"]+\\.js)\"#src=\"\\1?v=${CACHE_VERSION}\"#g" {} +
+# Version directly referenced JavaScript assets so HTML, state helpers, and
+# page controllers always come from the same frontend build. Avoid sed -i and
+# find -exec portability differences by writing each transformed file safely.
+find frontend-dist -type f -name '*.html' -print | while IFS= read -r html_file; do
+  html_tmp="${html_file}.tmp"
+  sed "s#src=\"\([^\"]*\\.js\)\"#src=\"\\1?v=${CACHE_VERSION}\"#g" "${html_file}" > "${html_tmp}"
+  mv "${html_tmp}" "${html_file}"
+done
 
 cat > frontend-dist/build-info.json <<EOF_BUILD
 {"commit":"${BUILD_COMMIT}","branch":"${BUILD_BRANCH}","apiBase":"${CFF_API_BASE}"}
