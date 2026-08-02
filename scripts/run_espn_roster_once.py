@@ -61,7 +61,10 @@ def main() -> int:
     # remains held for the entire scrape and database upsert.
     with psycopg.connect(database_url, autocommit=True) as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (lock_name,))
+            cursor.execute(
+                "SELECT pg_try_advisory_lock(hashtext(%s)::bigint)",
+                (lock_name,),
+            )
             row = cursor.fetchone()
             if not row or not bool(row[0]):
                 print(
