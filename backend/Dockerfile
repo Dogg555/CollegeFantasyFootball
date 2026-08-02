@@ -1,5 +1,5 @@
 # Backend container for local testing and Render deployment
-FROM debian:bookworm AS build
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG BUILD_JOBS=1
@@ -58,9 +58,9 @@ RUN git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/c
  && rm -rf /tmp/cpr
 
 # Render builds from the repository root so the one-time ESPN scripts are
-# available to its pre-deploy command and startup recovery. Existing local CI
-# may still build with ./backend as context, so fetch the pinned resumable
-# scripts when root scripts are not present.
+# available to its pre-deploy command and optional startup recovery. Existing
+# local CI may still build with ./backend as context, so fetch the pinned
+# resumable scripts when root scripts are not present.
 WORKDIR /app
 COPY . /context
 RUN set -eux; \
@@ -91,7 +91,7 @@ RUN cmake -S . -B build \
         -DCMAKE_PREFIX_PATH=/usr/local \
  && cmake --build build --target college_ff_server --parallel "${BUILD_JOBS}" --verbose
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     postgresql-client \
