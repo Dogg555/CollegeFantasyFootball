@@ -45,22 +45,30 @@ jobs:
             scripts/render_smoke_tests.py \
             scripts/frontend_browser_smoke.py \
             scripts/offsite_backup.py \
+            scripts/restore_backup.py \
+            scripts/release_gate_common.py \
+            scripts/email_acceptance.py \
+            scripts/data_ingestion_validation.py \
+            scripts/full_lifecycle_tests.py \
+            scripts/release_gate_unit_tests.py \
             scripts/ops_ingest.py \
             scripts/ops_ingest_tests.py \
             scripts/ops_live_ingest.py \
             scripts/ops_live_ingest_tests.py
-      - name: Test scheduled ingestion runners
+      - name: Test release-gate helpers and ingestion runners
         run: |
+          python scripts/release_gate_unit_tests.py
           python scripts/ops_ingest_tests.py
           python scripts/ops_live_ingest_tests.py
       - name: Test scoreboard and Alpha UI contracts
         run: |
           node scripts/scoreboard_ui_tests.js
           python scripts/alpha_ui_contract_tests.py
-      - name: Validate Render Blueprint cron configuration
+      - name: Validate Render Blueprint and release workflows
         run: |
           python -m pip install --disable-pip-version-check pyyaml
           python - <<'PY'
+          import pathlib
           import yaml
 
           class UniqueKeyLoader(yaml.SafeLoader):
@@ -108,6 +116,9 @@ jobs:
           backup_env = {item['key']: item for item in backup['envVars']}
           assert backup_env['CFF_BACKUP_SSE']['value'] == 'AES256'
           assert backup_env['CFF_BACKUP_RETENTION_DAYS']['value'] == '30'
+          assert backup_env['CFF_BACKUP_VERIFY_UPLOAD']['value'] == 'true'
+          assert int(backup_env['CFF_BACKUP_MIN_BYTES']['value']) >= 1024
+          assert backup_env['AWS_ENDPOINT_URL']['sync'] is False
 
           for service in (roster, live):
               env = {item['key']: item for item in service['envVars']}
@@ -122,8 +133,21 @@ jobs:
                   'envVarKey': 'CFF_ADMIN_API_TOKEN',
               }
 
-          with open('.github/workflows/alpha-readiness.yml', encoding='utf-8') as handle:
-              yaml.safe_load(handle)
+          for workflow_path in (
+              '.github/workflows/alpha-readiness.yml',
+              '.github/workflows/backup-restore-validation.yml',
+          ):
+              with open(workflow_path, encoding='utf-8') as handle:
+                  workflow = yaml.load(handle, Loader=UniqueKeyLoader)
+              assert workflow
+
+          required_scripts = {
+              'scripts/email_acceptance.py',
+              'scripts/data_ingestion_validation.py',
+              'scripts/full_lifecycle_tests.py',
+              'scripts/restore_backup.py',
+          }
+          assert all(pathlib.Path(path).is_file() for path in required_scripts)
           PY
       - name: Validate Render frontend build
         env:
