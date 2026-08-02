@@ -76,7 +76,9 @@ jobs:
         run: python scripts/render_deploy_and_wait.py
 
       - name: Run full deployed API smoke suite
-        run: python scripts/api_smoke_tests.py
+        run: |
+          python scripts/api_smoke_tests.py
+          python scripts/public_data_meta_tests.py
 
       - name: Run deployed acceptance and CORS suite
         run: python scripts/render_smoke_tests.py
@@ -108,4 +110,4 @@ jobs:
           echo "- Deploy ID: ${{ steps.render.outputs.deploy_id }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Deploy status: ${{ steps.render.outputs.deploy_status }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Email verification checks: $CFF_SMOKE_TEST_EMAIL_VERIFICATION" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Acceptance: health, database, CORS allowlist, signup mode, login/session, league creation, admin authorization, and desktop/mobile browser smoke" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Acceptance: health, database, public player/schedule metadata, CORS allowlist, signup mode, login/session, league creation, admin authorization, and desktop/mobile browser smoke" >> "$GITHUB_STEP_SUMMARY"
