@@ -3,6 +3,7 @@ FROM debian:bookworm AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG BUILD_JOBS=1
+ARG ESPN_BOOTSTRAP_REF=7d396b6c4249e032e2aafc5b9e41f993f4bfcbc4
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -56,9 +57,10 @@ RUN git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/c
  && ldconfig \
  && rm -rf /tmp/cpr
 
-# Render builds from the repository root so the one-time ESPN scripts are
-# available. Existing local/CI commands still build with ./backend as context.
-# Normalize either context shape into /app/backend and /app/scripts.
+# Render should build from the repository root so the one-time ESPN scripts are
+# available. Existing services and local CI may still build with ./backend as
+# context, so fetch the pinned, reviewed scripts when the root scripts are not
+# present. This keeps the startup fallback working in both context layouts.
 WORKDIR /app
 COPY . /context
 RUN set -eux; \
@@ -69,7 +71,16 @@ RUN set -eux; \
         cp /context/scripts/run_espn_roster_once.py /app/scripts/; \
     else \
         cp -a /context/. /app/backend/; \
-    fi
+        curl -fsSL \
+          "https://raw.githubusercontent.com/Dogg555/CollegeFantasyFootball/${ESPN_BOOTSTRAP_REF}/scripts/espn_roster_ingest.py" \
+          -o /app/scripts/espn_roster_ingest.py; \
+        curl -fsSL \
+          "https://raw.githubusercontent.com/Dogg555/CollegeFantasyFootball/${ESPN_BOOTSTRAP_REF}/scripts/run_espn_roster_once.py" \
+          -o /app/scripts/run_espn_roster_once.py; \
+    fi; \
+    python3 -m py_compile \
+      /app/scripts/espn_roster_ingest.py \
+      /app/scripts/run_espn_roster_once.py
 
 WORKDIR /app/backend
 RUN cmake -S . -B build \
@@ -108,4 +119,5 @@ COPY --from=build --chown=cff:cff /app/scripts /srv/scripts
 USER 10001:10001
 EXPOSE 8080
 ENV PORT=8080
-CMD ["/srv/college_ff_server"]
+ENV ESPN_ROSTER_AUTO_ONCE=true
+CMD ["sh", "-c", "sh /srv/db/migrate.sh && python3 /srv/scripts/run_espn_roster_once.py && exec /srv/college_ff_server"]
