@@ -52,6 +52,7 @@ std::unordered_map<std::string, Json::Value> rostersByLeague;
 std::unordered_map<std::string, Json::Value> waiversByLeague;
 std::unordered_map<std::string, Json::Value> tradesByLeague;
 std::unordered_map<std::string, Json::Value> transactionsByLeague;
+std::unordered_map<std::string, Json::Value> feedPostsByLeague;
 std::unordered_map<std::string, Json::Value> matchupsByLeague;
 std::unordered_map<std::string, Json::Value> membersByLeague;
 std::unordered_map<std::string, Json::Value> draftPicksByLeague;
@@ -829,6 +830,84 @@ void addTransactionLocked(const std::string &leagueId,
     txn["managerEmail"] = managerEmail;
     txn["createdAt"] = timestampId("at");
     transactions.insert(0, txn);
+}
+
+Json::Value feedItem(const std::string &type,
+                     const std::string &summary,
+                     const std::string &createdAt,
+                     const std::string &managerEmail,
+                     const std::string &badge) {
+    Json::Value item;
+    item["type"] = type;
+    item["summary"] = summary;
+    item["createdAt"] = createdAt.empty() ? timestampId("at") : createdAt;
+    item["managerEmail"] = managerEmail;
+    item["badge"] = badge;
+    return item;
+}
+
+void sortFeedItems(Json::Value &items) {
+    std::vector<Json::Value> sorted;
+    for (const auto &item : items) {
+        sorted.push_back(item);
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const Json::Value &a, const Json::Value &b) {
+        return jsonString(a, "createdAt") > jsonString(b, "createdAt");
+    });
+    items = Json::Value{Json::arrayValue};
+    for (std::size_t i = 0; i < sorted.size() && i < 100; ++i) {
+        items.append(sorted[i]);
+    }
+}
+
+Json::Value buildLocalLeagueFeed(const std::string &leagueId) {
+    Json::Value items(Json::arrayValue);
+    for (const auto &post : arrayForLeague(feedPostsByLeague, leagueId)) {
+        items.append(feedItem(jsonString(post, "type", "Commissioner Post"),
+                              jsonString(post, "summary"),
+                              jsonString(post, "createdAt"),
+                              jsonString(post, "managerEmail"),
+                              "Post"));
+    }
+    for (const auto &txn : arrayForLeague(transactionsByLeague, leagueId)) {
+        items.append(feedItem(jsonString(txn, "type", "Transaction"),
+                              jsonString(txn, "summary"),
+                              jsonString(txn, "createdAt"),
+                              jsonString(txn, "managerEmail"),
+                              "Transaction"));
+    }
+    for (const auto &claim : arrayForLeague(waiversByLeague, leagueId)) {
+        const auto status = jsonString(claim, "status", "Claim");
+        const auto playerName = jsonString(claim["addPlayer"], "name", "player");
+        items.append(feedItem("Waiver " + status,
+                              status + ": " + playerName + (jsonString(claim, "dropPlayerId").empty() ? "" : " with a drop"),
+                              jsonString(claim, "createdAt"),
+                              jsonString(claim, "managerEmail"),
+                              "Waiver"));
+    }
+    for (const auto &trade : arrayForLeague(tradesByLeague, leagueId)) {
+        const auto status = jsonString(trade, "status", "Offer");
+        const auto offerName = jsonString(trade["offerPlayer"], "name", "player");
+        const auto requestName = jsonString(trade["requestPlayer"], "name", jsonString(trade, "requestPlayerName", "return"));
+        items.append(feedItem("Trade " + status,
+                              status + ": " + offerName + " for " + requestName,
+                              jsonString(trade, "createdAt"),
+                              jsonString(trade, "offeredByEmail"),
+                              "Trade"));
+    }
+    for (const auto &matchup : arrayForLeague(matchupsByLeague, leagueId)) {
+        if (lowerString(jsonString(matchup, "status")) != "final") continue;
+        const auto homeScore = matchup["homeScore"].asDouble();
+        const auto awayScore = matchup["awayScore"].asDouble();
+        const auto winner = homeScore >= awayScore ? jsonString(matchup, "homeManager") : jsonString(matchup, "awayManager");
+        const auto loser = homeScore >= awayScore ? jsonString(matchup, "awayManager") : jsonString(matchup, "homeManager");
+        std::ostringstream summary;
+        summary << winner << " beat " << loser << " " << std::fixed << std::setprecision(1)
+                << std::max(homeScore, awayScore) << "-" << std::min(homeScore, awayScore) << ".";
+        items.append(feedItem("Final Score", summary.str(), jsonString(matchup, "finalizedAt"), winner, "Final"));
+    }
+    sortFeedItems(items);
+    return items;
 }
 
 int indexOfPlayer(const Json::Value &arr, const std::string &playerId) {
@@ -2210,6 +2289,144 @@ std::optional<Json::Value> dbListTransactions(const std::string &accountEmail, c
         txns.append(txn);
     }
     return txns;
+}
+
+std::optional<Json::Value> dbCreateLeagueFeedPost(const std::string &accountEmail,
+                                                  const std::string &leagueId,
+                                                  const std::string &body) {
+    if (!dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+    const auto trimmed = body.substr(0, std::min<std::size_t>(body.size(), 2000));
+    if (trimmed.empty()) return std::nullopt;
+    const auto postId = timestampId("feed-post");
+    auto result = execParams(conn.get(),
+                             "INSERT INTO league_feed_posts (id, league_id, manager_email, post_type, body) "
+                             "VALUES ($1, $2, $3, 'commissioner_post', $4) "
+                             "RETURNING id, post_type, body, manager_email, "
+                             "COALESCE(to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '')",
+                             {postId, leagueId, accountEmail, trimmed});
+    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
+    return feedItem("Commissioner Post", cell(result.get(), 0, 2), cell(result.get(), 0, 4), cell(result.get(), 0, 3), "Post");
+}
+
+std::optional<Json::Value> dbListLeagueFeed(const std::string &accountEmail, const std::string &leagueId) {
+    if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
+    auto conn = connectToDb();
+    if (!conn) return std::nullopt;
+
+    Json::Value items(Json::arrayValue);
+
+    auto posts = execParams(conn.get(),
+                            "SELECT post_type, body, manager_email, "
+                            "COALESCE(to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+                            "FROM league_feed_posts WHERE league_id = $1 ORDER BY created_at DESC LIMIT 100",
+                            {leagueId});
+    if (!resultOk(posts.get(), PGRES_TUPLES_OK)) return std::nullopt;
+    for (int row = 0; row < PQntuples(posts.get()); ++row) {
+        const auto type = cell(posts.get(), row, 0) == "commissioner_post" ? "Commissioner Post" : cell(posts.get(), row, 0);
+        items.append(feedItem(type, cell(posts.get(), row, 1), cell(posts.get(), row, 3), cell(posts.get(), row, 2), "Post"));
+    }
+
+    auto txns = execParams(conn.get(),
+                           "SELECT transaction_type, summary, COALESCE(manager_email, ''), "
+                           "COALESCE(to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+                           "FROM transactions WHERE league_id = $1 ORDER BY created_at DESC LIMIT 100",
+                           {leagueId});
+    if (!resultOk(txns.get(), PGRES_TUPLES_OK)) return std::nullopt;
+    for (int row = 0; row < PQntuples(txns.get()); ++row) {
+        items.append(feedItem(cell(txns.get(), row, 0), cell(txns.get(), row, 1), cell(txns.get(), row, 3), cell(txns.get(), row, 2), "Transaction"));
+    }
+
+    auto waivers = execParams(conn.get(),
+                              "SELECT status, add_player_snapshot::text, COALESCE(drop_player_id, ''), manager_email, "
+                              "COALESCE(to_char(COALESCE(processed_at, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+                              "FROM waiver_claims WHERE league_id = $1 ORDER BY COALESCE(processed_at, created_at) DESC LIMIT 100",
+                              {leagueId});
+    if (!resultOk(waivers.get(), PGRES_TUPLES_OK)) return std::nullopt;
+    for (int row = 0; row < PQntuples(waivers.get()); ++row) {
+        const auto status = statusForUi(cell(waivers.get(), row, 0));
+        const auto player = jsonFromString(cell(waivers.get(), row, 1));
+        items.append(feedItem("Waiver " + status,
+                              status + ": " + jsonString(player, "name", "player") + (cell(waivers.get(), row, 2).empty() ? "" : " with a drop"),
+                              cell(waivers.get(), row, 4),
+                              cell(waivers.get(), row, 3),
+                              "Waiver"));
+    }
+
+    auto trades = execParams(conn.get(),
+                             "SELECT status, offer_player_snapshot::text, request_player_snapshot::text, request_player_name, offered_by_email, "
+                             "COALESCE(to_char(COALESCE(resolved_at, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+                             "FROM trade_offers WHERE league_id = $1 ORDER BY COALESCE(resolved_at, created_at) DESC LIMIT 100",
+                             {leagueId});
+    if (!resultOk(trades.get(), PGRES_TUPLES_OK)) return std::nullopt;
+    for (int row = 0; row < PQntuples(trades.get()); ++row) {
+        const auto status = statusForUi(cell(trades.get(), row, 0));
+        const auto offer = jsonFromString(cell(trades.get(), row, 1));
+        const auto request = jsonFromString(cell(trades.get(), row, 2));
+        const auto requestName = jsonString(request, "name", cell(trades.get(), row, 3).empty() ? "return" : cell(trades.get(), row, 3));
+        items.append(feedItem("Trade " + status,
+                              status + ": " + jsonString(offer, "name", "player") + " for " + requestName,
+                              cell(trades.get(), row, 5),
+                              cell(trades.get(), row, 4),
+                              "Trade"));
+    }
+
+    auto matchups = execParams(conn.get(),
+                               "SELECT week, home_manager_email, COALESCE(away_manager_email, ''), home_score, away_score, "
+                               "COALESCE(to_char(COALESCE(finalized_at, updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+                               "FROM league_matchups WHERE league_id = $1 AND status = 'final' ORDER BY COALESCE(finalized_at, updated_at) DESC LIMIT 100",
+                               {leagueId});
+    if (!resultOk(matchups.get(), PGRES_TUPLES_OK)) return std::nullopt;
+    double highScore = -1.0;
+    double lowScore = 1000000.0;
+    double largestMargin = -1.0;
+    std::string highManager;
+    std::string lowManager;
+    std::string marginWinner;
+    std::string marginLoser;
+    std::string awardsAt;
+    for (int row = 0; row < PQntuples(matchups.get()); ++row) {
+        const auto home = cell(matchups.get(), row, 1);
+        const auto away = cell(matchups.get(), row, 2);
+        const auto homeScore = std::stod(cell(matchups.get(), row, 3).empty() ? "0" : cell(matchups.get(), row, 3));
+        const auto awayScore = std::stod(cell(matchups.get(), row, 4).empty() ? "0" : cell(matchups.get(), row, 4));
+        const auto winner = homeScore >= awayScore ? home : away;
+        const auto loser = homeScore >= awayScore ? away : home;
+        const auto winnerScore = std::max(homeScore, awayScore);
+        const auto loserScore = std::min(homeScore, awayScore);
+        std::ostringstream finalSummary;
+        finalSummary << winner << " beat " << loser << " " << std::fixed << std::setprecision(1) << winnerScore << "-" << loserScore << ".";
+        items.append(feedItem("Final Score", finalSummary.str(), cell(matchups.get(), row, 5), winner, "Final"));
+        awardsAt = awardsAt.empty() ? cell(matchups.get(), row, 5) : awardsAt;
+        if (homeScore > highScore) { highScore = homeScore; highManager = home; }
+        if (awayScore > highScore) { highScore = awayScore; highManager = away; }
+        if (homeScore < lowScore) { lowScore = homeScore; lowManager = home; }
+        if (awayScore < lowScore) { lowScore = awayScore; lowManager = away; }
+        if (winnerScore - loserScore > largestMargin) {
+            largestMargin = winnerScore - loserScore;
+            marginWinner = winner;
+            marginLoser = loser;
+        }
+    }
+    if (!highManager.empty()) {
+        std::ostringstream highSummary;
+        highSummary << highManager << " posted the high score with " << std::fixed << std::setprecision(1) << highScore << " points.";
+        items.append(feedItem("Weekly Award", highSummary.str(), awardsAt, highManager, "Highest Score"));
+    }
+    if (!lowManager.empty()) {
+        std::ostringstream lowSummary;
+        lowSummary << lowManager << " survived the lowest score at " << std::fixed << std::setprecision(1) << lowScore << " points.";
+        items.append(feedItem("Weekly Award", lowSummary.str(), awardsAt, lowManager, "Lowest Score"));
+    }
+    if (!marginWinner.empty() && largestMargin > 0) {
+        std::ostringstream marginSummary;
+        marginSummary << marginWinner << " won by " << std::fixed << std::setprecision(1) << largestMargin << " points over " << marginLoser << ".";
+        items.append(feedItem("Weekly Award", marginSummary.str(), awardsAt, marginWinner, "Largest Margin"));
+    }
+
+    sortFeedItems(items);
+    return items;
 }
 
 double dbProjectedScore(PGconn *conn, const std::string &leagueId, const std::string &managerEmail) {
@@ -3977,6 +4194,66 @@ void handleListTransactions(const drogon::HttpRequestPtr&,
         return;
     }
     callback(jsonResponse(arrayForLeague(transactionsByLeague, leagueId), drogon::k200OK));
+}
+
+void handleListLeagueFeed(const drogon::HttpRequestPtr&,
+                          std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                          const std::string &accountEmail,
+                          const std::string &leagueId) {
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        auto feed = dbListLeagueFeed(accountEmail, leagueId);
+        if (!feed) {
+            sendError(callback, drogon::k404NotFound, "League not found");
+            return;
+        }
+        callback(jsonResponse(*feed, drogon::k200OK));
+        return;
+    }
+#endif
+
+    std::lock_guard<std::mutex> lock(storeMutex);
+    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    callback(jsonResponse(buildLocalLeagueFeed(leagueId), drogon::k200OK));
+}
+
+void handleCreateLeagueFeedPost(const drogon::HttpRequestPtr &req,
+                                std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                const std::string &accountEmail,
+                                const std::string &leagueId) {
+    const auto body = req->getJsonObject();
+    const auto message = body ? jsonString(*body, "body") : "";
+    if (message.empty() || message.size() > 2000) {
+        sendError(callback, drogon::k400BadRequest, "Post body is required and must be 2000 characters or less");
+        return;
+    }
+
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        auto post = dbCreateLeagueFeedPost(accountEmail, leagueId, message);
+        if (!post) {
+            sendError(callback, drogon::k403Forbidden, "Commissioner access required");
+            return;
+        }
+        callback(jsonResponse(*post, drogon::k201Created));
+        return;
+    }
+#endif
+
+    std::lock_guard<std::mutex> lock(storeMutex);
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
+        return;
+    }
+    Json::Value post;
+    post["id"] = timestampId("feed-post");
+    post["type"] = "Commissioner Post";
+    post["summary"] = message;
+    post["managerEmail"] = accountEmail;
+    post["createdAt"] = timestampId("at");
+    arrayForLeague(feedPostsByLeague, leagueId).insert(0, post);
+    callback(jsonResponse(feedItem("Commissioner Post", message, jsonString(post, "createdAt"), accountEmail, "Post"), drogon::k201Created));
 }
 
 void handleListMatchups(const drogon::HttpRequestPtr&,

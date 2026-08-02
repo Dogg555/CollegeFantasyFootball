@@ -41,6 +41,11 @@ const tradeStatus = document.getElementById('trade-status');
 const tradeSubmitButton = tradeForm?.querySelector('button[type="submit"]');
 const tradeList = document.getElementById('trade-list');
 const transactionList = document.getElementById('transaction-list');
+const leagueFeedList = document.getElementById('league-feed-list');
+const leagueFeedCount = document.getElementById('league-feed-count');
+const commissionerPostForm = document.getElementById('commissioner-post-form');
+const commissionerPost = document.getElementById('commissioner-post');
+const commissionerPostStatus = document.getElementById('commissioner-post-status');
 const commissionerSettings = document.getElementById('commissioner-settings');
 const commissionerLocked = document.getElementById('commissioner-locked');
 const settingsForm = document.getElementById('league-settings-form');
@@ -73,6 +78,7 @@ const waiverFaLock = document.getElementById('waiver-fa-lock');
 const tradeApproval = document.getElementById('trade-approval');
 const tradeExpiration = document.getElementById('trade-expiration');
 const managerList = document.getElementById('manager-list');
+let latestApiFeedItems = [];
 const managerCount = document.getElementById('manager-count');
 const copyInviteLinkBtn = document.getElementById('copy-invite-link');
 const inviteLinkStatus = document.getElementById('invite-link-status');
@@ -92,6 +98,7 @@ const leagueTabs = document.querySelectorAll('[data-league-tab]');
 const leaguePanels = document.querySelectorAll('[data-league-panel]');
 let activeScoreboardWeek = 1;
 const CFF_PENDING_JOIN_KEY = 'cff_pending_join_requests';
+const CFF_LEAGUE_FEED_POSTS_KEY = 'cff_league_feed_posts_by_league';
 
 function renderLeague() {
   updateSharedNav('league');
@@ -141,6 +148,7 @@ function renderLeague() {
   renderWaivers();
   renderWaiverPriority(leagueState);
   renderTrades(leagueState);
+  renderLeagueFeed(leagueState);
   renderTransactions();
 }
 
@@ -553,6 +561,186 @@ function renderTransactions() {
         ${txn.managerEmail ? `<div class="muted small">${escapeHtml(managerDisplayName(txn.managerEmail))}</div>` : ''}
       </div>
       <div class="label">${new Date(txn.createdAt).toLocaleString()}</div>
+    </div>
+  `).join('');
+}
+
+function readFeedPostStore() {
+  try {
+    return JSON.parse(localStorage.getItem(CFF_LEAGUE_FEED_POSTS_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+function feedPostKey(league = getLeagueState()) {
+  return league?.id || 'local';
+}
+
+function getCommissionerPosts(league = getLeagueState()) {
+  const store = readFeedPostStore();
+  const posts = store[feedPostKey(league)];
+  return Array.isArray(posts) ? posts : [];
+}
+
+function saveCommissionerPosts(posts = [], league = getLeagueState()) {
+  const store = readFeedPostStore();
+  store[feedPostKey(league)] = posts.slice(0, 50);
+  localStorage.setItem(CFF_LEAGUE_FEED_POSTS_KEY, JSON.stringify(store));
+}
+
+async function loadLeagueFeedFromApi() {
+  const league = getLeagueState();
+  if (!league || !getAuthState()?.token) {
+    latestApiFeedItems = [];
+    return [];
+  }
+  const feed = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/feed`);
+  latestApiFeedItems = Array.isArray(feed) ? feed.map(normalizeFeedItem).filter(Boolean) : [];
+  return latestApiFeedItems;
+}
+
+function normalizeFeedItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  const summary = String(item.summary || item.body || '').trim();
+  if (!summary) return null;
+  return feedItem(
+    String(item.type || 'Feed'),
+    summary,
+    item.createdAt || new Date().toISOString(),
+    item.managerEmail || '',
+    item.badge || 'Feed'
+  );
+}
+
+async function addCommissionerPost(message) {
+  const league = getLeagueState();
+  if (!league || !message.trim()) return false;
+  const auth = getAuthState();
+  if (auth?.token) {
+    const post = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/feed/posts`, {
+      method: 'POST',
+      body: JSON.stringify({ body: message.trim() })
+    });
+    const normalized = normalizeFeedItem(post);
+    if (normalized) {
+      latestApiFeedItems = [normalized, ...latestApiFeedItems].slice(0, 100);
+    }
+    return Boolean(normalized);
+  }
+  const posts = getCommissionerPosts(league);
+  posts.unshift({
+    id: `post-${Date.now().toString(36)}`,
+    type: 'Commissioner Post',
+    summary: message.trim(),
+    managerEmail: auth?.email || '',
+    createdAt: new Date().toISOString()
+  });
+  saveCommissionerPosts(posts, league);
+  return true;
+}
+
+function feedItem(type, summary, createdAt = new Date().toISOString(), managerEmail = '', badge = '') {
+  return { type, summary, createdAt, managerEmail, badge };
+}
+
+function weeklyAwardItems(leagueState) {
+  const items = [];
+  const finalMatchups = getMatchups().filter((matchup) => String(matchup.status || '').toLowerCase() === 'final');
+  if (finalMatchups.length) {
+    const scored = finalMatchups.flatMap((matchup) => [
+      { manager: matchup.homeManager, score: Number(matchup.homeScore || 0), opponent: matchup.awayManager, margin: Number(matchup.homeScore || 0) - Number(matchup.awayScore || 0), week: matchup.week || 1 },
+      { manager: matchup.awayManager, score: Number(matchup.awayScore || 0), opponent: matchup.homeManager, margin: Number(matchup.awayScore || 0) - Number(matchup.homeScore || 0), week: matchup.week || 1 }
+    ]).filter((entry) => entry.manager);
+    const high = scored.slice().sort((a, b) => b.score - a.score)[0];
+    const low = scored.slice().sort((a, b) => a.score - b.score)[0];
+    const margin = scored.slice().sort((a, b) => b.margin - a.margin)[0];
+    if (high) items.push(feedItem('Weekly Award', `${managerDisplayName(high.manager, leagueState)} posted the week's high score with ${high.score.toFixed(1)} points.`, new Date().toISOString(), high.manager, 'Highest Score'));
+    if (low) items.push(feedItem('Weekly Award', `${managerDisplayName(low.manager, leagueState)} survived the lowest score at ${low.score.toFixed(1)} points.`, new Date().toISOString(), low.manager, 'Lowest Score'));
+    if (margin && margin.margin > 0) items.push(feedItem('Weekly Award', `${managerDisplayName(margin.manager, leagueState)} won by ${margin.margin.toFixed(1)} points over ${managerDisplayName(margin.opponent, leagueState)}.`, new Date().toISOString(), margin.manager, 'Largest Margin'));
+  }
+  return items;
+}
+
+function buildLeagueFeedItems(leagueState = getLeagueState()) {
+  if (latestApiFeedItems.length) {
+    return latestApiFeedItems
+      .filter((item) => item.summary)
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+      .slice(0, 40);
+  }
+  const posts = getCommissionerPosts(leagueState).map((post) => feedItem(
+    post.type || 'Commissioner Post',
+    post.summary || '',
+    post.createdAt,
+    post.managerEmail,
+    'Post'
+  ));
+  const transactions = getTransactions().map((txn) => feedItem(
+    txn.type || 'Transaction',
+    txn.summary || '',
+    txn.createdAt,
+    txn.managerEmail,
+    'Transaction'
+  ));
+  const waivers = getWaiverClaims().map((claim) => feedItem(
+    `Waiver ${claim.status || 'Claim'}`,
+    `${claim.status || 'Claim'}: ${claim.addPlayer?.name || 'player'}${claim.dropPlayerId ? ' with a drop' : ''}`,
+    claim.createdAt,
+    claim.managerEmail,
+    'Waiver'
+  ));
+  const trades = getTradeOffers().map((trade) => feedItem(
+    `Trade ${trade.status || 'Offer'}`,
+    `${trade.status || 'Offer'}: ${trade.offerPlayer?.name || 'player'} for ${trade.requestPlayer?.name || trade.requestPlayerName || 'return'}`,
+    trade.createdAt,
+    trade.offeredByEmail,
+    'Trade'
+  ));
+  const matchupResults = getMatchups()
+    .filter((matchup) => String(matchup.status || '').toLowerCase() === 'final')
+    .map((matchup) => {
+      const homeScore = Number(matchup.homeScore || 0);
+      const awayScore = Number(matchup.awayScore || 0);
+      const winner = homeScore >= awayScore ? matchup.homeManager : matchup.awayManager;
+      const loser = homeScore >= awayScore ? matchup.awayManager : matchup.homeManager;
+      const winnerScore = Math.max(homeScore, awayScore);
+      const loserScore = Math.min(homeScore, awayScore);
+      return feedItem(
+        'Final Score',
+        `${managerDisplayName(winner, leagueState)} beat ${managerDisplayName(loser, leagueState)} ${winnerScore.toFixed(1)}-${loserScore.toFixed(1)}.`,
+        matchup.finalizedAt || new Date().toISOString(),
+        winner,
+        'Final'
+      );
+    });
+  return [...posts, ...transactions, ...waivers, ...trades, ...matchupResults, ...weeklyAwardItems(leagueState)]
+    .filter((item) => item.summary)
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+    .slice(0, 40);
+}
+
+function renderLeagueFeed(leagueState) {
+  if (!leagueFeedList) return;
+  const canPost = isCurrentCommissioner(leagueState);
+  if (commissionerPostForm) commissionerPostForm.hidden = !canPost;
+  const items = buildLeagueFeedItems(leagueState);
+  if (leagueFeedCount) leagueFeedCount.textContent = String(items.length);
+  if (!items.length) {
+    leagueFeedList.textContent = 'No feed items yet. League activity, waiver claims, trades, final scores, and commissioner posts will appear here.';
+    return;
+  }
+  leagueFeedList.innerHTML = items.map((item) => `
+    <div class="row">
+      <div>
+        <strong>${escapeHtml(item.type)}</strong>
+        <div class="muted">${escapeHtml(item.summary)}</div>
+        ${item.managerEmail ? `<div class="muted small">${escapeHtml(managerDisplayName(item.managerEmail, leagueState))}</div>` : ''}
+      </div>
+      <div>
+        <div class="badge">${escapeHtml(item.badge || 'Feed')}</div>
+        <div class="label">${new Date(item.createdAt || Date.now()).toLocaleString()}</div>
+      </div>
     </div>
   `).join('');
 }
@@ -1075,6 +1263,7 @@ async function refreshLeagueFromApi() {
   try {
     await syncLeaguesFromApi();
     await syncActiveLeagueCollectionsFromApi();
+    await loadLeagueFeedFromApi();
   } catch {
     // Keep the local cache usable when the API is unavailable.
   }
@@ -1168,6 +1357,30 @@ settingsForm?.addEventListener('submit', async (event) => {
     setLeagueState(updated);
     setSettingsStatus('Settings saved locally. API unavailable.');
   }
+  renderLeague();
+});
+
+commissionerPostForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!requireCommissioner()) return;
+  const message = commissionerPost?.value || '';
+  if (!message.trim()) {
+    if (commissionerPostStatus) commissionerPostStatus.textContent = 'Write an announcement before posting.';
+    commissionerPost?.focus();
+    return;
+  }
+  try {
+    const saved = await addCommissionerPost(message);
+    if (!saved) {
+      if (commissionerPostStatus) commissionerPostStatus.textContent = 'Could not save this post.';
+      return;
+    }
+  } catch {
+    if (commissionerPostStatus) commissionerPostStatus.textContent = 'Could not save this post.';
+    return;
+  }
+  if (commissionerPost) commissionerPost.value = '';
+  if (commissionerPostStatus) commissionerPostStatus.textContent = 'Commissioner post added to the league feed.';
   renderLeague();
 });
 
@@ -1301,6 +1514,7 @@ generateSeasonBtn?.addEventListener('click', async () => {
     await generateSeasonScheduleApi(12);
     if (scoreWeekStatus) scoreWeekStatus.textContent = 'Season schedule generated.';
     await syncActiveLeagueCollectionsFromApi();
+    await loadLeagueFeedFromApi();
   } catch (error) {
     console.error(error);
     if (scoreWeekStatus) scoreWeekStatus.textContent = 'Could not generate season schedule from the API.';
@@ -1321,6 +1535,7 @@ scoreWeekBtn?.addEventListener('click', async () => {
         : 'No stat rows found yet; matchup scores were refreshed from available data.';
     }
     await syncActiveLeagueCollectionsFromApi();
+    await loadLeagueFeedFromApi();
   } catch (error) {
     console.error(error);
     if (scoreWeekStatus) scoreWeekStatus.textContent = error.lineupErrors?.length
@@ -1340,6 +1555,7 @@ finalizeWeekBtn?.addEventListener('click', async () => {
     await finalizeWeekApi(activeScoreboardWeek);
     if (scoreWeekStatus) scoreWeekStatus.textContent = `Week ${activeScoreboardWeek} is final. Standings are locked for this week.`;
     await syncActiveLeagueCollectionsFromApi();
+    await loadLeagueFeedFromApi();
   } catch (error) {
     console.error(error);
     if (scoreWeekStatus) scoreWeekStatus.textContent = error.lineupErrors?.length
@@ -1374,7 +1590,7 @@ window.addEventListener('hashchange', () => {
 });
 
 window.addEventListener('storage', (event) => {
-  if ([CFF_AUTH_KEY, CFF_LEAGUE_KEY, CFF_LEAGUES_KEY, CFF_QUEUE_KEY, CFF_ROSTER_KEY, CFF_WAIVERS_KEY, CFF_WAIVER_PRIORITIES_KEY, CFF_TRADES_KEY, CFF_TRANSACTIONS_KEY, CFF_MATCHUPS_KEY].includes(event.key)) {
+  if ([CFF_AUTH_KEY, CFF_LEAGUE_KEY, CFF_LEAGUES_KEY, CFF_QUEUE_KEY, CFF_ROSTER_KEY, CFF_WAIVERS_KEY, CFF_WAIVER_PRIORITIES_KEY, CFF_TRADES_KEY, CFF_TRANSACTIONS_KEY, CFF_MATCHUPS_KEY, CFF_LEAGUE_FEED_POSTS_KEY].includes(event.key)) {
     renderLeague();
   }
 });

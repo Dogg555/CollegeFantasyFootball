@@ -244,6 +244,24 @@
       <div id="trade-list" class="list"></div>
     </section>
 
+    <section class="card card--accent" data-league-panel="activity">
+      <div class="card__header">
+        <h2>League Feed</h2>
+        <span class="pill pill--muted" id="league-feed-count">0</span>
+      </div>
+      <form id="commissioner-post-form" class="form">
+        <label class="field">
+          <span>Commissioner post</span>
+          <textarea id="commissioner-post" rows="3" placeholder="Post a league announcement, rule clarification, or weekly note."></textarea>
+        </label>
+        <div class="form__footer">
+          <div id="commissioner-post-status" class="muted small" role="status"></div>
+          <button class="button button--primary" type="submit">Post update</button>
+        </div>
+      </form>
+      <div id="league-feed-list" class="list">No feed items yet.</div>
+    </section>
+
     <section class="card" data-league-panel="activity">
       <div class="card__header">
         <h2>Recent Activity</h2>

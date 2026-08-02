@@ -333,6 +333,16 @@ CREATE TABLE IF NOT EXISTS transactions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS league_feed_posts (
+  id TEXT PRIMARY KEY,
+  league_id TEXT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
+  manager_email TEXT NOT NULL,
+  post_type TEXT NOT NULL DEFAULT 'commissioner_post',
+  body TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS league_matchups (
   id TEXT PRIMARY KEY,
   league_id TEXT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
@@ -367,5 +377,6 @@ CREATE INDEX IF NOT EXISTS idx_waivers_league_status ON waiver_claims(league_id,
 CREATE INDEX IF NOT EXISTS idx_waiver_priorities_league ON waiver_priorities(league_id, priority);
 CREATE INDEX IF NOT EXISTS idx_trades_league_status ON trade_offers(league_id, status);
 CREATE INDEX IF NOT EXISTS idx_transactions_league_created ON transactions(league_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_league_feed_posts_league_created ON league_feed_posts(league_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_matchups_league_week ON league_matchups(league_id, week);
 CREATE INDEX IF NOT EXISTS idx_fantasy_scores_league_week ON fantasy_player_scores(league_id, season, week);

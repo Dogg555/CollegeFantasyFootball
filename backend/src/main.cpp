@@ -1957,6 +1957,28 @@ int main(int argc, char* argv[]) {
                              cff::handlers::handleListTransactions(req, std::move(callback), accountEmail, leagueId);
                          },
                          {drogon::Get})
+        .registerHandler("/api/leagues/{1}/feed",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleListLeagueFeed(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/leagues/{1}/feed/posts",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleCreateLeagueFeedPost(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
         .registerHandler("/api/scores/live",
                          [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::cachedLiveScorePayload());
@@ -2066,6 +2088,8 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/leagues/{1}/score/week/{2}", preflightTwoParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/score/week/{2}/finalize", preflightTwoParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/transactions", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/feed", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/feed/posts", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/scores/live", preflightHandler, {drogon::Options})
         .registerHandler("/api/scores/live/meta", preflightHandler, {drogon::Options})
         .registerHandler("/api/health", preflightHandler, {drogon::Options})

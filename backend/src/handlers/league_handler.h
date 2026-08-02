@@ -203,5 +203,15 @@ void handleListTransactions(const drogon::HttpRequestPtr &req,
                             const std::string &accountEmail,
                             const std::string &leagueId);
 
+void handleListLeagueFeed(const drogon::HttpRequestPtr &req,
+                          std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                          const std::string &accountEmail,
+                          const std::string &leagueId);
+
+void handleCreateLeagueFeedPost(const drogon::HttpRequestPtr &req,
+                                std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                const std::string &accountEmail,
+                                const std::string &leagueId);
+
 }
 #endif // DROGON_FOUND
