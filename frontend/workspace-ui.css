@@ -1,4 +1,4 @@
-/* Draft-room navigation and privacy-safe league member presentation. */
+/* Draft-room navigation, privacy-safe members, and player-search polish. */
 
 .draft-room-menu-shell {
   width: min(1180px, 100%);
@@ -141,6 +141,42 @@
   display: none !important;
 }
 
+.player-search-form {
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.player-search-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: #e9eee9;
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.player-search-field--query {
+  flex: 1 1 360px;
+}
+
+.player-search-field--position {
+  flex: 0 1 180px;
+}
+
+.player-search-form .player-search-field input,
+.player-search-form .player-search-field select {
+  width: 100%;
+  min-height: 50px;
+  margin: 0;
+}
+
+.player-search-submit {
+  flex: 0 0 auto;
+  min-height: 50px;
+}
+
 @media (max-width: 1080px) {
   .draft-room-menu {
     grid-template-columns: auto minmax(0, 1fr);
@@ -200,5 +236,16 @@
   #draft-order-section,
   #draft-picks-section {
     scroll-margin-top: 86px;
+  }
+
+  .player-search-form {
+    align-items: stretch;
+  }
+
+  .player-search-field--query,
+  .player-search-field--position,
+  .player-search-submit {
+    flex: 1 1 100%;
+    width: 100%;
   }
 }
