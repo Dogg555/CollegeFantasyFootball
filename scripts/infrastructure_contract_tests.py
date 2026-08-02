@@ -74,7 +74,9 @@ def main() -> None:
     assert not any(item.startswith("SSL_KEY_FILE=") for item in backend_env)
 
     nginx = (ROOT / "frontend" / "nginx.conf").read_text(encoding="utf-8")
-    assert "proxy_pass http://backend:8080;" in nginx
+    assert "resolver 127.0.0.11" in nginx
+    assert "set $backend_upstream http://backend:8080;" in nginx
+    assert "proxy_pass $backend_upstream;" in nginx
     assert "proxy_ssl_verify off" not in nginx
     assert "proxy_connect_timeout 5s;" in nginx
     assert "proxy_send_timeout 30s;" in nginx
