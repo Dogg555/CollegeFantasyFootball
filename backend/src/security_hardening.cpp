@@ -74,6 +74,44 @@ std::string lower(std::string value) {
     return value;
 }
 
+std::string canonicalEmail(std::string value) {
+    return lower(trim(std::move(value)));
+}
+
+bool endsWith(std::string_view value, std::string_view suffix) {
+    return value.size() >= suffix.size() && value.substr(value.size() - suffix.size()) == suffix;
+}
+
+bool isEmailFieldName(const std::string &name) {
+    const auto normalized = lower(name);
+    return normalized == "email" || endsWith(normalized, "email") || endsWith(normalized, "emails");
+}
+
+void normalizeEmailFields(Json::Value &value) {
+    if (value.isArray()) {
+        for (auto &item : value) normalizeEmailFields(item);
+        return;
+    }
+    if (!value.isObject()) return;
+
+    for (const auto &name : value.getMemberNames()) {
+        auto &item = value[name];
+        if (isEmailFieldName(name)) {
+            if (item.isString()) {
+                item = canonicalEmail(item.asString());
+                continue;
+            }
+            if (item.isArray()) {
+                for (auto &entry : item) {
+                    if (entry.isString()) entry = canonicalEmail(entry.asString());
+                }
+                continue;
+            }
+        }
+        normalizeEmailFields(item);
+    }
+}
+
 std::unordered_set<std::string> csvSet(const char *name) {
     std::unordered_set<std::string> values;
     const auto raw = envValue(name);
@@ -189,6 +227,51 @@ bool looksLikeEmail(std::string_view email) {
     });
 }
 
+bool validateEmailFields(const Json::Value &value, std::string &message) {
+    if (value.isArray()) {
+        for (const auto &item : value) {
+            if (!validateEmailFields(item, message)) return false;
+        }
+        return true;
+    }
+    if (!value.isObject()) return true;
+
+    for (const auto &name : value.getMemberNames()) {
+        const auto &item = value[name];
+        if (isEmailFieldName(name)) {
+            if (item.isString()) {
+                const auto email = item.asString();
+                if (!email.empty() && !looksLikeEmail(email)) {
+                    message = "A valid email address is required.";
+                    return false;
+                }
+                continue;
+            }
+            if (item.isArray()) {
+                if (item.size() > 24) {
+                    message = "No more than 24 email invitations may be submitted at once.";
+                    return false;
+                }
+                std::unordered_set<std::string> unique;
+                for (const auto &entry : item) {
+                    if (!entry.isString() || !looksLikeEmail(entry.asString())) {
+                        message = "Every invitation must contain a valid email address.";
+                        return false;
+                    }
+                    unique.insert(entry.asString());
+                }
+                if (unique.size() != item.size()) {
+                    message = "Duplicate email invitations are not allowed.";
+                    return false;
+                }
+                continue;
+            }
+        }
+        if (!validateEmailFields(item, message)) return false;
+    }
+    return true;
+}
+
 bool commonPassword(std::string password) {
     password = lower(std::move(password));
     static const std::unordered_set<std::string> blocked = {
@@ -223,7 +306,7 @@ std::string authSubject(const drogon::HttpRequestPtr &req) {
     if (!body || !body->isObject() || !body->isMember("email") || !(*body)["email"].isString()) {
         return "";
     }
-    return fingerprint(lower(trim((*body)["email"].asString())));
+    return fingerprint(canonicalEmail((*body)["email"].asString()));
 }
 
 bool takeRateLimit(const std::string &key,
@@ -253,25 +336,30 @@ bool takeRateLimit(const std::string &key,
 }
 
 struct RatePolicy {
-    std::size_t limit;
+    std::size_t clientLimit;
+    std::size_t accountLimit;
     std::chrono::seconds window;
-    bool includeAccount;
+    bool accountAware;
 };
 
 std::optional<RatePolicy> ratePolicy(const drogon::HttpRequestPtr &req) {
     const auto &path = req->getPath();
-    if (path == "/api/auth/login") return RatePolicy{10, std::chrono::minutes(10), true};
-    if (path == "/api/auth/signup") return RatePolicy{5, std::chrono::minutes(30), true};
-    if (path == "/api/auth/request-password-reset") return RatePolicy{5, std::chrono::minutes(30), true};
-    if (path == "/api/auth/reset-password") return RatePolicy{8, std::chrono::minutes(30), false};
-    if (path == "/api/auth/resend-verification") return RatePolicy{5, std::chrono::minutes(30), true};
-    if (path == "/api/auth/verify-email") return RatePolicy{20, std::chrono::minutes(15), false};
+    if (path == "/api/auth/login") return RatePolicy{30, 10, std::chrono::minutes(10), true};
+    if (path == "/api/auth/signup") return RatePolicy{20, 3, std::chrono::hours(24), true};
+    if (path == "/api/auth/request-password-reset") return RatePolicy{20, 5, std::chrono::minutes(30), true};
+    if (path == "/api/auth/reset-password") return RatePolicy{12, 0, std::chrono::minutes(30), false};
+    if (path == "/api/auth/resend-verification") return RatePolicy{20, 5, std::chrono::minutes(30), true};
+    if (path == "/api/auth/verify-email") return RatePolicy{30, 0, std::chrono::minutes(15), false};
     if (path.rfind("/api/admin/", 0) == 0) {
         return req->getMethod() == drogon::Get
-            ? RatePolicy{30, std::chrono::minutes(5), false}
-            : RatePolicy{3, std::chrono::minutes(5), false};
+            ? RatePolicy{30, 0, std::chrono::minutes(5), false}
+            : RatePolicy{3, 0, std::chrono::minutes(5), false};
     }
-    if (path == "/api/players") return RatePolicy{120, std::chrono::minutes(1), false};
+    if (path == "/api/players") return RatePolicy{120, 0, std::chrono::minutes(1), false};
+    if (endsWith(path, "/join")) return RatePolicy{10, 0, std::chrono::minutes(30), false};
+    if (path.find("/members") != std::string::npos && isMutation(req->getMethod())) {
+        return RatePolicy{30, 0, std::chrono::hours(1), false};
+    }
     return std::nullopt;
 }
 
@@ -348,21 +436,38 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
                          "unsupported_content_type");
     }
 
-    if (const auto policy = ratePolicy(req)) {
-        const auto client = fingerprint(clientAddress(req));
-        auto key = safeRoute(req) + ":" + client;
-        if (policy->includeAccount) {
-            const auto subject = authSubject(req);
-            if (!subject.empty()) key += ":" + subject;
+    if (req->bodyLength() > 0 && isJsonContentType(req->getHeader("content-type"))) {
+        const auto body = req->getJsonObject();
+        if (!body || !body->isObject()) {
+            return jsonError(drogon::k400BadRequest, "A valid JSON object is required.", "invalid_json");
         }
-        if (!takeRateLimit(key, policy->limit, policy->window)) {
+        normalizeEmailFields(*body);
+        std::string emailError;
+        if (!validateEmailFields(*body, emailError)) {
+            return jsonError(drogon::k400BadRequest, emailError, "invalid_email");
+        }
+    }
+
+    if (const auto policy = ratePolicy(req)) {
+        const auto route = safeRoute(req);
+        const auto client = fingerprint(clientAddress(req));
+        if (!takeRateLimit(route + ":client:" + client, policy->clientLimit, policy->window)) {
             auto response = jsonError(static_cast<drogon::HttpStatusCode>(429),
                                       "Too many requests. Try again later.",
                                       "rate_limited");
-            response->addHeader("Retry-After",
-                                std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
-                                    policy->window).count()));
+            response->addHeader("Retry-After", std::to_string(policy->window.count()));
             return response;
+        }
+        if (policy->accountAware) {
+            const auto subject = authSubject(req);
+            if (!subject.empty() &&
+                !takeRateLimit(route + ":account:" + subject, policy->accountLimit, policy->window)) {
+                auto response = jsonError(static_cast<drogon::HttpStatusCode>(429),
+                                          "Too many requests. Try again later.",
+                                          "rate_limited");
+                response->addHeader("Retry-After", std::to_string(policy->window.count()));
+                return response;
+            }
         }
     }
 
@@ -389,7 +494,7 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
             return jsonError(drogon::k400BadRequest, "A password is required.", "invalid_password");
         }
         const auto email = body->isMember("email") && (*body)["email"].isString()
-            ? trim((*body)["email"].asString())
+            ? (*body)["email"].asString()
             : std::string{};
         if (!strongPassword((*body)["password"].asString(), email, minimum)) {
             return jsonError(drogon::k400BadRequest,

@@ -107,8 +107,28 @@ function writeJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+function readSessionJson(key, fallback = null) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeSessionJson(key, value) {
+  sessionStorage.setItem(key, JSON.stringify(value));
+}
+
 function getAuthState() {
-  return readJson(CFF_AUTH_KEY, null);
+  const current = readSessionJson(CFF_AUTH_KEY, null);
+  if (current) return current;
+  const legacy = readJson(CFF_AUTH_KEY, null);
+  if (legacy) {
+    writeSessionJson(CFF_AUTH_KEY, legacy);
+    localStorage.removeItem(CFF_AUTH_KEY);
+  }
+  return legacy;
 }
 
 function authHeaders() {
@@ -139,11 +159,12 @@ async function apiRequest(path, options = {}) {
 }
 
 function setAuthState(auth) {
+  localStorage.removeItem(CFF_AUTH_KEY);
   if (!auth) {
-    localStorage.removeItem(CFF_AUTH_KEY);
+    sessionStorage.removeItem(CFF_AUTH_KEY);
     return;
   }
-  writeJson(CFF_AUTH_KEY, auth);
+  writeSessionJson(CFF_AUTH_KEY, auth);
 }
 
 async function validateAuthSession() {
@@ -325,10 +346,11 @@ function setRoster(roster) {
 }
 
 function clearSessionState() {
-  localStorage.removeItem(CFF_AUTH_KEY);
-  localStorage.removeItem(CFF_LEAGUE_KEY);
-  localStorage.removeItem(CFF_QUEUE_KEY);
-  localStorage.removeItem(CFF_ROSTER_KEY);
+  sessionStorage.removeItem(CFF_AUTH_KEY);
+  [CFF_AUTH_KEY, CFF_LEAGUE_KEY, CFF_LEAGUES_KEY, CFF_QUEUE_KEY, CFF_ROSTER_KEY,
+   CFF_WAIVERS_KEY, CFF_WAIVER_PRIORITIES_KEY, CFF_TRADES_KEY, CFF_TRANSACTIONS_KEY,
+   CFF_MATCHUPS_KEY, CFF_DRAFT_PICKS_KEY, CFF_DRAFT_META_KEY]
+    .forEach((key) => localStorage.removeItem(key));
 }
 
 function normalizePlayer(player) {

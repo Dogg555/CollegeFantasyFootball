@@ -112,6 +112,16 @@ std::string lowerAscii(std::string value) {
     return value;
 }
 
+std::string canonicalEmail(std::string value) {
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), value.end());
+    return lowerAscii(std::move(value));
+}
+
 std::unordered_set<std::string> csvEmailSetFromEnv(const std::string &key) {
     std::unordered_set<std::string> values;
     const auto raw = readEnv(key);
@@ -324,7 +334,7 @@ void dbPersistToken(const std::string &token, const std::string &email) {
     dbCleanupExpiredTokens(conn.get());
     auto result = execParams(conn.get(),
                              "INSERT INTO auth_tokens (token, email, expires_at) "
-                             "VALUES ($1, $2, NOW() + INTERVAL '24 hours') "
+                             "VALUES (encode(digest($1, 'sha256'), 'hex'), $2, NOW() + INTERVAL '24 hours') "
                              "ON CONFLICT (token) DO UPDATE SET email = EXCLUDED.email, expires_at = EXCLUDED.expires_at",
                              {token, email});
     if (!resultOk(result.get(), PGRES_COMMAND_OK)) {
@@ -337,7 +347,7 @@ std::optional<std::string> dbEmailForToken(const std::string &token) {
     if (!conn) return std::nullopt;
     dbCleanupExpiredTokens(conn.get());
     auto result = execParams(conn.get(),
-                             "SELECT email FROM auth_tokens WHERE token = $1 AND expires_at > NOW()",
+                             "SELECT email FROM auth_tokens WHERE token = encode(digest($1, 'sha256'), 'hex') AND expires_at > NOW()",
                              {token});
     if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) {
         return std::nullopt;
@@ -348,7 +358,7 @@ std::optional<std::string> dbEmailForToken(const std::string &token) {
 void dbRevokeToken(const std::string &token) {
     auto conn = connectToDb();
     if (!conn) return;
-    auto result = execParams(conn.get(), "DELETE FROM auth_tokens WHERE token = $1", {token});
+    auto result = execParams(conn.get(), "DELETE FROM auth_tokens WHERE token = encode(digest($1, 'sha256'), 'hex')", {token});
     (void)result;
 }
 
@@ -371,7 +381,7 @@ bool dbStoreEmailVerificationToken(const std::string &email, const std::string &
     auto conn = connectToDb();
     if (!conn) return false;
     auto result = execParams(conn.get(),
-                             "UPDATE users SET email_verification_token = $2, email_verification_expires_at = NOW() + INTERVAL '48 hours', updated_at = NOW() "
+                             "UPDATE users SET email_verification_token = encode(digest($2, 'sha256'), 'hex'), email_verification_expires_at = NOW() + INTERVAL '48 hours', updated_at = NOW() "
                              "WHERE email = $1 AND email_verified = false",
                              {email, token});
     return resultOk(result.get(), PGRES_COMMAND_OK) && std::string{PQcmdTuples(result.get())} == "1";
@@ -382,7 +392,7 @@ std::optional<std::string> dbVerifyEmailToken(const std::string &token) {
     if (!conn) return std::nullopt;
     auto result = execParams(conn.get(),
                              "UPDATE users SET email_verified = true, email_verification_token = NULL, email_verification_expires_at = NULL, updated_at = NOW() "
-                             "WHERE email_verification_token = $1 AND email_verification_expires_at > NOW() RETURNING email",
+                             "WHERE email_verification_token = encode(digest($1, 'sha256'), 'hex') AND email_verification_expires_at > NOW() RETURNING email",
                              {token});
     if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
     return std::string{PQgetvalue(result.get(), 0, 0)};
@@ -392,7 +402,7 @@ std::optional<std::string> dbStorePasswordResetToken(const std::string &email, c
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
     auto result = execParams(conn.get(),
-                             "UPDATE users SET password_reset_token = $2, password_reset_expires_at = NOW() + INTERVAL '1 hour', updated_at = NOW() "
+                             "UPDATE users SET password_reset_token = encode(digest($2, 'sha256'), 'hex'), password_reset_expires_at = NOW() + INTERVAL '1 hour', updated_at = NOW() "
                              "WHERE email = $1 RETURNING email",
                              {email, token});
     if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
@@ -404,7 +414,7 @@ std::optional<std::string> dbResetPassword(const std::string &token, const std::
     if (!conn) return std::nullopt;
     auto result = execParams(conn.get(),
                              "UPDATE users SET password_hash = $2, password_reset_token = NULL, password_reset_expires_at = NULL, updated_at = NOW() "
-                             "WHERE password_reset_token = $1 AND password_reset_expires_at > NOW() RETURNING email",
+                             "WHERE password_reset_token = encode(digest($1, 'sha256'), 'hex') AND password_reset_expires_at > NOW() RETURNING email",
                              {token, passwordHash});
     if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
     const auto email = std::string{PQgetvalue(result.get(), 0, 0)};
@@ -781,7 +791,7 @@ void handleSignup(const drogon::HttpRequestPtr &req,
         return;
     }
 
-    const auto email = (*body)["email"].asString();
+    const auto email = canonicalEmail((*body)["email"].asString());
     const auto password = (*body)["password"].asString();
     const auto passwordHash = hashPassword(password);
     if (!passwordHash) {
@@ -880,7 +890,7 @@ void handleLogin(const drogon::HttpRequestPtr &req,
         return;
     }
 
-    const auto email = (*body)["email"].asString();
+    const auto email = canonicalEmail((*body)["email"].asString());
     const auto password = (*body)["password"].asString();
     bool passwordMatches = false;
 #ifdef CFF_HAS_POSTGRES
@@ -1004,7 +1014,7 @@ void handleVerifyEmail(const drogon::HttpRequestPtr &req,
 void handleResendVerification(const drogon::HttpRequestPtr &req,
                               std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
     const auto body = req->getJsonObject();
-    const auto email = body && body->isMember("email") && (*body)["email"].isString() ? (*body)["email"].asString() : "";
+    const auto email = body && body->isMember("email") && (*body)["email"].isString() ? canonicalEmail((*body)["email"].asString()) : "";
 #ifdef CFF_HAS_POSTGRES
     std::optional<std::string> verificationToken;
     if (dbConfigured() && !email.empty()) {
@@ -1035,7 +1045,7 @@ void handleResendVerification(const drogon::HttpRequestPtr &req,
 void handleRequestPasswordReset(const drogon::HttpRequestPtr &req,
                                 std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
     const auto body = req->getJsonObject();
-    const auto email = body && body->isMember("email") && (*body)["email"].isString() ? (*body)["email"].asString() : "";
+    const auto email = body && body->isMember("email") && (*body)["email"].isString() ? canonicalEmail((*body)["email"].asString()) : "";
 #ifdef CFF_HAS_POSTGRES
     std::optional<std::string> resetToken;
     if (dbConfigured() && !email.empty()) {
@@ -1442,17 +1452,11 @@ int main(int argc, char* argv[]) {
                          {drogon::Get})
         .registerHandler("/api/auth/login",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             if (!enforceRateLimit(req, callback, "auth-login", 12, std::chrono::minutes(10))) {
-                                 return;
-                             }
                              handleLogin(req, std::move(callback), jwtSecret);
                          },
                          {drogon::Post})
         .registerHandler("/api/auth/signup",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             if (!enforceRateLimit(req, callback, "auth-signup", 6, std::chrono::minutes(10))) {
-                                 return;
-                             }
                              handleSignup(req, std::move(callback), jwtSecret);
                          },
                          {drogon::Post})
@@ -1463,33 +1467,21 @@ int main(int argc, char* argv[]) {
                          {drogon::Post})
         .registerHandler("/api/auth/verify-email",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             if (!enforceRateLimit(req, callback, "auth-verify-email", 20, std::chrono::minutes(10))) {
-                                 return;
-                             }
                              handleVerifyEmail(req, std::move(callback));
                          },
                          {drogon::Post})
         .registerHandler("/api/auth/resend-verification",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             if (!enforceRateLimit(req, callback, "auth-resend-verification", 5, std::chrono::minutes(15))) {
-                                 return;
-                             }
                              handleResendVerification(req, std::move(callback));
                          },
                          {drogon::Post})
         .registerHandler("/api/auth/request-password-reset",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             if (!enforceRateLimit(req, callback, "auth-request-password-reset", 5, std::chrono::minutes(15))) {
-                                 return;
-                             }
                              handleRequestPasswordReset(req, std::move(callback));
                          },
                          {drogon::Post})
         .registerHandler("/api/auth/reset-password",
                          [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             if (!enforceRateLimit(req, callback, "auth-reset-password", 10, std::chrono::minutes(15))) {
-                                 return;
-                             }
                              handleResetPassword(req, std::move(callback));
                          },
                          {drogon::Post})

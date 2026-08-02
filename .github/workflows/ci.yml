@@ -37,6 +37,7 @@ jobs:
         run: |
           python -m py_compile \
             scripts/api_smoke_tests.py \
+            scripts/authorization_security_tests.py \
             scripts/render_deploy_and_wait.py \
             scripts/render_smoke_tests.py \
             scripts/frontend_browser_smoke.py \
@@ -142,7 +143,9 @@ jobs:
       - name: Run full API smoke suite against Docker
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
-        run: python scripts/api_smoke_tests.py
+        run: |
+          python scripts/api_smoke_tests.py
+          python scripts/authorization_security_tests.py
 
       - name: Backend logs
         if: always()
