@@ -57,8 +57,10 @@ find frontend-dist -type f -name '*.html' -print | while IFS= read -r html_file;
   mv "${html_tmp}" "${html_file}"
 done
 
+# Keep the build metadata schema stable for CI and external deployment checks.
+# The active API base remains available in generated config.js at runtime.
 cat > frontend-dist/build-info.json <<EOF_BUILD
-{"commit":"${BUILD_COMMIT}","branch":"${BUILD_BRANCH}","apiBase":"${CFF_API_BASE}"}
+{"commit":"${BUILD_COMMIT}","branch":"${BUILD_BRANCH}"}
 EOF_BUILD
 
 echo "Frontend build ready in frontend-dist for commit ${BUILD_COMMIT}"
