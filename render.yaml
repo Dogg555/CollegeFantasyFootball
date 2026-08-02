@@ -24,8 +24,10 @@ services:
         sync: false
       - key: CFBD_ROSTER_SEASON
         value: "2025"
+      - key: CFF_RUN_MIGRATIONS_ON_STARTUP
+        value: "false"
       - key: ESPN_ROSTER_AUTO_ONCE
-        value: "true"
+        value: "false"
       - key: ESPN_ROSTER_SEASON
         value: "2026"
       - key: ESPN_ROSTER_ALLOW_PARTIAL
@@ -113,13 +115,19 @@ services:
         value: "max-age=31536000; includeSubDomains"
       - path: /config.js
         name: Cache-Control
-        value: "no-store"
+        value: "no-store, max-age=0"
       - path: /*.html
         name: Cache-Control
-        value: "no-store"
+        value: "no-store, max-age=0"
+      - path: /*.js
+        name: Cache-Control
+        value: "no-cache, no-store, must-revalidate"
+      - path: /*.css
+        name: Cache-Control
+        value: "no-cache, no-store, must-revalidate"
       - path: /assets/*
         name: Cache-Control
-        value: "public, max-age=31536000, immutable"
+        value: "no-cache, must-revalidate"
 
   - type: cron
     name: college-ff-cfbd-ingest

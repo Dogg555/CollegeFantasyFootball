@@ -1,27 +1,29 @@
 #!/usr/bin/env sh
 set -eu
 
-sh /srv/db/migrate.sh
+is_enabled() {
+  case "$(printf '%s' "${1:-false}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
-# Render Blueprint settings are not always synchronized to an existing service.
-# Default the startup fallback to Render only when no explicit override exists.
-if [ -z "${ESPN_ROSTER_AUTO_ONCE+x}" ]; then
-  ESPN_ROSTER_AUTO_ONCE="${RENDER:-false}"
-  export ESPN_ROSTER_AUTO_ONCE
+if is_enabled "${CFF_RUN_MIGRATIONS_ON_STARTUP:-true}"; then
+  echo "[startup] applying database migrations"
+  sh /srv/db/migrate.sh
+else
+  echo "[startup] migrations skipped; deployment lifecycle owns migrations"
 fi
 
-case "$(printf '%s' "${ESPN_ROSTER_AUTO_ONCE}" | tr '[:upper:]' '[:lower:]')" in
-  1|true|yes|on)
-    (
-      echo "[espn-bootstrap] starting guarded background startup check"
-      if ! python3 /srv/scripts/run_espn_roster_once.py; then
-        echo "[espn-bootstrap] background import failed; API remains available and the next restart will resume checkpoints" >&2
-      fi
-    ) &
-    ;;
-  *)
-    echo "[espn-bootstrap] startup fallback disabled"
-    ;;
-esac
+if is_enabled "${ESPN_ROSTER_AUTO_ONCE:-false}"; then
+  (
+    echo "[espn-bootstrap] starting explicit guarded startup check"
+    if ! python3 /srv/scripts/run_espn_roster_once.py; then
+      echo "[espn-bootstrap] startup import failed; API remains available and checkpoints are preserved" >&2
+    fi
+  ) &
+else
+  echo "[espn-bootstrap] startup fallback disabled"
+fi
 
 exec /srv/college_ff_server

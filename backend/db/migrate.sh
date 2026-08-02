@@ -8,6 +8,30 @@ fi
 
 DB_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 LOCK_NAME="college-fantasy-football-schema-migrations"
+DB_WAIT_RETRIES="${CFF_DB_WAIT_RETRIES:-30}"
+DB_WAIT_SECONDS="${CFF_DB_WAIT_SECONDS:-2}"
+
+case "$DB_WAIT_RETRIES" in
+  ''|*[!0-9]*) echo "CFF_DB_WAIT_RETRIES must be a positive integer" >&2; exit 1 ;;
+esac
+case "$DB_WAIT_SECONDS" in
+  ''|*[!0-9]*) echo "CFF_DB_WAIT_SECONDS must be a positive integer" >&2; exit 1 ;;
+esac
+if [ "$DB_WAIT_RETRIES" -lt 1 ] || [ "$DB_WAIT_SECONDS" -lt 1 ]; then
+  echo "Database wait settings must be greater than zero" >&2
+  exit 1
+fi
+
+attempt=1
+until pg_isready --dbname="$DB_URL" >/dev/null 2>&1; do
+  if [ "$attempt" -ge "$DB_WAIT_RETRIES" ]; then
+    echo "PostgreSQL was not ready after ${DB_WAIT_RETRIES} attempts" >&2
+    exit 1
+  fi
+  echo "Waiting for PostgreSQL (${attempt}/${DB_WAIT_RETRIES})..."
+  sleep "$DB_WAIT_SECONDS"
+  attempt=$((attempt + 1))
+done
 
 psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
 CREATE TABLE IF NOT EXISTS schema_migrations (
