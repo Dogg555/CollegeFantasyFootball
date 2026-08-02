@@ -119,5 +119,4 @@ COPY --from=build --chown=cff:cff /app/scripts /srv/scripts
 USER 10001:10001
 EXPOSE 8080
 ENV PORT=8080
-ENV ESPN_ROSTER_AUTO_ONCE=true
-CMD ["sh", "-c", "sh /srv/db/migrate.sh && python3 /srv/scripts/run_espn_roster_once.py && exec /srv/college_ff_server"]
+CMD ["sh", "-c", "if [ -z \"${ESPN_ROSTER_AUTO_ONCE+x}\" ]; then export ESPN_ROSTER_AUTO_ONCE=\"${RENDER:-false}\"; fi; sh /srv/db/migrate.sh && python3 /srv/scripts/run_espn_roster_once.py && exec /srv/college_ff_server"]
