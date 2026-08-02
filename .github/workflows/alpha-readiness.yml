@@ -75,7 +75,9 @@ jobs:
         run: python scripts/alpha_readiness.py
 
       - name: Run complete deployed API lifecycle
-        run: python scripts/api_smoke_tests.py
+        run: |
+          python scripts/api_smoke_tests.py
+          python scripts/public_data_meta_tests.py
 
       - name: Run deployed security, CORS, account and league acceptance
         run: python scripts/render_smoke_tests.py
