@@ -2,9 +2,11 @@
 // Render prepends deployment-specific values before this file.
 window.CFF_API_BASE = window.CFF_API_BASE || '/api';
 window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
+window.CFF_ALLOWED_LEAGUE_SIZES = Object.freeze([4, 6, 8, 10, 12, 14, 16]);
 
 (() => {
   const scripts = ['polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'footer-links.js'];
+  const leagueSizeSelectIds = ['league-size', 'settings-teams'];
 
   function ensureBranding() {
     if (!document.querySelector('link[rel~="icon"]')) {
@@ -20,6 +22,33 @@ window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
       theme.content = '#080d12';
       document.head.appendChild(theme);
     }
+  }
+
+  function ensureLeagueSizeOptions() {
+    leagueSizeSelectIds.forEach((selectId) => {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+
+      const currentValue = select.value;
+      const existingValues = new Set(Array.from(select.options, (option) => option.value));
+
+      [4, 6].forEach((size) => {
+        const value = String(size);
+        if (existingValues.has(value)) return;
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = `${size} teams`;
+        select.appendChild(option);
+      });
+
+      Array.from(select.options)
+        .sort((left, right) => Number(left.value) - Number(right.value))
+        .forEach((option) => select.appendChild(option));
+
+      if (Array.from(select.options).some((option) => option.value === currentValue)) {
+        select.value = currentValue;
+      }
+    });
   }
 
   function writeStylesheet(href, attribute) {
@@ -39,6 +68,7 @@ window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
   ensureBranding();
 
   if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ensureLeagueSizeOptions, { once: true });
     writeStylesheet('polish.css', 'data-cff-polish="true"');
     writeStylesheet('alpha-ui.css', 'data-cff-modern="true"');
     writeStylesheet('beta-ui.css', 'data-cff-beta="true"');
@@ -49,6 +79,7 @@ window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
     return;
   }
 
+  ensureLeagueSizeOptions();
   appendStylesheet('polish.css', 'cffPolish');
   appendStylesheet('alpha-ui.css', 'cffModern');
   appendStylesheet('beta-ui.css', 'cffBeta');
