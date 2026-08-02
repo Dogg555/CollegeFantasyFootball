@@ -77,10 +77,7 @@ RUN set -eux; \
         curl -fsSL \
           "https://raw.githubusercontent.com/Dogg555/CollegeFantasyFootball/${ESPN_BOOTSTRAP_REF}/scripts/run_espn_roster_once.py" \
           -o /app/scripts/run_espn_roster_once.py; \
-    fi; \
-    python3 -m py_compile \
-      /app/scripts/espn_roster_ingest.py \
-      /app/scripts/run_espn_roster_once.py
+    fi
 
 WORKDIR /app/backend
 RUN cmake -S . -B build \
