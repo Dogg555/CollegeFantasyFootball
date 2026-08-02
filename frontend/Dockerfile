@@ -6,7 +6,7 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 RUN chown -R nginx:nginx \
       /usr/share/nginx/html \
       /var/cache/nginx \
-      /var/run \
+      /run \
       /etc/nginx/conf.d
 USER nginx
 EXPOSE 8080
