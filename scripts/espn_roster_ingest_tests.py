@@ -3,26 +3,19 @@ import unittest
 import urllib.parse
 
 from espn_roster_ingest import Team, parse_player, parse_teams
-from espn_team_directory import conference_teams_url
+from espn_team_directory import all_teams_url
 
 
 class EspnRosterIngestTests(unittest.TestCase):
-    def test_builds_conference_filtered_team_directory_url(self):
-        parsed = urllib.parse.urlparse(conference_teams_url(1))
+    def test_builds_all_team_directory_url(self):
+        parsed = urllib.parse.urlparse(all_teams_url())
         self.assertEqual(parsed.scheme, "https")
-        self.assertEqual(parsed.netloc, "site.web.api.espn.com")
+        self.assertEqual(parsed.netloc, "site.api.espn.com")
         self.assertEqual(
             parsed.path,
             "/apis/site/v2/sports/football/college-football/teams",
         )
-        self.assertEqual(
-            urllib.parse.parse_qs(parsed.query),
-            {
-                "groups": ["1"],
-                "groupType": ["conference"],
-                "enable": ["groups"],
-            },
-        )
+        self.assertEqual(urllib.parse.parse_qs(parsed.query), {"limit": ["1000"]})
 
     def test_parses_team_directory_shape(self):
         payload = {
@@ -46,8 +39,8 @@ class EspnRosterIngestTests(unittest.TestCase):
             ]
         }
         self.assertEqual(
-            parse_teams(payload, "SEC"),
-            [Team("333", "Alabama", "SEC", "alabama-crimson-tide")],
+            parse_teams(payload),
+            [Team("333", "Alabama", "NCAA", "alabama-crimson-tide")],
         )
 
     def test_parses_player_fields_and_preserves_espn_id(self):
@@ -62,7 +55,7 @@ class EspnRosterIngestTests(unittest.TestCase):
             "displayWeight": "215 lbs",
             "jersey": "7",
         }
-        team = Team("333", "Alabama", "SEC")
+        team = Team("333", "Alabama", "NCAA")
         player = parse_player(athlete, team, 2026)
         self.assertIsNotNone(player)
         assert player is not None
@@ -76,7 +69,7 @@ class EspnRosterIngestTests(unittest.TestCase):
         self.assertEqual(player.raw["cffSeason"], 2026)
 
     def test_rejects_player_without_id(self):
-        team = Team("333", "Alabama", "SEC")
+        team = Team("333", "Alabama", "NCAA")
         self.assertIsNone(parse_player({"displayName": "No ID"}, team, 2026))
 
 
