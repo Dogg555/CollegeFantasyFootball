@@ -185,10 +185,11 @@ std::vector<PlayerCard> searchPlayers(const std::string &query,
                 ELSE 6
             END,
             player.full_name ASC
-        LIMIT $
     )SQL";
-    sql += std::to_string(params.size() + 1);
-    sql += " OFFSET $" + std::to_string(params.size() + 2);
+    const auto limitIndex = params.size() + 1;
+    const auto offsetIndex = params.size() + 2;
+    sql += " LIMIT $" + std::to_string(limitIndex);
+    sql += " OFFSET $" + std::to_string(offsetIndex);
 
     params.push_back(std::to_string(clampLimit(limit)));
     params.push_back(std::to_string(clampOffset(offset)));
