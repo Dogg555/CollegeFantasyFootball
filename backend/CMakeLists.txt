@@ -17,6 +17,7 @@ endif()
 add_executable(college_ff_server
     src/main.cpp
     src/email_delivery.cpp
+    src/league_invite_email.cpp
     src/security_hardening.cpp
     src/json_utils.cpp
     src/handlers/league_handler.cpp
