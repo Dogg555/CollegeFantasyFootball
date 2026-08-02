@@ -24,7 +24,9 @@ jobs:
         with:
           node-version: '22'
       - name: Apply guarded source patch
-        run: python scripts/apply_alpha_ui_data_patch.py
+        run: |
+          sed -i '/replace_all("docs\/alpha-release-runbook.md", "Monday", "Tuesday")/d' scripts/apply_alpha_ui_data_patch.py
+          python scripts/apply_alpha_ui_data_patch.py
       - name: Validate generated changes
         run: |
           python -m py_compile scripts/alpha_ui_contract_tests.py scripts/public_data_meta_tests.py
