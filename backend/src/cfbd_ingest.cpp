@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cpr/cpr.h>
 #include <cstdlib>
 #include <ctime>
@@ -11,6 +12,7 @@
 #include <pqxx/pqxx>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -18,6 +20,17 @@ namespace {
 struct CfbdTeam {
     std::string school;
     std::string conference;
+};
+
+struct CfbdQuota {
+    std::optional<long long> remainingCalls;
+    std::string resetAt;
+};
+
+struct JsonRequestResult {
+    nlohmann::json payload;
+    bool ok = false;
+    bool rateLimited = false;
 };
 
 std::optional<std::string> readEnv(const std::string &key) {
@@ -65,6 +78,24 @@ std::optional<int> intFromKeys(const nlohmann::json &value,
     return std::nullopt;
 }
 
+std::optional<long long> longLongFromKeys(const nlohmann::json &value,
+                                          std::initializer_list<const char*> keys) {
+    for (const auto *key : keys) {
+        if (!value.contains(key) || value.at(key).is_null()) continue;
+        const auto &item = value.at(key);
+        if (item.is_number_integer()) return item.get<long long>();
+        if (item.is_number_unsigned()) return static_cast<long long>(item.get<unsigned long long>());
+        if (item.is_number_float()) return static_cast<long long>(item.get<double>());
+        if (item.is_string()) {
+            char *end = nullptr;
+            const auto raw = item.get<std::string>();
+            const long long parsed = std::strtoll(raw.c_str(), &end, 10);
+            if (end != raw.c_str()) return parsed;
+        }
+    }
+    return std::nullopt;
+}
+
 std::string currentYearString() {
     const auto now = std::chrono::system_clock::now();
     const auto time = std::chrono::system_clock::to_time_t(now);
@@ -94,12 +125,36 @@ int configuredMaxTeams(std::vector<std::string> &errors) {
     }
 }
 
-nlohmann::json requestJsonArray(const std::string &url,
-                                const std::string &apiKey,
-                                const cpr::Parameters &parameters,
-                                const std::string &label,
-                                std::vector<std::string> &errors,
-                                std::size_t &apiCalls) {
+std::string responseHeader(const cpr::Response &response, const std::string &name) {
+    auto header = response.header.find(name);
+    if (header != response.header.end()) return header->second;
+
+    std::string lowered = name;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    for (const auto &entry : response.header) {
+        auto key = entry.first;
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        if (key == lowered) return entry.second;
+    }
+    return "";
+}
+
+std::string responseDetail(const cpr::Response &response) {
+    const auto payload = nlohmann::json::parse(response.text, nullptr, false);
+    if (!payload.is_object()) return "";
+    return stringFromKeys(payload, {"message", "error", "detail"});
+}
+
+JsonRequestResult requestJson(const std::string &url,
+                              const std::string &apiKey,
+                              const cpr::Parameters &parameters,
+                              const std::string &label,
+                              std::vector<std::string> &errors,
+                              std::size_t &apiCalls) {
     const auto response = cpr::Get(
         cpr::Url{url},
         cpr::Header{{"Authorization", "Bearer " + apiKey}},
@@ -108,27 +163,74 @@ nlohmann::json requestJsonArray(const std::string &url,
     );
     ++apiCalls;
 
+    JsonRequestResult result;
     if (response.error) {
         errors.push_back(label + " network error: " + response.error.message);
-        return nlohmann::json::array();
+        return result;
     }
     if (response.status_code == 401 || response.status_code == 403) {
         errors.push_back(label + " authentication failed with status " +
                          std::to_string(response.status_code) + ".");
-        return nlohmann::json::array();
+        return result;
+    }
+    if (response.status_code == 429) {
+        std::string message = label + " was rate-limited by CFBD (429)";
+        const auto detail = responseDetail(response);
+        const auto retryAfter = responseHeader(response, "Retry-After");
+        if (!detail.empty()) message += ": " + detail;
+        if (!retryAfter.empty()) message += "; retry after " + retryAfter;
+        message += ". The roster refresh stopped immediately and the existing player catalog was preserved.";
+        errors.push_back(std::move(message));
+        result.rateLimited = true;
+        return result;
     }
     if (response.status_code < 200 || response.status_code >= 300) {
-        errors.push_back(label + " failed with status " +
-                         std::to_string(response.status_code) + ".");
-        return nlohmann::json::array();
+        std::string message = label + " failed with status " +
+                              std::to_string(response.status_code);
+        const auto detail = responseDetail(response);
+        if (!detail.empty()) message += ": " + detail;
+        errors.push_back(message + ".");
+        return result;
     }
 
-    auto payload = nlohmann::json::parse(response.text, nullptr, false);
-    if (!payload.is_array()) {
-        errors.push_back(label + " returned an unexpected response shape.");
-        return nlohmann::json::array();
+    result.payload = nlohmann::json::parse(response.text, nullptr, false);
+    if (result.payload.is_discarded()) {
+        errors.push_back(label + " returned invalid JSON.");
+        return result;
     }
-    return payload;
+    result.ok = true;
+    return result;
+}
+
+std::optional<CfbdQuota> fetchQuota(const std::string &baseUrl,
+                                    const std::string &apiKey,
+                                    std::vector<std::string> &errors,
+                                    std::size_t &apiCalls) {
+    const auto response = requestJson(
+        baseUrl + "/info",
+        apiKey,
+        cpr::Parameters{},
+        "CFBD quota preflight",
+        errors,
+        apiCalls
+    );
+    if (!response.ok) return std::nullopt;
+    if (!response.payload.is_object()) {
+        errors.push_back("CFBD quota preflight returned an unexpected response shape.");
+        return std::nullopt;
+    }
+
+    CfbdQuota quota;
+    quota.remainingCalls = longLongFromKeys(
+        response.payload,
+        {"remainingCalls", "remaining_calls"}
+    );
+    quota.resetAt = stringFromKeys(response.payload, {"resetAt", "reset_at"});
+    if (!quota.remainingCalls) {
+        errors.push_back("CFBD quota preflight did not include remainingCalls.");
+        return std::nullopt;
+    }
+    return quota;
 }
 
 std::vector<CfbdTeam> fetchFbsTeams(const std::string &baseUrl,
@@ -136,7 +238,7 @@ std::vector<CfbdTeam> fetchFbsTeams(const std::string &baseUrl,
                                     const std::string &season,
                                     std::vector<std::string> &errors,
                                     std::size_t &apiCalls) {
-    const auto payload = requestJsonArray(
+    const auto response = requestJson(
         baseUrl + "/teams/fbs",
         apiKey,
         cpr::Parameters{{"year", season}},
@@ -144,10 +246,15 @@ std::vector<CfbdTeam> fetchFbsTeams(const std::string &baseUrl,
         errors,
         apiCalls
     );
+    if (!response.ok) return {};
+    if (!response.payload.is_array()) {
+        errors.push_back("CFBD FBS team list returned an unexpected response shape.");
+        return {};
+    }
 
     std::vector<CfbdTeam> teams;
-    teams.reserve(payload.size());
-    for (const auto &entry : payload) {
+    teams.reserve(response.payload.size());
+    for (const auto &entry : response.payload) {
         CfbdTeam team;
         team.school = stringFromKeys(entry, {"school", "name"});
         team.conference = stringFromKeys(entry, {"conference"});
@@ -245,8 +352,25 @@ std::vector<CfbdPlayer> fetchPlayersFromCFBD(const std::string &baseUrl,
     const int seasonYear = parseSeason(season, errors);
     if (seasonYear == 0) return {};
 
+    // A full bulk refresh needs the team map and one classification-filtered
+    // roster request. Keep one additional call in reserve so the job does not
+    // intentionally consume the last available request in the monthly pool.
+    constexpr long long kCallsRequiredAfterPreflight = 3;
+    const auto quota = fetchQuota(normalizedBase, apiKey, errors, apiCalls);
+    if (!quota) return {};
+    if (*quota->remainingCalls < kCallsRequiredAfterPreflight) {
+        std::string message = "CFBD quota preflight found " +
+                              std::to_string(*quota->remainingCalls) +
+                              " calls remaining; at least " +
+                              std::to_string(kCallsRequiredAfterPreflight) +
+                              " are required for a safe FBS roster refresh";
+        if (!quota->resetAt.empty()) message += ". Quota resets at " + quota->resetAt;
+        message += ". No roster request was made and the existing player catalog was preserved.";
+        errors.push_back(std::move(message));
+        return {};
+    }
+
     const auto teams = fetchFbsTeams(normalizedBase, apiKey, season, errors, apiCalls);
-    teamsExpected = teams.size();
     if (teams.empty()) {
         if (errors.empty()) errors.push_back("CFBD returned no FBS teams for season " + season + ".");
         return {};
@@ -256,69 +380,98 @@ std::vector<CfbdPlayer> fetchPlayersFromCFBD(const std::string &baseUrl,
         teams.size(),
         static_cast<std::size_t>(std::max(1, maxTeams))
     );
+    teamsExpected = fetchLimit;
     if (fetchLimit < teams.size()) {
         errors.push_back("CFBD_MAX_TEAMS limited the refresh to " + std::to_string(fetchLimit) +
                          " of " + std::to_string(teams.size()) + " FBS teams; stale players were not retired.");
     }
 
+    std::unordered_map<std::string, std::string> conferenceByTeam;
+    std::unordered_set<std::string> selectedTeams;
+    conferenceByTeam.reserve(teams.size());
+    selectedTeams.reserve(fetchLimit);
+    for (std::size_t index = 0; index < teams.size(); ++index) {
+        conferenceByTeam.emplace(teams[index].school, teams[index].conference);
+        if (index < fetchLimit) selectedTeams.insert(teams[index].school);
+    }
+
+    const auto rosterResponse = requestJson(
+        normalizedBase + "/roster",
+        apiKey,
+        cpr::Parameters{{"year", season}, {"classification", "fbs"}},
+        "CFBD bulk FBS roster",
+        errors,
+        apiCalls
+    );
+    if (!rosterResponse.ok) return {};
+    if (!rosterResponse.payload.is_array()) {
+        errors.push_back("CFBD bulk FBS roster returned an unexpected response shape.");
+        return {};
+    }
+    if (rosterResponse.payload.empty()) {
+        errors.push_back("CFBD returned an empty bulk FBS roster for season " + season + ".");
+        return {};
+    }
+
     std::vector<CfbdPlayer> players;
     std::unordered_map<std::string, std::size_t> playerIndexes;
+    std::unordered_set<std::string> rosterTeams;
+    players.reserve(rosterResponse.payload.size());
+    playerIndexes.reserve(rosterResponse.payload.size());
+    rosterTeams.reserve(fetchLimit);
 
-    for (std::size_t teamIndex = 0; teamIndex < fetchLimit; ++teamIndex) {
-        const auto &team = teams[teamIndex];
-        const auto errorCountBefore = errors.size();
-        const auto roster = requestJsonArray(
-            normalizedBase + "/roster",
-            apiKey,
-            cpr::Parameters{{"team", team.school}, {"year", season}},
-            "CFBD roster for " + team.school,
-            errors,
-            apiCalls
-        );
-        if (errors.size() != errorCountBefore) continue;
-        if (roster.empty()) {
-            errors.push_back("CFBD returned an empty roster for " + team.school + ".");
+    for (const auto &entry : rosterResponse.payload) {
+        const auto teamName = stringFromKeys(entry, {"team", "school"});
+        if (teamName.empty() || selectedTeams.find(teamName) == selectedTeams.end()) continue;
+        rosterTeams.insert(teamName);
+
+        CfbdPlayer player;
+        player.id = stringFromKeys(entry, {"id", "athleteId", "playerId"});
+        if (player.id.empty()) {
+            std::cerr << "[cfbd] Skipping a " << teamName
+                      << " roster entry without a player id." << std::endl;
             continue;
         }
-        ++teamsFetched;
-
-        for (const auto &entry : roster) {
-            CfbdPlayer player;
-            player.id = stringFromKeys(entry, {"id", "athleteId", "playerId"});
-            if (player.id.empty()) {
-                std::cerr << "[cfbd] Skipping a " << team.school
-                          << " roster entry without a player id." << std::endl;
-                continue;
-            }
-            player.firstName = stringFromKeys(entry, {"first_name", "firstName"});
-            player.lastName = stringFromKeys(entry, {"last_name", "lastName"});
-            player.fullName = stringFromKeys(entry, {"name", "full_name", "fullName"});
-            if (player.fullName.empty()) {
-                player.fullName = player.firstName;
-                if (!player.fullName.empty() && !player.lastName.empty()) player.fullName += " ";
-                player.fullName += player.lastName;
-            }
-            if (player.fullName.empty()) player.fullName = "Player " + player.id;
-            player.position = stringFromKeys(entry, {"position"});
-            player.team = team.school;
-            player.conference = team.conference;
-            player.year = stringFromKeys(entry, {"year", "class"});
-            player.height = stringFromKeys(entry, {"height"});
-            player.weight = intFromKeys(entry, {"weight"});
-            player.season = seasonYear;
-            player.raw = entry;
-            player.raw["cffTeam"] = team.school;
-            player.raw["cffConference"] = team.conference;
-            player.raw["cffSeason"] = seasonYear;
-
-            const auto existing = playerIndexes.find(player.id);
-            if (existing == playerIndexes.end()) {
-                playerIndexes.emplace(player.id, players.size());
-                players.push_back(std::move(player));
-            } else {
-                players[existing->second] = std::move(player);
-            }
+        player.firstName = stringFromKeys(entry, {"first_name", "firstName"});
+        player.lastName = stringFromKeys(entry, {"last_name", "lastName"});
+        player.fullName = stringFromKeys(entry, {"name", "full_name", "fullName"});
+        if (player.fullName.empty()) {
+            player.fullName = player.firstName;
+            if (!player.fullName.empty() && !player.lastName.empty()) player.fullName += " ";
+            player.fullName += player.lastName;
         }
+        if (player.fullName.empty()) player.fullName = "Player " + player.id;
+        player.position = stringFromKeys(entry, {"position"});
+        player.team = teamName;
+        const auto conference = conferenceByTeam.find(teamName);
+        player.conference = conference == conferenceByTeam.end() ? "" : conference->second;
+        player.year = stringFromKeys(entry, {"year", "class"});
+        player.height = stringFromKeys(entry, {"height"});
+        player.weight = intFromKeys(entry, {"weight"});
+        player.season = seasonYear;
+        player.raw = entry;
+        player.raw["cffTeam"] = teamName;
+        player.raw["cffConference"] = player.conference;
+        player.raw["cffSeason"] = seasonYear;
+
+        const auto existing = playerIndexes.find(player.id);
+        if (existing == playerIndexes.end()) {
+            playerIndexes.emplace(player.id, players.size());
+            players.push_back(std::move(player));
+        } else {
+            players[existing->second] = std::move(player);
+        }
+    }
+
+    teamsFetched = rosterTeams.size();
+    if (players.empty()) {
+        errors.push_back("CFBD bulk FBS roster contained no players for the selected teams.");
+        return {};
+    }
+    if (teamsFetched != teamsExpected) {
+        errors.push_back("CFBD bulk FBS roster covered " + std::to_string(teamsFetched) +
+                         " of " + std::to_string(teamsExpected) +
+                         " expected teams; stale players were not retired.");
     }
 
     return players;
@@ -472,6 +625,17 @@ IngestResult runCfbdIngestOnce() {
         teamsFetched
     );
 
+    overall.apiCalls = apiCalls;
+    overall.teamsExpected = teamsExpected;
+    overall.teamsFetched = teamsFetched;
+    if (players.empty()) {
+        if (overall.errors.empty()) {
+            overall.errors.push_back("No roster players were returned; the existing player catalog was preserved.");
+        }
+        recordIngestionRun(*dbUrl, season, overall);
+        return overall;
+    }
+
     const bool completeImport =
         teamsExpected > 0 &&
         teamsFetched == teamsExpected &&
@@ -489,9 +653,6 @@ IngestResult runCfbdIngestOnce() {
     overall.ingested = databaseResult.ingested;
     overall.updated = databaseResult.updated;
     overall.retired = databaseResult.retired;
-    overall.apiCalls = apiCalls;
-    overall.teamsExpected = teamsExpected;
-    overall.teamsFetched = teamsFetched;
     overall.complete = completeImport && databaseResult.complete && overall.errors.empty();
 
     if (!overall.complete && overall.errors.empty()) {
