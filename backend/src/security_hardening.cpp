@@ -182,6 +182,8 @@ std::string safeRoute(const drogon::HttpRequestPtr &req) {
     if (!matched.empty()) return std::string{matched};
     const auto &path = req->getPath();
     if (path.rfind("/api/auth/", 0) == 0) return path;
+    if (path == "/api/admin/ingest/cfbd/live" ||
+        path == "/api/admin/ingest/cfbd/live/status") return path;
     if (path.rfind("/api/admin/", 0) == 0) return "/api/admin/*";
     if (path.rfind("/api/leagues", 0) == 0) return "/api/leagues/*";
     if (path.rfind("/api/players", 0) == 0) return "/api/players";
@@ -350,6 +352,9 @@ std::optional<RatePolicy> ratePolicy(const drogon::HttpRequestPtr &req) {
     if (path == "/api/auth/reset-password") return RatePolicy{12, 0, std::chrono::minutes(30), false};
     if (path == "/api/auth/resend-verification") return RatePolicy{20, 5, std::chrono::minutes(30), true};
     if (path == "/api/auth/verify-email") return RatePolicy{30, 0, std::chrono::minutes(15), false};
+    if (path == "/api/admin/ingest/cfbd/live") {
+        return RatePolicy{4, 0, std::chrono::minutes(5), false};
+    }
     if (path.rfind("/api/admin/", 0) == 0) {
         return req->getMethod() == drogon::Get
             ? RatePolicy{30, 0, std::chrono::minutes(5), false}

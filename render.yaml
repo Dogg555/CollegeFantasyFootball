@@ -96,17 +96,8 @@ services:
   - type: cron
     name: college-ff-cfbd-ingest
     runtime: python
+    plan: starter
     schedule: "0 8 * * *"
-    plan: starter
-    buildCommand: python -m py_compile scripts/ops_ingest.py
-    startCommand: python scripts/ops_ingest.py --run
-    envVars:
-      - key: CFF_API_BASE_URL
-        sync: false
-      - key: CFF_ADMIN_API_TOKEN
-        sync: false
-    plan: starter
-    schedule: "0 10 * * *"
     buildCommand: python -m py_compile scripts/ops_ingest.py
     startCommand: >-
       sh -c 'export CFF_API_BASE_URL="http://${CFF_API_HOSTPORT}";
@@ -128,6 +119,33 @@ services:
         value: "6"
       - key: CFF_INGEST_RETRY_DELAY_SECONDS
         value: "10"
+
+  - type: cron
+    name: college-ff-live-ingest
+    runtime: python
+    plan: starter
+    schedule: "*/2 * * 1,8,9,10,11,12 *"
+    buildCommand: python -m py_compile scripts/ops_live_ingest.py
+    startCommand: >-
+      sh -c 'export CFF_API_BASE_URL="http://${CFF_API_HOSTPORT}";
+      exec python scripts/ops_live_ingest.py'
+    envVars:
+      - key: CFF_API_HOSTPORT
+        fromService:
+          type: web
+          name: college-ff-api
+          property: hostport
+      - key: CFF_ADMIN_API_TOKEN
+        fromService:
+          type: web
+          name: college-ff-api
+          envVarKey: CFF_ADMIN_API_TOKEN
+      - key: CFF_LIVE_INGEST_TIMEOUT_SECONDS
+        value: "90"
+      - key: CFF_LIVE_INGEST_HEALTH_RETRIES
+        value: "3"
+      - key: CFF_LIVE_INGEST_RETRY_DELAY_SECONDS
+        value: "5"
 
   - type: cron
     name: college-ff-db-backup
