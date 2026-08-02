@@ -56,9 +56,22 @@ RUN git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/c
  && ldconfig \
  && rm -rf /tmp/cpr
 
+# Render builds from the repository root so the one-time ESPN scripts are
+# available. Existing local/CI commands still build with ./backend as context.
+# Normalize either context shape into /app/backend and /app/scripts.
 WORKDIR /app
-COPY . /app
+COPY . /context
+RUN set -eux; \
+    mkdir -p /app/backend /app/scripts; \
+    if [ -d /context/backend ]; then \
+        cp -a /context/backend/. /app/backend/; \
+        cp /context/scripts/espn_roster_ingest.py /app/scripts/; \
+        cp /context/scripts/run_espn_roster_once.py /app/scripts/; \
+    else \
+        cp -a /context/. /app/backend/; \
+    fi
 
+WORKDIR /app/backend
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CXX_FLAGS_RELEASE="-O0 -g0 -DNDEBUG" \
@@ -70,6 +83,8 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     postgresql-client \
+    python3 \
+    python3-psycopg \
     libssl3 \
     libjsoncpp25 \
     libcrypt1 \
@@ -86,8 +101,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && install -d -o cff -g cff -m 0750 /srv/uploads
 
 WORKDIR /srv
-COPY --from=build --chown=cff:cff /app/build/college_ff_server /srv/college_ff_server
-COPY --from=build --chown=cff:cff /app/db /srv/db
+COPY --from=build --chown=cff:cff /app/backend/build/college_ff_server /srv/college_ff_server
+COPY --from=build --chown=cff:cff /app/backend/db /srv/db
+COPY --from=build --chown=cff:cff /app/scripts /srv/scripts
 
 USER 10001:10001
 EXPOSE 8080
