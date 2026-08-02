@@ -46,6 +46,17 @@ std::string bareAddress(const std::string &value) {
     return value;
 }
 
+std::string safeLogText(std::string value) {
+    std::replace(value.begin(), value.end(), '\r', ' ');
+    std::replace(value.begin(), value.end(), '\n', ' ');
+    constexpr std::size_t kMaxLogLength = 1000;
+    if (value.size() > kMaxLogLength) {
+        value.resize(kMaxLogLength);
+        value += "...";
+    }
+    return value;
+}
+
 struct UploadBuffer {
     std::string data;
     std::size_t offset{0};
@@ -60,6 +71,13 @@ std::size_t readUpload(char *buffer, std::size_t size, std::size_t count, void *
         std::copy_n(upload->data.data() + upload->offset, bytes, buffer);
         upload->offset += bytes;
     }
+    return bytes;
+}
+
+std::size_t appendResponse(char *buffer, std::size_t size, std::size_t count, void *userdata) {
+    auto *response = static_cast<std::string *>(userdata);
+    const auto bytes = size * count;
+    response->append(buffer, bytes);
     return bytes;
 }
 
@@ -84,10 +102,13 @@ bool sendResend(const std::string &to,
     headers = curl_slist_append(headers, ("Authorization: Bearer " + *apiKey).c_str());
     headers = curl_slist_append(headers, "Content-Type: application/json");
     const auto body = jsonString(payload);
+    std::string responseBody;
     curl_easy_setopt(curl, CURLOPT_URL, "https://api.resend.com/emails");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendResponse);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     const auto result = curl_easy_perform(curl);
@@ -97,7 +118,11 @@ bool sendResend(const std::string &to,
     curl_easy_cleanup(curl);
     if (result != CURLE_OK || status < 200 || status >= 300) {
         std::cerr << "[email] resend delivery failed status=" << status
-                  << " curl=" << curl_easy_strerror(result) << std::endl;
+                  << " curl=" << curl_easy_strerror(result);
+        if (!responseBody.empty()) {
+            std::cerr << " response=" << safeLogText(responseBody);
+        }
+        std::cerr << std::endl;
         return false;
     }
     return true;
