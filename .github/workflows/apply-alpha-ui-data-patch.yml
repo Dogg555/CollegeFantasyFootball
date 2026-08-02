@@ -25,8 +25,19 @@ jobs:
           node-version: '22'
       - name: Apply guarded source patch
         run: |
-          sed -i '/replace_all("docs\/alpha-release-runbook.md", "Monday", "Tuesday")/d' scripts/apply_alpha_ui_data_patch.py
-          sed -i '/replace_once("frontend\/league.html", '\''  <main class=\\"layout\\" style=\\"max-width: 1080px\\">\\n    <section class=\\"card card--accent\\" data-league-panel=\\"overview\\">'\''/d' scripts/apply_alpha_ui_data_patch.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply_alpha_ui_data_patch.py')
+          lines = path.read_text(encoding='utf-8').splitlines()
+          filtered = []
+          for line in lines:
+              if 'replace_all("docs/alpha-release-runbook.md", "Monday", "Tuesday")' in line:
+                  continue
+              if 'replace_once("frontend/league.html"' in line and 'data-league-panel=\\"overview\\"' in line:
+                  continue
+              filtered.append(line)
+          path.write_text('\n'.join(filtered) + '\n', encoding='utf-8')
+          PY
           python scripts/apply_alpha_ui_data_patch.py
           python - <<'PY'
           from pathlib import Path
