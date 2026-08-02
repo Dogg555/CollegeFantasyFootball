@@ -52,4 +52,4 @@ assert.doesNotMatch(
   'the browse request must not omit query when no search text is present'
 );
 
-console.log('scoreboard and player browse UI tests passed');
+console.log('scoreboard UI tests passed; player browse regression passed');
