@@ -104,12 +104,12 @@ class OneTimeBootstrapTests(unittest.TestCase):
         self.assertNotIn("postgresql://example.invalid/cff", command)
         self.assertEqual(run_mock.call_args.kwargs, {"check": True})
         self.assertIn(
-            "players_espn_fbs",
+            "raw->>'cffScope' = 'division-i-fbs'",
             connection.cursor_instance.executed[-1][0],
         )
         self.assertEqual(
             connection.cursor_instance.executed[-1][1],
-            (2026, 5678),
+            (2026,),
         )
 
     def test_zero_committed_rows_fails_after_importer(self) -> None:
