@@ -1,0 +1,90 @@
+name: Backup restore validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_key:
+        description: Exact S3 object key to restore; leave blank for the newest dump
+        required: false
+        type: string
+      allow_nonempty_target:
+        description: Permit restoring into a nonempty disposable target database
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-restore-validation
+  cancel-in-progress: false
+
+jobs:
+  restore-drill:
+    name: Restore off-platform PostgreSQL backup
+    runs-on: ubuntu-24.04
+    env:
+      CFF_RESTORE_TARGET_DB_URL: ${{ secrets.CFF_RESTORE_TARGET_DB_URL }}
+      CFF_RESTORE_CONFIRM: restore-disposable-database
+      CFF_RESTORE_ALLOW_NONEMPTY: ${{ inputs.allow_nonempty_target }}
+      CFF_RESTORE_BACKUP_KEY: ${{ inputs.backup_key }}
+      CFF_BACKUP_S3_BUCKET: ${{ secrets.CFF_BACKUP_S3_BUCKET }}
+      CFF_BACKUP_S3_PREFIX: ${{ vars.CFF_BACKUP_S3_PREFIX || 'college-ff/postgres' }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.CFF_BACKUP_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.CFF_BACKUP_AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.CFF_BACKUP_AWS_REGION || 'auto' }}
+      AWS_ENDPOINT_URL: ${{ secrets.CFF_BACKUP_AWS_ENDPOINT_URL }}
+      CFF_RELEASE_GATE_REPORT_DIR: release-gate-artifacts
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Require disposable restore configuration
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in CFF_RESTORE_TARGET_DB_URL CFF_BACKUP_S3_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required restore secret $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Install restore dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+          python -m pip install --disable-pip-version-check boto3==1.40.1
+
+      - name: Restore and validate backup
+        run: python scripts/restore_backup.py
+
+      - name: Publish restore summary
+        if: always()
+        run: |
+          if [ -f release-gate-artifacts/backup-restore-validation.md ]; then
+            cat release-gate-artifacts/backup-restore-validation.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "# Backup restore evidence unavailable" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f release-gate-artifacts/backup-restore-validation.evidence.sha256 ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Use this digest as the Alpha readiness backup evidence input:" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat release-gate-artifacts/backup-restore-validation.evidence.sha256 >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload restore evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-restore-evidence-${{ github.run_id }}
+          path: release-gate-artifacts
+          if-no-files-found: error
+          retention-days: 90
