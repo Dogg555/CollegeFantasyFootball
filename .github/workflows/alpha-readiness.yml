@@ -8,10 +8,18 @@ on:
         required: false
         default: true
         type: boolean
-      backup_restore_verified:
-        description: Confirm a real off-platform backup was restored successfully
+      backup_restore_run_id:
+        description: Successful Backup restore validation workflow run ID
         required: true
-        default: false
+        type: string
+      backup_restore_evidence_sha256:
+        description: SHA-256 emitted by that backup restore evidence artifact
+        required: true
+        type: string
+      run_full_lifecycle:
+        description: Run the destructive three-user staging lifecycle
+        required: false
+        default: true
         type: boolean
       run_browser_suite:
         description: Run desktop and mobile browser checks
@@ -21,6 +29,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: alpha-release-readiness
@@ -39,9 +48,29 @@ jobs:
       CFF_SMOKE_VERIFICATION_EMAIL_BASE: ${{ secrets.CFF_STAGING_VERIFICATION_EMAIL_BASE }}
       CFF_SMOKE_TEST_EMAIL_VERIFICATION: ${{ inputs.require_email }}
       CFF_ALPHA_REQUIRE_EMAIL: ${{ inputs.require_email }}
-      CFF_ALPHA_BACKUP_VERIFIED: ${{ inputs.backup_restore_verified }}
+      CFF_ALPHA_BACKUP_EVIDENCE_SHA256: ${{ inputs.backup_restore_evidence_sha256 }}
       CFF_ALPHA_MIN_ACTIVE_PLAYERS: "1000"
       CFF_ALPHA_MAX_MONTHLY_CFBD_CALLS: "125000"
+      CFF_RELEASE_GATE_REPORT_DIR: release-gate-artifacts
+      CFF_EMAIL_TEST_ADDRESS: ${{ secrets.CFF_STAGING_EMAIL_TEST_ADDRESS }}
+      CFF_EMAIL_ACCEPTANCE_PASSWORD: ${{ secrets.CFF_STAGING_EMAIL_ACCEPTANCE_PASSWORD }}
+      CFF_EMAIL_EXPECTED_FROM_DOMAIN: ${{ secrets.CFF_STAGING_EMAIL_FROM_DOMAIN }}
+      CFF_IMAP_HOST: ${{ secrets.CFF_STAGING_IMAP_HOST }}
+      CFF_IMAP_PORT: ${{ secrets.CFF_STAGING_IMAP_PORT }}
+      CFF_IMAP_USERNAME: ${{ secrets.CFF_STAGING_IMAP_USERNAME }}
+      CFF_IMAP_PASSWORD: ${{ secrets.CFF_STAGING_IMAP_PASSWORD }}
+      CFF_LIFECYCLE_COMMISSIONER_EMAIL: ${{ secrets.CFF_STAGING_LIFECYCLE_COMMISSIONER_EMAIL }}
+      CFF_LIFECYCLE_COMMISSIONER_PASSWORD: ${{ secrets.CFF_STAGING_LIFECYCLE_COMMISSIONER_PASSWORD }}
+      CFF_LIFECYCLE_MANAGER_A_EMAIL: ${{ secrets.CFF_STAGING_LIFECYCLE_MANAGER_A_EMAIL }}
+      CFF_LIFECYCLE_MANAGER_A_PASSWORD: ${{ secrets.CFF_STAGING_LIFECYCLE_MANAGER_A_PASSWORD }}
+      CFF_LIFECYCLE_MANAGER_B_EMAIL: ${{ secrets.CFF_STAGING_LIFECYCLE_MANAGER_B_EMAIL }}
+      CFF_LIFECYCLE_MANAGER_B_PASSWORD: ${{ secrets.CFF_STAGING_LIFECYCLE_MANAGER_B_PASSWORD }}
+      CFF_DATA_MIN_ACTIVE_PLAYERS: "1000"
+      CFF_DATA_MIN_TEAMS: "100"
+      CFF_DATA_MIN_CONFERENCES: "8"
+      CFF_DATA_MAX_MISSING_PERCENT: "2"
+      CFF_DATA_MAX_MONTHLY_CFBD_CALLS: "125000"
+      CFF_DATA_REQUIRE_SCHEDULE: "true"
 
     steps:
       - uses: actions/checkout@v4
@@ -59,27 +88,97 @@ jobs:
               missing=1
             fi
           done
+          if ! [[ "${{ inputs.backup_restore_run_id }}" =~ ^[0-9]+$ ]]; then
+            echo "::error::backup_restore_run_id must be a numeric workflow run ID"
+            missing=1
+          fi
+          if ! [[ "${CFF_ALPHA_BACKUP_EVIDENCE_SHA256:-}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "::error::backup_restore_evidence_sha256 must be the 64-character digest emitted by restore_backup.py"
+            missing=1
+          fi
           if [ "${CFF_ALPHA_REQUIRE_EMAIL}" = "true" ]; then
-            for name in CFF_SMOKE_ACCOUNT_EMAIL CFF_SMOKE_ACCOUNT_PASSWORD CFF_SMOKE_VERIFICATION_EMAIL_BASE; do
+            for name in CFF_SMOKE_ACCOUNT_EMAIL CFF_SMOKE_ACCOUNT_PASSWORD CFF_SMOKE_VERIFICATION_EMAIL_BASE CFF_EMAIL_TEST_ADDRESS CFF_IMAP_HOST CFF_IMAP_PASSWORD; do
               if [ -z "${!name:-}" ]; then
                 echo "::error::Email Alpha gates require $name"
                 missing=1
               fi
             done
           fi
+          if [ "${{ inputs.run_full_lifecycle }}" = "true" ]; then
+            for name in CFF_LIFECYCLE_COMMISSIONER_EMAIL CFF_LIFECYCLE_COMMISSIONER_PASSWORD CFF_LIFECYCLE_MANAGER_A_EMAIL CFF_LIFECYCLE_MANAGER_A_PASSWORD CFF_LIFECYCLE_MANAGER_B_EMAIL CFF_LIFECYCLE_MANAGER_B_PASSWORD; do
+              if [ -z "${!name:-}" ]; then
+                echo "::error::Full lifecycle gate requires $name"
+                missing=1
+              fi
+            done
+          fi
           exit "$missing"
 
-      - name: Evaluate infrastructure and data readiness
+      - name: Download backup restore evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: backup-restore-evidence-${{ inputs.backup_restore_run_id }}
+          path: backup-restore-source
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.backup_restore_run_id }}
+
+      - name: Verify backup restore evidence digest
+        run: |
+          set -euo pipefail
+          evidence="$(find backup-restore-source -name backup-restore-validation.json -print -quit)"
+          sidecar="$(find backup-restore-source -name backup-restore-validation.evidence.sha256 -print -quit)"
+          test -n "$evidence"
+          test -f "$evidence"
+          test -n "$sidecar"
+          test -f "$sidecar"
+          actual="$(sha256sum "$evidence" | awk '{print $1}')"
+          declared="$(awk '{print $1}' "$sidecar")"
+          requested="$(printf '%s' "$CFF_ALPHA_BACKUP_EVIDENCE_SHA256" | tr 'A-F' 'a-f')"
+          test "$actual" = "$declared"
+          test "$actual" = "$requested"
+          python - "$evidence" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding='utf-8') as handle:
+              report = json.load(handle)
+          assert report.get('status') == 'passed', report
+          assert report.get('classification') == 'restore-ready', report
+          PY
+          mkdir -p release-gate-artifacts/backup-restore-source
+          cp "$evidence" "$sidecar" release-gate-artifacts/backup-restore-source/
+
+      - name: Evaluate infrastructure readiness
         id: readiness
         continue-on-error: true
         run: python scripts/alpha_readiness.py
 
+      - name: Validate transactional email through IMAP
+        id: email
+        if: inputs.require_email
+        continue-on-error: true
+        run: python scripts/email_acceptance.py
+
+      - name: Validate current-season ingestion and schedule quality
+        id: data
+        continue-on-error: true
+        run: python scripts/data_ingestion_validation.py
+
       - name: Run complete deployed API lifecycle
+        id: api
+        continue-on-error: true
         run: |
           python scripts/api_smoke_tests.py
           python scripts/public_data_meta_tests.py
 
+      - name: Run three-user fantasy lifecycle
+        id: lifecycle
+        if: inputs.run_full_lifecycle
+        continue-on-error: true
+        run: python scripts/full_lifecycle_tests.py
+
       - name: Run deployed security, CORS, account and league acceptance
+        id: security
+        continue-on-error: true
         run: python scripts/render_smoke_tests.py
 
       - name: Install browser test dependencies
@@ -89,7 +188,9 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Run desktop and mobile browser suite
+        id: browser
         if: inputs.run_browser_suite
+        continue-on-error: true
         run: python scripts/frontend_browser_smoke.py
 
       - name: Upload Alpha evidence
@@ -99,6 +200,7 @@ jobs:
           name: alpha-readiness-${{ github.run_id }}
           path: |
             alpha-readiness-artifacts
+            release-gate-artifacts
             browser-artifacts
           if-no-files-found: warn
           retention-days: 30
@@ -111,13 +213,49 @@ jobs:
           else
             echo "# Alpha readiness report unavailable" >> "$GITHUB_STEP_SUMMARY"
           fi
+          for report in release-gate-artifacts/*.md; do
+            if [ -f "$report" ]; then
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              cat "$report" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
           echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backup restore run: ${{ inputs.backup_restore_run_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backup restore evidence: ${CFF_ALPHA_BACKUP_EVIDENCE_SHA256:0:12}…" >> "$GITHUB_STEP_SUMMARY"
           echo "- Email gates required: $CFF_ALPHA_REQUIRE_EMAIL" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Off-platform restore confirmed: $CFF_ALPHA_BACKUP_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Full lifecycle requested: ${{ inputs.run_full_lifecycle }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Browser suite requested: ${{ inputs.run_browser_suite }}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Enforce readiness result
-        if: steps.readiness.outcome != 'success'
+      - name: Enforce all requested Alpha gates
+        if: always()
+        env:
+          READINESS_OUTCOME: ${{ steps.readiness.outcome }}
+          EMAIL_OUTCOME: ${{ steps.email.outcome }}
+          DATA_OUTCOME: ${{ steps.data.outcome }}
+          API_OUTCOME: ${{ steps.api.outcome }}
+          LIFECYCLE_OUTCOME: ${{ steps.lifecycle.outcome }}
+          SECURITY_OUTCOME: ${{ steps.security.outcome }}
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
         run: |
-          echo "::error::One or more mandatory Alpha infrastructure/data gates failed. Review the uploaded report."
-          exit 1
+          set -euo pipefail
+          failed=0
+          for gate in READINESS_OUTCOME DATA_OUTCOME API_OUTCOME SECURITY_OUTCOME; do
+            outcome="${!gate}"
+            if [ "$outcome" != "success" ]; then
+              echo "::error::$gate was $outcome"
+              failed=1
+            fi
+          done
+          if [ "${{ inputs.require_email }}" = "true" ] && [ "$EMAIL_OUTCOME" != "success" ]; then
+            echo "::error::EMAIL gate outcome was $EMAIL_OUTCOME"
+            failed=1
+          fi
+          if [ "${{ inputs.run_full_lifecycle }}" = "true" ] && [ "$LIFECYCLE_OUTCOME" != "success" ]; then
+            echo "::error::LIFECYCLE gate outcome was $LIFECYCLE_OUTCOME"
+            failed=1
+          fi
+          if [ "${{ inputs.run_browser_suite }}" = "true" ] && [ "$BROWSER_OUTCOME" != "success" ]; then
+            echo "::error::BROWSER gate outcome was $BROWSER_OUTCOME"
+            failed=1
+          fi
+          exit "$failed"

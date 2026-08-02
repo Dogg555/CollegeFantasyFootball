@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -15,10 +16,11 @@ from typing import Any
 API_BASE = os.environ.get("CFF_API_BASE_URL", "").rstrip("/")
 ADMIN_TOKEN = os.environ.get("CFF_ADMIN_API_TOKEN", "")
 REQUIRE_EMAIL = os.environ.get("CFF_ALPHA_REQUIRE_EMAIL", "false").lower() == "true"
-BACKUP_VERIFIED = os.environ.get("CFF_ALPHA_BACKUP_VERIFIED", "false").lower() == "true"
+BACKUP_EVIDENCE_SHA256 = os.environ.get("CFF_ALPHA_BACKUP_EVIDENCE_SHA256", "").strip().lower()
 MIN_PLAYERS = int(os.environ.get("CFF_ALPHA_MIN_ACTIVE_PLAYERS", "1000"))
 MAX_MONTHLY_CALLS = int(os.environ.get("CFF_ALPHA_MAX_MONTHLY_CFBD_CALLS", "125000"))
 OUT_DIR = Path(os.environ.get("CFF_ALPHA_REPORT_DIR", "alpha-readiness-artifacts"))
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def request(path: str, *, admin: bool = False) -> tuple[int, Any]:
@@ -37,7 +39,7 @@ def request(path: str, *, admin: bool = False) -> tuple[int, Any]:
         except json.JSONDecodeError:
             payload = raw
         return exc.code, payload
-    except Exception as exc:  # network and JSON failures are reportable gates
+    except Exception as exc:
         return 0, {"error": str(exc)}
 
 
@@ -51,7 +53,6 @@ def main() -> int:
         return 2
 
     results: list[dict[str, Any]] = []
-
     status, health = request("/health")
     health = health if isinstance(health, dict) else {}
     add(results, "API health", status == 200 and health.get("status") == "ok", f"HTTP {status}; status={health.get('status')}")
@@ -83,7 +84,13 @@ def main() -> int:
     add(results, "Live ingestion status", status == 200 and live.get("status") in {"ok", "idle"}, f"HTTP {status}; status={live.get('status')}")
     add(results, "CFBD quota", monthly_calls < MAX_MONTHLY_CALLS, f"monthly calls={monthly_calls}; allowance={MAX_MONTHLY_CALLS}")
 
-    add(results, "Off-platform backup verified", BACKUP_VERIFIED, "Set CFF_ALPHA_BACKUP_VERIFIED=true only after a real off-platform restore succeeds")
+    backup_valid = bool(SHA256_RE.fullmatch(BACKUP_EVIDENCE_SHA256))
+    backup_detail = (
+        f"restore evidence sha256={BACKUP_EVIDENCE_SHA256[:12]}…"
+        if backup_valid
+        else "CFF_ALPHA_BACKUP_EVIDENCE_SHA256 must contain the digest emitted by a successful restore_backup.py run"
+    )
+    add(results, "Off-platform backup restore evidence", backup_valid, backup_detail)
 
     required_failures = [result for result in results if result["required"] and not result["passed"]]
     classification = "alpha-candidate" if not required_failures else "pre-alpha"
@@ -92,6 +99,7 @@ def main() -> int:
         "apiBaseUrl": API_BASE,
         "classification": classification,
         "requiredFailures": len(required_failures),
+        "backupRestoreEvidenceSha256": BACKUP_EVIDENCE_SHA256 if backup_valid else None,
         "results": results,
     }
 
