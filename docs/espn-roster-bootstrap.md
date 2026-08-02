@@ -4,7 +4,33 @@ Use `scripts/espn_roster_ingest.py` to seed current 2026 Power Four rosters whil
 
 The importer is intentionally separate from the normal CFBD pipeline because ESPN's site API is public but undocumented. It fetches only the ACC, Big 12, Big Ten, and SEC, writes a JSON audit file first, and then upserts the existing `players` table by ESPN athlete ID. It does not retire missing rows.
 
-## Install
+## Automatic Render run
+
+The API service runs this sequence during its next Render pre-deploy phase:
+
+```sh
+sh /srv/db/migrate.sh && python3 /srv/scripts/run_espn_roster_once.py
+```
+
+The one-time wrapper:
+
+1. acquires a PostgreSQL advisory lock so overlapping deploys cannot start duplicate imports;
+2. checks `ingestion_runs` for an existing successful `players_espn` row;
+3. exits without making any ESPN requests when a successful import already exists;
+4. otherwise runs the 2026 Power Four importer;
+5. relies on the importer's successful ledger row to permanently disable future automatic runs.
+
+A failed import causes the deployment to fail before the new API build goes live. Because no success marker is written, the next deployment can retry. After one successful import, later deployments execute only the inexpensive database check and never scrape ESPN again.
+
+Render variables:
+
+- `ESPN_ROSTER_AUTO_ONCE=true` enables the guarded automatic bootstrap.
+- `ESPN_ROSTER_SEASON=2026` controls the season stored on imported players.
+- `ESPN_ROSTER_ALLOW_PARTIAL=false` prevents database writes when any team roster fails.
+
+Set `ESPN_ROSTER_AUTO_ONCE=false` to disable the hook manually. Deleting the successful `players_espn` ledger row would allow it to run again, so do that only intentionally.
+
+## Install for a manual local run
 
 ```powershell
 py -m venv .venv
@@ -23,7 +49,7 @@ python scripts/espn_roster_ingest.py `
 
 The command fails closed when a conference unexpectedly contains fewer than 10 or more than 25 teams, or when any team returns an empty/failed roster. The JSON export remains available for inspection.
 
-## Import into Postgres
+## Import into Postgres manually
 
 Set `DB_URL` to the database connection string. When running outside Render, use the database's external connection URL.
 
@@ -35,7 +61,7 @@ python scripts/espn_roster_ingest.py `
   --output espn-rosters-2026.json
 ```
 
-A successful run prints inserted/updated counts and records an `ingestion_runs` row with resource `players_espn`.
+A successful run prints inserted/updated counts and records an `ingestion_runs` row with resource `players_espn`. The automatic Render wrapper also recognizes a successful manual run and skips itself.
 
 ## Target one conference
 
