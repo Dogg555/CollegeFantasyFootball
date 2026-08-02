@@ -18,7 +18,7 @@ SPEC.loader.exec_module(MODULE)
 
 
 class FakeCursor:
-    def __init__(self, responses: list[tuple[bool]]) -> None:
+    def __init__(self, responses: list[tuple[object, ...]]) -> None:
         self.responses = iter(responses)
         self.executed: list[tuple[str, object]] = []
 
@@ -31,12 +31,12 @@ class FakeCursor:
     def execute(self, sql: str, params: object = None) -> None:
         self.executed.append((sql, params))
 
-    def fetchone(self) -> tuple[bool]:
+    def fetchone(self) -> tuple[object, ...]:
         return next(self.responses)
 
 
 class FakeConnection:
-    def __init__(self, responses: list[tuple[bool]]) -> None:
+    def __init__(self, responses: list[tuple[object, ...]]) -> None:
         self.cursor_instance = FakeCursor(responses)
 
     def __enter__(self) -> "FakeConnection":
@@ -52,7 +52,7 @@ class FakeConnection:
 class OneTimeBootstrapTests(unittest.TestCase):
     def run_case(
         self,
-        responses: list[tuple[bool]],
+        responses: list[tuple[object, ...]],
     ) -> tuple[int, mock.Mock, FakeConnection]:
         connection = FakeConnection(responses)
         fake_psycopg = types.SimpleNamespace(
@@ -80,14 +80,22 @@ class OneTimeBootstrapTests(unittest.TestCase):
 
         return result, run_mock, connection
 
-    def test_success_marker_skips_all_espn_requests(self) -> None:
-        result, run_mock, connection = self.run_case([(True,), (True,)])
+    def test_verified_fbs_marker_skips_all_espn_requests(self) -> None:
+        result, run_mock, connection = self.run_case(
+            [(True,), (True, 4321)]
+        )
         self.assertEqual(result, 0)
         run_mock.assert_not_called()
         self.assertEqual(len(connection.cursor_instance.executed), 2)
+        self.assertIn(
+            "players_espn_fbs",
+            connection.cursor_instance.executed[1][0],
+        )
 
-    def test_first_run_invokes_importer_once(self) -> None:
-        result, run_mock, _connection = self.run_case([(True,), (False,)])
+    def test_first_run_invokes_importer_and_verifies_rows(self) -> None:
+        result, run_mock, connection = self.run_case(
+            [(True,), (False, 0), (5678,)]
+        )
         self.assertEqual(result, 0)
         run_mock.assert_called_once()
         command = run_mock.call_args.args[0]
@@ -95,6 +103,38 @@ class OneTimeBootstrapTests(unittest.TestCase):
         self.assertIn("2026", command)
         self.assertNotIn("postgresql://example.invalid/cff", command)
         self.assertEqual(run_mock.call_args.kwargs, {"check": True})
+        self.assertIn(
+            "players_espn_fbs",
+            connection.cursor_instance.executed[-1][0],
+        )
+        self.assertEqual(
+            connection.cursor_instance.executed[-1][1],
+            (2026, 5678),
+        )
+
+    def test_zero_committed_rows_fails_after_importer(self) -> None:
+        connection = FakeConnection([(True,), (False, 0), (0,)])
+        fake_psycopg = types.SimpleNamespace(
+            connect=lambda *_args, **_kwargs: connection
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            module_path = Path(directory) / "run_espn_roster_once.py"
+            importer_path = Path(directory) / "espn_roster_ingest.py"
+            importer_path.write_text("# test importer\n", encoding="utf-8")
+            environment = {
+                "DB_URL": "postgresql://example.invalid/cff",
+                "ESPN_ROSTER_AUTO_ONCE": "true",
+                "ESPN_ROSTER_SEASON": "2026",
+            }
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}),
+                mock.patch.object(MODULE, "__file__", str(module_path)),
+                mock.patch.object(MODULE.subprocess, "run"),
+            ):
+                with self.assertRaises(MODULE.BootstrapError):
+                    MODULE.main()
 
     def test_advisory_lock_contention_skips_import(self) -> None:
         result, run_mock, connection = self.run_case([(False,)])
