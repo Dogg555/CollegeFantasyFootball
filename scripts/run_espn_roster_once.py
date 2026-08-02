@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Run the ESPN all-team roster bootstrap once across all future deployments.
-
-The Render pre-deploy hook invokes this file on every deploy. A successful
-`players_espn` ingestion ledger row permanently disables later ESPN fetches.
-A PostgreSQL advisory lock prevents overlapping deploys from starting duplicate
-imports.
-"""
+"""Run the ESPN Division I FBS roster bootstrap once across future deployments."""
 
 from __future__ import annotations
 
@@ -85,7 +79,7 @@ def main() -> int:
             completed = cursor.fetchone()
             if completed and bool(completed[0]):
                 print(
-                    "[espn-bootstrap] a successful ESPN roster import already exists; no ESPN requests were made",
+                    "[espn-bootstrap] a successful ESPN FBS roster import already exists; no ESPN requests were made",
                     flush=True,
                 )
                 return 0
@@ -94,7 +88,7 @@ def main() -> int:
             if not importer.is_file():
                 raise BootstrapError(f"ESPN importer not found at {importer}")
 
-            output_path = Path("/tmp") / f"espn-rosters-{season}.json"
+            output_path = Path("/tmp") / f"espn-fbs-rosters-{season}.json"
             command = [
                 sys.executable,
                 str(importer),
@@ -109,12 +103,12 @@ def main() -> int:
                 command.append("--allow-unexpected-team-count")
 
             print(
-                f"[espn-bootstrap] no successful prior import found; starting one-time {season} all-team import",
+                f"[espn-bootstrap] no successful prior import found; starting one-time {season} Division I FBS import",
                 flush=True,
             )
             subprocess.run(command, check=True)
             print(
-                "[espn-bootstrap] import completed successfully; future deployments will skip it",
+                "[espn-bootstrap] FBS import completed successfully; future deployments will skip it",
                 flush=True,
             )
             return 0
