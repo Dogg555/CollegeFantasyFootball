@@ -1,0 +1,51 @@
+name: Infrastructure hardening
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infrastructure-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Lifecycle, proxy, and image contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install YAML parser
+        run: python -m pip install --disable-pip-version-check pyyaml
+
+      - name: Validate infrastructure contracts
+        run: python scripts/infrastructure_contract_tests.py
+
+      - name: Validate shell entrypoints
+        run: |
+          sh -n backend/docker-entrypoint.sh
+          sh -n backend/db/migrate.sh
+
+      - name: Validate Compose model
+        env:
+          POSTGRES_USER: cff
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: cff
+          JWT_SECRET: local-test-secret
+          DB_URL: postgresql://cff:local-test-only@postgres:5432/cff
+        run: docker compose config --quiet
+
+      - name: Build and validate frontend proxy image
+        run: |
+          docker build -f frontend/Dockerfile -t cff-frontend-infrastructure ./frontend
+          docker run --rm cff-frontend-infrastructure nginx -t
