@@ -1,4 +1,4 @@
-# Manual deploy trigger: 2026-08-02T04:26:00-06:00
+# Manual deploy trigger: 2026-08-02T16:40:00-06:00
 services:
   - type: web
     name: college-ff-api
@@ -91,7 +91,7 @@ services:
       - www.college-fantasy-football.com
     envVars:
       - key: CFF_API_BASE
-        value: https://api.college-fantasy-football.com/api
+        value: https://college-ff-api.onrender.com/api
       - key: CFF_ALLOW_LOCAL_DEMO
         value: "false"
     headers:
