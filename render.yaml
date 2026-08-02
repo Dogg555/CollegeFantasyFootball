@@ -19,6 +19,8 @@ services:
         value: https://collegefantasyfootball.com,https://www.collegefantasyfootball.com,https://college-ff-frontend.onrender.com
       - key: CFBD_API_KEY
         sync: false
+      - key: CFBD_ROSTER_SEASON
+        value: "2025"
       - key: CFF_ADMIN_API_TOKEN
         generateValue: true
       - key: CFF_ADMIN_EMAILS
