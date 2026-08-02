@@ -1,0 +1,75 @@
+name: ESPN roster bootstrap
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/Dockerfile"
+      - "render.yaml"
+      - "scripts/espn_roster_ingest.py"
+      - "scripts/espn_roster_ingest_tests.py"
+      - "scripts/run_espn_roster_once.py"
+      - "scripts/run_espn_roster_once_tests.py"
+      - ".github/workflows/espn-roster-bootstrap.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/Dockerfile"
+      - "render.yaml"
+      - "scripts/espn_roster_ingest.py"
+      - "scripts/run_espn_roster_once.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile and test import helpers
+        run: |
+          python -m py_compile \
+            scripts/espn_roster_ingest.py \
+            scripts/espn_roster_ingest_tests.py \
+            scripts/run_espn_roster_once.py \
+            scripts/run_espn_roster_once_tests.py
+          python scripts/espn_roster_ingest_tests.py
+          python scripts/run_espn_roster_once_tests.py
+
+      - name: Validate guarded Render configuration
+        run: |
+          python -m pip install --disable-pip-version-check pyyaml
+          python - <<'PY'
+          import yaml
+
+          with open("render.yaml", encoding="utf-8") as handle:
+              blueprint = yaml.safe_load(handle)
+
+          services = {service["name"]: service for service in blueprint["services"]}
+          api = services["college-ff-api"]
+          env = {item["key"]: item for item in api["envVars"] if "key" in item}
+
+          assert api["dockerContext"] == "."
+          assert "run_espn_roster_once.py" in api["preDeployCommand"]
+          assert env["ESPN_ROSTER_AUTO_ONCE"]["value"] == "true"
+          assert env["ESPN_ROSTER_SEASON"]["value"] == "2026"
+          assert env["ESPN_ROSTER_ALLOW_PARTIAL"]["value"] == "false"
+          PY
+
+      - name: Build root-context production image
+        run: docker build -f backend/Dockerfile -t college-ff-api-espn .
+
+      - name: Verify packaged runtime helpers
+        run: |
+          docker run --rm --entrypoint python3 college-ff-api-espn -c "import psycopg"
+          docker run --rm --entrypoint python3 \
+            -e ESPN_ROSTER_AUTO_ONCE=false \
+            college-ff-api-espn \
+            /srv/scripts/run_espn_roster_once.py
