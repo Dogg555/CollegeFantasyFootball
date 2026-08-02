@@ -1,5 +1,9 @@
 # College Fantasy Football
 
+**Live website:** [college-fantasy-football.com](https://college-fantasy-football.com/)
+
+The live website links back to this repository from its homepage footer so testers can move between the deployed app and its source code.
+
 This repository contains a college fantasy football web app with a static frontend and a C++ Drogon API. The backend supports auth, league management, rosters, draft flow, waivers, trades, matchup scoring, CFBD-backed player ingestion, and Postgres persistence for hosted deployments.
 
 ## Directory layout
