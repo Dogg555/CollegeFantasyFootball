@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the ESPN roster bootstrap once across all future deployments.
+"""Run the ESPN all-team roster bootstrap once across all future deployments.
 
 The Render pre-deploy hook invokes this file on every deploy. A successful
 `players_espn` ingestion ledger row permanently disables later ESPN fetches.
@@ -40,7 +40,7 @@ def configured_season() -> int:
 
 def main() -> int:
     if not env_flag("ESPN_ROSTER_AUTO_ONCE", default=True):
-        print("[espn-bootstrap] automatic one-time import is disabled")
+        print("[espn-bootstrap] automatic one-time import is disabled", flush=True)
         return 0
 
     database_url = os.environ.get("DB_URL", "").strip()
@@ -57,8 +57,6 @@ def main() -> int:
     season = configured_season()
     lock_name = "cff:espn-roster-bootstrap"
 
-    # Keep this session open while the child importer runs so the advisory lock
-    # remains held for the entire scrape and database upsert.
     with psycopg.connect(database_url, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -68,7 +66,8 @@ def main() -> int:
             row = cursor.fetchone()
             if not row or not bool(row[0]):
                 print(
-                    "[espn-bootstrap] another deployment is already running the one-time import; skipping"
+                    "[espn-bootstrap] another deployment is already running the one-time import; skipping",
+                    flush=True,
                 )
                 return 0
 
@@ -86,7 +85,8 @@ def main() -> int:
             completed = cursor.fetchone()
             if completed and bool(completed[0]):
                 print(
-                    "[espn-bootstrap] a successful ESPN roster import already exists; no ESPN requests were made"
+                    "[espn-bootstrap] a successful ESPN roster import already exists; no ESPN requests were made",
+                    flush=True,
                 )
                 return 0
 
@@ -109,11 +109,13 @@ def main() -> int:
                 command.append("--allow-unexpected-team-count")
 
             print(
-                f"[espn-bootstrap] no successful prior import found; starting one-time {season} Power Four import"
+                f"[espn-bootstrap] no successful prior import found; starting one-time {season} all-team import",
+                flush=True,
             )
             subprocess.run(command, check=True)
             print(
-                "[espn-bootstrap] import completed successfully; future deployments will skip it"
+                "[espn-bootstrap] import completed successfully; future deployments will skip it",
+                flush=True,
             )
             return 0
 
@@ -125,5 +127,6 @@ if __name__ == "__main__":
         print(
             json.dumps({"status": "failed", "error": str(error)}, indent=2),
             file=sys.stderr,
+            flush=True,
         )
         raise SystemExit(1)
