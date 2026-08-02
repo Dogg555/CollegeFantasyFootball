@@ -14,15 +14,15 @@ struct PlayerCard {
     std::string position;
     std::string conference;
     std::string classYear;
+    int season = 0;
+    std::string updatedAt;
 
     Json::Value toJson() const;
 };
 
-// Searches the players table (joined with teams) using the Postgres schema in db/schema.sql.
-// - query: free-text tokens matched against name, team, position, and conference.
-// - positionFilter: exact position match (e.g., QB, RB, WR).
-// - conferenceFilter: exact conference match (e.g., SEC, Big Ten).
-// - limit: maximum number of rows returned (clamped internally).
+// Searches the active current-season player catalog. An empty query returns a
+// browsable player pool, while non-empty tokens match name, team, position,
+// and conference. Optional filters are applied server-side.
 std::vector<PlayerCard> searchPlayers(const std::string &query,
                                       const std::optional<std::string> &positionFilter,
                                       const std::optional<std::string> &conferenceFilter,
