@@ -61,7 +61,7 @@ jobs:
 
           api_env = {item.get('key'): item for item in api['envVars'] if item.get('key')}
           assert api_env['CFBD_INGEST_ON_STARTUP']['value'] == 'false'
-          assert 'CFBD_INGEST_INTERVAL_HOURS' not in api_env
+          assert api_env['CFBD_INGEST_INTERVAL_HOURS']['value'] == '0'
 
           assert ingest['type'] == 'cron'
           assert ingest['runtime'] == 'python'
