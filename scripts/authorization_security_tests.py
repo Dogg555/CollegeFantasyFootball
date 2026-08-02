@@ -61,8 +61,23 @@ def main():
     require(status == 200, f"approval failed: {status} {body}")
     status, _ = request(f"/api/leagues/{league_id}", token=outsider)
     require(status == 200, "approved member lacks access")
+    status, body = request(f"/api/leagues/{league_id}", "PUT", {
+        "name": "Authorization League Updated",
+        "teams": 8,
+        "scoring": "ppr",
+        "draftType": "snake",
+        "invitedEmails": [outsider_email.upper()],
+        "rosterRules": {"qb":0,"rb":0,"wr":0,"te":0,"flex":0,"bench":8},
+    }, owner)
+    require(status == 200, f"league settings update failed: {status} {body}")
+    status, _ = request(f"/api/leagues/{league_id}", token=outsider)
+    require(status == 200, "saving league settings demoted an active member")
     denied(f"/api/leagues/{league_id}", outsider, "PUT", {"name":"stolen","teams":8,"scoring":"ppr","draftType":"snake"})
     owner_path = urllib.parse.quote(owner_email, safe="")
+    status, body = request(f"/api/leagues/{league_id}/members/{owner_path}", "PUT", {"role":"commissioner","status":"Active","teamName":"Owner Team"}, owner)
+    require(status == 200, f"owner team-name update failed: {status} {body}")
+    owner_member = next((entry for entry in body if entry.get("email") == owner_email), None)
+    require(owner_member and owner_member.get("teamName") == "Owner Team", "owner team name was not saved")
     status, _ = request(f"/api/leagues/{league_id}/members/{owner_path}", "PUT", {"role":"member","status":"Removed"}, owner)
     require(status == 403, "league owner could be removed")
     print(json.dumps({"status":"ok","leagueId":league_id,"idorBlocked":True,"approvalRequired":True}, indent=2))
