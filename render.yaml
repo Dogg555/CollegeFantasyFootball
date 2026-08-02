@@ -25,7 +25,19 @@ services:
         value: "false"
       - key: CFBD_INGEST_INTERVAL_HOURS
         value: "0"
+      - key: CFF_EMAIL_PROVIDER
+        value: resend
       - key: RESEND_API_KEY
+        sync: false
+      - key: CFF_SMTP_HOST
+        sync: false
+      - key: CFF_SMTP_PORT
+        value: "587"
+      - key: CFF_SMTP_SECURITY
+        value: starttls
+      - key: CFF_SMTP_USERNAME
+        sync: false
+      - key: CFF_SMTP_PASSWORD
         sync: false
       - key: CFF_EMAIL_FROM
         sync: false
