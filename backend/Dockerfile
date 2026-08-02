@@ -3,7 +3,7 @@ FROM debian:bookworm AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG BUILD_JOBS=1
-ARG ESPN_BOOTSTRAP_REF=9d4a1c0de3d4d0793bf4404ab92a831f9c8387c6
+ARG ESPN_BOOTSTRAP_REF=f0cf70d178c8e9fec1ee54f3d415c07c89b6714e
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -57,10 +57,10 @@ RUN git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/c
  && ldconfig \
  && rm -rf /tmp/cpr
 
-# Render should build from the repository root so the one-time ESPN scripts are
-# available. Existing services and local CI may still build with ./backend as
-# context, so fetch the pinned, reviewed scripts when the root scripts are not
-# present. This keeps the startup fallback working in both context layouts.
+# Render builds from the repository root so the one-time ESPN scripts are
+# available to its pre-deploy command. Existing local CI may still build with
+# ./backend as context, so fetch the pinned, reviewed scripts when root scripts
+# are not present.
 WORKDIR /app
 COPY . /context
 RUN set -eux; \
@@ -120,4 +120,4 @@ COPY --from=build --chown=cff:cff /app/scripts /srv/scripts
 USER 10001:10001
 EXPOSE 8080
 ENV PORT=8080
-CMD ["sh", "-c", "if [ -z \"${ESPN_ROSTER_AUTO_ONCE+x}\" ]; then export ESPN_ROSTER_AUTO_ONCE=\"${RENDER:-false}\"; fi; sh /srv/db/migrate.sh && python3 /srv/scripts/run_espn_roster_once.py && exec /srv/college_ff_server"]
+CMD ["sh", "-c", "sh /srv/db/migrate.sh && exec /srv/college_ff_server"]
