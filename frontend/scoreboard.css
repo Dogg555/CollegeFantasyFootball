@@ -1,0 +1,215 @@
+.scoreboard-card {
+  grid-column: 1 / -1;
+}
+
+.scoreboard-card .card__header {
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.scoreboard-controls,
+.scoreboard-week-nav,
+.scoreboard-slide-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.scoreboard-controls {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.scoreboard-select {
+  min-width: 120px;
+  padding: 9px 34px 9px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+}
+
+.scoreboard-select option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.scoreboard-button {
+  min-width: 42px;
+  padding: 9px 12px;
+}
+
+.scoreboard-meta {
+  min-height: 22px;
+  margin-bottom: 10px;
+}
+
+.scoreboard-list {
+  min-height: 180px;
+  overflow: hidden;
+}
+
+.scoreboard-games {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  animation: scoreboard-enter 220ms ease-out;
+}
+
+.scoreboard-game {
+  min-width: 0;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.scoreboard-game.is-live {
+  border-color: rgba(91, 211, 143, 0.44);
+  background: rgba(91, 211, 143, 0.07);
+}
+
+.scoreboard-game__status {
+  min-height: 24px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.live-indicator {
+  color: var(--accent);
+}
+
+.live-indicator::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 4px rgba(91, 211, 143, 0.12);
+}
+
+.scoreboard-game__matchup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.scoreboard-game__matchup > div:last-child {
+  text-align: right;
+}
+
+.scoreboard-game__team,
+.scoreboard-game__side {
+  display: block;
+}
+
+.scoreboard-game__team {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scoreboard-game__side {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.scoreboard-game__score {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  font-size: 1.2rem;
+  font-weight: 900;
+}
+
+.scoreboard-game__score span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.scoreboard-game__score--scheduled {
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
+.scoreboard-dots {
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+  min-height: 14px;
+  margin-top: 12px;
+}
+
+.scoreboard-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+}
+
+.scoreboard-dot.is-active {
+  width: 22px;
+  border-radius: 999px;
+  background: var(--accent-2);
+}
+
+.scoreboard-empty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  padding: 20px;
+  text-align: center;
+}
+
+@keyframes scoreboard-enter {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (max-width: 900px) {
+  .scoreboard-games { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .scoreboard-controls { align-items: stretch; }
+  .scoreboard-week-nav,
+  .scoreboard-slide-nav { width: 100%; }
+  .scoreboard-select { flex: 1; }
+  .scoreboard-games { grid-template-columns: 1fr; }
+  .scoreboard-game__team { white-space: normal; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scoreboard-games { animation: none; }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
