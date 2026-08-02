@@ -1,0 +1,162 @@
+name: Finalize release evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployed_commit_sha:
+        description: Exact 40-character commit SHA deployed to Render
+        required: true
+        type: string
+      alpha_readiness_run_id:
+        description: Successful Alpha release readiness workflow run ID
+        required: true
+        type: string
+      backup_restore_run_id:
+        description: Successful Backup restore validation workflow run ID
+        required: true
+        type: string
+      backup_restore_evidence_sha256:
+        description: SHA-256 emitted by the backup restore evidence artifact
+        required: true
+        type: string
+      post_issue_evidence:
+        description: Post the final evidence bundle to issues 67 and 78
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: finalize-release-evidence
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: Verify and attach release evidence
+    runs-on: ubuntu-24.04
+    env:
+      CFF_FINALIZER_DEPLOYED_COMMIT: ${{ inputs.deployed_commit_sha }}
+      CFF_FINALIZER_ALPHA_RUN_ID: ${{ inputs.alpha_readiness_run_id }}
+      CFF_FINALIZER_BACKUP_RUN_ID: ${{ inputs.backup_restore_run_id }}
+      CFF_FINALIZER_BACKUP_SHA256: ${{ inputs.backup_restore_evidence_sha256 }}
+      CFF_FINALIZER_ALPHA_DIR: alpha-source
+      CFF_FINALIZER_BACKUP_DIR: backup-source
+      CFF_FINALIZER_OUTPUT_DIR: release-candidate-evidence
+      CFF_FINALIZER_REQUIRED_SECRET_NAMES: >-
+        RENDER_STAGING_API_KEY,
+        RENDER_STAGING_SERVICE_ID,
+        CFF_STAGING_API_BASE_URL,
+        CFF_STAGING_FRONTEND_BASE_URL,
+        CFF_STAGING_ADMIN_API_TOKEN,
+        CFF_STAGING_SMOKE_EMAIL,
+        CFF_STAGING_SMOKE_PASSWORD,
+        CFF_STAGING_VERIFICATION_EMAIL_BASE,
+        CFF_STAGING_EMAIL_TEST_ADDRESS,
+        CFF_STAGING_IMAP_HOST,
+        CFF_STAGING_IMAP_PASSWORD,
+        CFF_STAGING_LIFECYCLE_COMMISSIONER_EMAIL,
+        CFF_STAGING_LIFECYCLE_COMMISSIONER_PASSWORD,
+        CFF_STAGING_LIFECYCLE_MANAGER_A_EMAIL,
+        CFF_STAGING_LIFECYCLE_MANAGER_A_PASSWORD,
+        CFF_STAGING_LIFECYCLE_MANAGER_B_EMAIL,
+        CFF_STAGING_LIFECYCLE_MANAGER_B_PASSWORD,
+        CFF_RESTORE_TARGET_DB_URL,
+        CFF_BACKUP_S3_BUCKET,
+        CFF_BACKUP_AWS_ACCESS_KEY_ID,
+        CFF_BACKUP_AWS_SECRET_ACCESS_KEY
+      RENDER_STAGING_API_KEY: ${{ secrets.RENDER_STAGING_API_KEY }}
+      RENDER_STAGING_SERVICE_ID: ${{ secrets.RENDER_STAGING_SERVICE_ID }}
+      CFF_STAGING_API_BASE_URL: ${{ secrets.CFF_STAGING_API_BASE_URL }}
+      CFF_STAGING_FRONTEND_BASE_URL: ${{ secrets.CFF_STAGING_FRONTEND_BASE_URL }}
+      CFF_STAGING_ADMIN_API_TOKEN: ${{ secrets.CFF_STAGING_ADMIN_API_TOKEN }}
+      CFF_STAGING_SMOKE_EMAIL: ${{ secrets.CFF_STAGING_SMOKE_EMAIL }}
+      CFF_STAGING_SMOKE_PASSWORD: ${{ secrets.CFF_STAGING_SMOKE_PASSWORD }}
+      CFF_STAGING_VERIFICATION_EMAIL_BASE: ${{ secrets.CFF_STAGING_VERIFICATION_EMAIL_BASE }}
+      CFF_STAGING_EMAIL_TEST_ADDRESS: ${{ secrets.CFF_STAGING_EMAIL_TEST_ADDRESS }}
+      CFF_STAGING_IMAP_HOST: ${{ secrets.CFF_STAGING_IMAP_HOST }}
+      CFF_STAGING_IMAP_PASSWORD: ${{ secrets.CFF_STAGING_IMAP_PASSWORD }}
+      CFF_STAGING_LIFECYCLE_COMMISSIONER_EMAIL: ${{ secrets.CFF_STAGING_LIFECYCLE_COMMISSIONER_EMAIL }}
+      CFF_STAGING_LIFECYCLE_COMMISSIONER_PASSWORD: ${{ secrets.CFF_STAGING_LIFECYCLE_COMMISSIONER_PASSWORD }}
+      CFF_STAGING_LIFECYCLE_MANAGER_A_EMAIL: ${{ secrets.CFF_STAGING_LIFECYCLE_MANAGER_A_EMAIL }}
+      CFF_STAGING_LIFECYCLE_MANAGER_A_PASSWORD: ${{ secrets.CFF_STAGING_LIFECYCLE_MANAGER_A_PASSWORD }}
+      CFF_STAGING_LIFECYCLE_MANAGER_B_EMAIL: ${{ secrets.CFF_STAGING_LIFECYCLE_MANAGER_B_EMAIL }}
+      CFF_STAGING_LIFECYCLE_MANAGER_B_PASSWORD: ${{ secrets.CFF_STAGING_LIFECYCLE_MANAGER_B_PASSWORD }}
+      CFF_RESTORE_TARGET_DB_URL: ${{ secrets.CFF_RESTORE_TARGET_DB_URL }}
+      CFF_BACKUP_S3_BUCKET: ${{ secrets.CFF_BACKUP_S3_BUCKET }}
+      CFF_BACKUP_AWS_ACCESS_KEY_ID: ${{ secrets.CFF_BACKUP_AWS_ACCESS_KEY_ID }}
+      CFF_BACKUP_AWS_SECRET_ACCESS_KEY: ${{ secrets.CFF_BACKUP_AWS_SECRET_ACCESS_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deployed_commit_sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Require exact inputs
+        run: |
+          set -euo pipefail
+          [[ "$CFF_FINALIZER_DEPLOYED_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]
+          [[ "$CFF_FINALIZER_ALPHA_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$CFF_FINALIZER_BACKUP_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$CFF_FINALIZER_BACKUP_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]
+
+      - name: Download Alpha evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: alpha-readiness-${{ inputs.alpha_readiness_run_id }}
+          path: alpha-source
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.alpha_readiness_run_id }}
+
+      - name: Download backup restore evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: backup-restore-evidence-${{ inputs.backup_restore_run_id }}
+          path: backup-source
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.backup_restore_run_id }}
+
+      - name: Verify and combine evidence
+        run: python scripts/release_evidence_finalize.py
+
+      - name: Upload final release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-evidence-${{ github.run_id }}
+          path: release-candidate-evidence
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach evidence to issues 67 and 78
+        if: success() && inputs.post_issue_evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          artifact="release-candidate-evidence-${{ github.run_id }}"
+          body="$(cat <<EOF
+          Release-candidate evidence is complete for exact deployed commit \`${CFF_FINALIZER_DEPLOYED_COMMIT}\`.
+
+          - Final evidence workflow: $run_url
+          - Final evidence artifact: \`$artifact\`
+          - Alpha readiness source run: \`${CFF_FINALIZER_ALPHA_RUN_ID}\`
+          - Backup restore source run: \`${CFF_FINALIZER_BACKUP_RUN_ID}\`
+          - Backup evidence SHA-256: \`${CFF_FINALIZER_BACKUP_SHA256}\`
+
+          The bundle verifies GitHub Actions secret presence without retaining values, transactional verification and password reset, the full authentication/league/draft/waiver/trade/scoring lifecycle, desktop/mobile browser validation, player/schedule evidence, and a real off-platform restore drill.
+          EOF
+          )"
+          for issue in 67 78; do
+            gh api \
+              --method POST \
+              "repos/${{ github.repository }}/issues/$issue/comments" \
+              -f body="$body"
+          done
