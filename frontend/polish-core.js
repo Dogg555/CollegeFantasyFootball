@@ -1,8 +1,9 @@
 (() => {
   'use strict';
 
-  const REQUEST_TIMEOUT_MS = 20000;
-  const BUSY_TIMEOUT_MS = 22000;
+  const READ_REQUEST_TIMEOUT_MS = 20000;
+  const MUTATION_REQUEST_TIMEOUT_MS = 60000;
+  const BUSY_TIMEOUT_MS = 62000;
   const nativeFetch = window.fetch.bind(window);
   const busyControls = new Set();
   let activeRequests = 0;
@@ -22,25 +23,63 @@
       : message;
   }
 
+  function requestMethod(input, options = {}) {
+    if (options.method) return String(options.method).toUpperCase();
+    if (typeof Request !== 'undefined' && input instanceof Request) {
+      return String(input.method || 'GET').toUpperCase();
+    }
+    return 'GET';
+  }
+
+  function timeoutForMethod(method) {
+    return ['GET', 'HEAD', 'OPTIONS'].includes(method)
+      ? READ_REQUEST_TIMEOUT_MS
+      : MUTATION_REQUEST_TIMEOUT_MS;
+  }
+
+  function isRetryablePut(input, method, error) {
+    if (method !== 'PUT' || typeof input !== 'string') return false;
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return false;
+    return /failed to fetch|networkerror|load failed/i.test(String(error?.message || error || ''));
+  }
+
   window.fetch = async (input, options = {}) => {
-    const controller = options.signal ? null : new AbortController();
-    const timeout = controller
-      ? window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), REQUEST_TIMEOUT_MS)
-      : null;
+    const method = requestMethod(input, options);
+    const timeoutMs = timeoutForMethod(method);
     const url = typeof input === 'string' ? input : input?.url || '';
+    const maxAttempts = method === 'PUT' && typeof input === 'string' ? 2 : 1;
     activeRequests += 1;
-    emit('cff:request-start', { url, activeRequests });
+    emit('cff:request-start', { url, method, activeRequests });
+
     try {
-      const response = await nativeFetch(input, controller ? { ...options, signal: controller.signal } : options);
-      emit('cff:request-response', { url, status: response.status, ok: response.ok });
-      return response;
-    } catch (error) {
-      emit('cff:request-error', { url, error, message: friendlyError(error) });
-      throw error;
+      let lastError = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const controller = options.signal ? null : new AbortController();
+        const timeout = controller
+          ? window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeoutMs)
+          : null;
+
+        try {
+          const response = await nativeFetch(input, controller ? { ...options, signal: controller.signal } : options);
+          emit('cff:request-response', { url, method, status: response.status, ok: response.ok, attempt });
+          return response;
+        } catch (error) {
+          lastError = error;
+          const retry = attempt < maxAttempts && navigator.onLine && isRetryablePut(input, method, error);
+          if (!retry) {
+            emit('cff:request-error', { url, method, error, attempt, message: friendlyError(error) });
+            throw error;
+          }
+          emit('cff:request-retry', { url, method, attempt, message: friendlyError(error) });
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+        } finally {
+          if (timeout) window.clearTimeout(timeout);
+        }
+      }
+      throw lastError || new Error('Request failed');
     } finally {
-      if (timeout) window.clearTimeout(timeout);
       activeRequests = Math.max(0, activeRequests - 1);
-      emit('cff:request-end', { url, activeRequests });
+      emit('cff:request-end', { url, method, activeRequests });
     }
   };
 
