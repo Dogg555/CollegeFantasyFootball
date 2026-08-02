@@ -7,7 +7,7 @@ services:
     healthCheckPath: /health
     preDeployCommand: sh /srv/db/migrate.sh
     domains:
-      - api.collegefantasyfootball.com
+      - api.college-fantasy-football.com
     envVars:
       - key: DB_URL
         fromDatabase:
@@ -19,8 +19,6 @@ services:
         value: https://collegefantasyfootball.com,https://www.collegefantasyfootball.com,https://college-ff-frontend.onrender.com
       - key: CFBD_API_KEY
         sync: false
-      - key: CFBD_ROSTER_SEASON
-        value: "2025"
       - key: CFF_ADMIN_API_TOKEN
         generateValue: true
       - key: CFF_ADMIN_EMAILS
@@ -79,7 +77,7 @@ services:
       - collegefantasyfootball.com
     envVars:
       - key: CFF_API_BASE
-        value: https://api.collegefantasyfootball.com/api
+        value: https://api.college-fantasy-football.com/api
       - key: CFF_ALLOW_LOCAL_DEMO
         value: "false"
     headers:
