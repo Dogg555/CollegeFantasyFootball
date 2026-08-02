@@ -6,6 +6,13 @@ if [ -z "${CFF_API_BASE:-}" ]; then
   exit 1
 fi
 
+# Existing Render services may retain an older environment value until their
+# Blueprint is manually synchronized. Migrate the known broken custom API host
+# during the build so deployed browsers receive the working backend endpoint.
+if [ "${CFF_API_BASE}" = "https://api.college-fantasy-football.com/api" ]; then
+  CFF_API_BASE="https://college-ff-api.onrender.com/api"
+fi
+
 ALLOW_LOCAL_DEMO="${CFF_ALLOW_LOCAL_DEMO:-false}"
 BUILD_COMMIT="${RENDER_GIT_COMMIT:-local}"
 BUILD_BRANCH="${RENDER_GIT_BRANCH:-local}"
