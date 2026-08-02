@@ -183,12 +183,20 @@ services:
         sync: false
       - key: AWS_REGION
         value: auto
+      - key: AWS_ENDPOINT_URL
+        sync: false
       - key: CFF_BACKUP_S3_PREFIX
         value: college-ff/postgres
       - key: CFF_BACKUP_RETENTION_DAYS
         value: "30"
       - key: CFF_BACKUP_SSE
         value: AES256
+      - key: CFF_BACKUP_KMS_KEY_ID
+        sync: false
+      - key: CFF_BACKUP_VERIFY_UPLOAD
+        value: "true"
+      - key: CFF_BACKUP_MIN_BYTES
+        value: "1024"
 
 databases:
   - name: college-ff-db
