@@ -65,6 +65,16 @@ std::string lowerString(std::string value) {
     return value;
 }
 
+std::string canonicalEmail(std::string value) {
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), value.end());
+    return lowerString(std::move(value));
+}
+
 std::string upperString(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::toupper(ch));
@@ -481,7 +491,7 @@ std::optional<Json::Value> dbGetLeague(const std::string &accountEmail, const st
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
     auto result = execParams(conn.get(),
-                             leagueSelectSql("WHERE id = $2 AND (account_email = $1 OR EXISTS (SELECT 1 FROM league_members WHERE league_id = leagues.id AND email = $1 AND status <> 'removed'))"),
+                             leagueSelectSql("WHERE id = $2 AND (account_email = $1 OR EXISTS (SELECT 1 FROM league_members WHERE league_id = leagues.id AND email = $1 AND status = 'active'))"),
                              {accountEmail, leagueId});
     if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) {
         return std::nullopt;
@@ -500,7 +510,7 @@ bool dbIsCommissioner(const std::string &accountEmail, const std::string &league
     if (!conn) return false;
     auto result = execParams(conn.get(),
                              "SELECT 1 FROM leagues WHERE id = $2 AND account_email = $1 "
-                             "UNION SELECT 1 FROM league_members WHERE league_id = $2 AND email = $1 AND role = 'commissioner' AND status <> 'removed' LIMIT 1",
+                             "UNION SELECT 1 FROM league_members WHERE league_id = $2 AND email = $1 AND role = 'commissioner' AND status = 'active' LIMIT 1",
                              {accountEmail, leagueId});
     return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0;
 }
@@ -641,7 +651,7 @@ bool isCommissionerLocked(const std::string &accountEmail, const std::string &le
     for (const auto &member : membersIt->second) {
         if (cff::getStringOrDefault(member, "email") == accountEmail
             && cff::getStringOrDefault(member, "role") == "commissioner"
-            && lowerString(cff::getStringOrDefault(member, "status", "Active")) != "removed") {
+            && lowerString(cff::getStringOrDefault(member, "status", "Active")) == "active") {
             return true;
         }
     }
@@ -658,7 +668,7 @@ bool canAccessLeagueLocked(const std::string &accountEmail, const std::string &l
     }
     for (const auto &member : membersIt->second) {
         if (cff::getStringOrDefault(member, "email") == accountEmail
-            && lowerString(cff::getStringOrDefault(member, "status", "Active")) != "removed") {
+            && lowerString(cff::getStringOrDefault(member, "status", "Active")) == "active") {
             return true;
         }
     }
@@ -895,7 +905,7 @@ std::optional<Json::Value> dbListLeagues(const std::string &accountEmail) {
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
     auto result = execParams(conn.get(),
-                             leagueSelectSql("WHERE account_email = $1 OR EXISTS (SELECT 1 FROM league_members WHERE league_id = leagues.id AND email = $1 AND status <> 'removed') ORDER BY created_at DESC"),
+                             leagueSelectSql("WHERE account_email = $1 OR EXISTS (SELECT 1 FROM league_members WHERE league_id = leagues.id AND email = $1 AND status = 'active') ORDER BY created_at DESC"),
                              {accountEmail});
     if (!resultOk(result.get(), PGRES_TUPLES_OK)) {
         std::cerr << "[leagues] list failed: " << PQerrorMessage(conn.get()) << std::endl;
@@ -925,7 +935,7 @@ std::optional<Json::Value> dbUpdateLeague(const std::string &accountEmail,
         "invited_emails = COALESCE(ARRAY(SELECT jsonb_array_elements_text($15::jsonb)), '{}'), "
         "updated_at = NOW() "
         "WHERE id = $2 AND (account_email = $1 OR EXISTS ("
-        "SELECT 1 FROM league_members WHERE league_id = $2 AND email = $1 AND role = 'commissioner' AND status <> 'removed'"
+        "SELECT 1 FROM league_members WHERE league_id = $2 AND email = $1 AND role = 'commissioner' AND status = 'active'"
         "))";
     const auto leagueJson = league.toJson();
     const std::vector<std::string> params{
@@ -960,7 +970,7 @@ std::optional<bool> dbDeleteLeague(const std::string &accountEmail, const std::s
     if (!dbIsCommissioner(accountEmail, leagueId)) return false;
     auto result = execParams(conn.get(),
                              "DELETE FROM leagues WHERE id = $2 AND (account_email = $1 OR EXISTS ("
-                             "SELECT 1 FROM league_members WHERE league_id = $2 AND email = $1 AND role = 'commissioner' AND status <> 'removed'"
+                             "SELECT 1 FROM league_members WHERE league_id = $2 AND email = $1 AND role = 'commissioner' AND status = 'active'"
                              "))",
                              {accountEmail, leagueId});
     if (!resultOk(result.get(), PGRES_COMMAND_OK)) {
@@ -1004,7 +1014,13 @@ std::optional<Json::Value> dbUpdateMember(const std::string &accountEmail,
     if (!dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
+    auto owner = execParams(conn.get(), "SELECT account_email FROM leagues WHERE id = $1", {leagueId});
+    if (!resultOk(owner.get(), PGRES_TUPLES_OK) || PQntuples(owner.get()) == 0) return std::nullopt;
+    const auto ownerEmail = canonicalEmail(cell(owner.get(), 0, 0));
+    const auto normalizedMemberEmail = canonicalEmail(memberEmail);
+    if (normalizedMemberEmail == ownerEmail) return std::nullopt;
     const auto safeRole = role == "commissioner" ? "commissioner" : "member";
+    if (safeRole == "commissioner" && canonicalEmail(accountEmail) != ownerEmail) return std::nullopt;
     auto safeStatus = statusForDb(status);
     if (!(safeStatus == "active" || safeStatus == "invited" || safeStatus == "removed")) {
         safeStatus = "invited";
@@ -1019,7 +1035,7 @@ std::optional<Json::Value> dbUpdateMember(const std::string &accountEmail,
     if (safeStatus == "removed") {
         auto removedInvite = execParams(conn.get(),
                                         "UPDATE leagues SET invited_emails = array_remove(invited_emails, $3), updated_at = NOW() "
-                                        "WHERE id = $2 AND EXISTS (SELECT 1 FROM league_members WHERE league_id = $2 AND email = $1 AND role = 'commissioner' AND status <> 'removed')",
+                                        "WHERE id = $2 AND EXISTS (SELECT 1 FROM league_members WHERE league_id = $2 AND email = $1 AND role = 'commissioner' AND status = 'active')",
                                         {accountEmail, leagueId, memberEmail});
         (void)removedInvite;
     }
@@ -1027,19 +1043,23 @@ std::optional<Json::Value> dbUpdateMember(const std::string &accountEmail,
 }
 
 std::optional<Json::Value> dbJoinLeague(const std::string &accountEmail, const std::string &leagueId) {
+    if (auto activeLeague = dbGetLeague(accountEmail, leagueId)) {
+        (*activeLeague)["joinStatus"] = "active";
+        return activeLeague;
+    }
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
     auto eligible = execParams(conn.get(),
                                "SELECT 1 FROM leagues WHERE id = $1 AND $2 = ANY(invited_emails) "
-                               "UNION SELECT 1 FROM league_members WHERE league_id = $1 AND email = $2 AND status IN ('invited', 'active') LIMIT 1",
+                               "UNION SELECT 1 FROM league_members WHERE league_id = $1 AND email = $2 AND status = 'invited' LIMIT 1",
                                {leagueId, accountEmail});
-    if (!resultOk(eligible.get(), PGRES_TUPLES_OK) || PQntuples(eligible.get()) == 0) {
-        return std::nullopt;
-    }
-    if (!dbUpsertMember(conn.get(), leagueId, accountEmail, "member", "active", "")) {
-        return std::nullopt;
-    }
-    return dbGetLeague(accountEmail, leagueId);
+    if (!resultOk(eligible.get(), PGRES_TUPLES_OK) || PQntuples(eligible.get()) == 0) return std::nullopt;
+    if (!dbUpsertMember(conn.get(), leagueId, accountEmail, "member", "invited", "")) return std::nullopt;
+    Json::Value pending;
+    pending["id"] = leagueId;
+    pending["joinStatus"] = "pending_approval";
+    pending["message"] = "Join request submitted. A commissioner must approve access.";
+    return pending;
 }
 
 bool dbAddTransaction(PGconn *conn,
@@ -1252,7 +1272,7 @@ Json::Value draftOrderForLeague(PGconn *conn, const std::string &leagueId) {
     auto members = membersForLeague(conn, leagueId);
     Json::Value order(Json::arrayValue);
     for (const auto &member : members) {
-        if (jsonString(member, "status") != "Removed") {
+        if (lowerString(jsonString(member, "status")) == "active") {
             order.append(jsonString(member, "email"));
         }
     }
@@ -1263,7 +1283,7 @@ bool draftOrderMatchesMembers(PGconn *conn, const std::string &leagueId, const J
     if (!draftOrder.isArray() || draftOrder.empty()) return false;
     std::unordered_set<std::string> memberEmails;
     for (const auto &member : membersForLeague(conn, leagueId)) {
-        if (lowerString(jsonString(member, "status")) == "removed") continue;
+        if (lowerString(jsonString(member, "status")) != "active") continue;
         memberEmails.insert(lowerString(jsonString(member, "email")));
     }
     if (memberEmails.empty() || draftOrder.size() != memberEmails.size()) return false;
@@ -2688,7 +2708,7 @@ void handleInviteMember(const drogon::HttpRequestPtr &req,
                         const std::string &accountEmail,
                         const std::string &leagueId) {
     const auto body = req->getJsonObject();
-    const auto email = body ? jsonString(*body, "email") : "";
+    const auto email = body ? canonicalEmail(jsonString(*body, "email")) : "";
     const auto role = body ? jsonString(*body, "role", "member") : "member";
     if (email.empty()) {
         sendError(callback, drogon::k400BadRequest, "email is required");
@@ -2727,6 +2747,7 @@ void handleUpdateMember(const drogon::HttpRequestPtr &req,
                         const std::string &leagueId,
                         const std::string &memberEmail) {
     const auto body = req->getJsonObject();
+    const auto normalizedMemberEmail = canonicalEmail(memberEmail);
     const auto role = body ? jsonString(*body, "role", "member") : "member";
     const auto status = body ? jsonString(*body, "status", "Invited") : "Invited";
     const auto teamName = body ? jsonString(*body, "teamName", "") : "";
@@ -2734,7 +2755,7 @@ void handleUpdateMember(const drogon::HttpRequestPtr &req,
 
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
-        auto members = dbUpdateMember(accountEmail, leagueId, memberEmail, role, status, teamName, updateTeamName);
+        auto members = dbUpdateMember(accountEmail, leagueId, normalizedMemberEmail, role, status, teamName, updateTeamName);
         if (!members) {
             sendError(callback, drogon::k403Forbidden, "Commissioner access required");
             return;
@@ -2748,9 +2769,17 @@ void handleUpdateMember(const drogon::HttpRequestPtr &req,
     if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
         return;
     }
+    if (ownsLeagueLocked(normalizedMemberEmail, leagueId)) {
+        sendError(callback, drogon::k403Forbidden, "The league owner cannot be demoted or removed");
+        return;
+    }
+    if (role == "commissioner" && !ownsLeagueLocked(accountEmail, leagueId)) {
+        sendError(callback, drogon::k403Forbidden, "Only the league owner may grant commissioner access");
+        return;
+    }
     auto &members = arrayForLeague(membersByLeague, leagueId);
     for (Json::ArrayIndex i = 0; i < members.size(); ++i) {
-        if (jsonString(members[i], "email") == memberEmail) {
+        if (canonicalEmail(jsonString(members[i], "email")) == normalizedMemberEmail) {
             members[i]["role"] = role == "commissioner" ? "commissioner" : "member";
             members[i]["status"] = status;
             if (body && body->isMember("teamName")) {
@@ -2769,45 +2798,40 @@ void handleJoinLeague(const drogon::HttpRequestPtr&,
                       const std::string &leagueId) {
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
-        auto league = dbJoinLeague(accountEmail, leagueId);
-        if (!league) {
+        auto result = dbJoinLeague(accountEmail, leagueId);
+        if (!result) {
             sendError(callback, drogon::k403Forbidden, "Invite not found for this account");
             return;
         }
-        callback(jsonResponse(*league, drogon::k200OK));
+        const auto pending = result->isMember("joinStatus") && (*result)["joinStatus"].asString() == "pending_approval";
+        callback(jsonResponse(*result, pending ? static_cast<drogon::HttpStatusCode>(202) : drogon::k200OK));
         return;
     }
 #endif
-
     std::lock_guard<std::mutex> lock(storeMutex);
     const auto it = leaguesById.find(leagueId);
     if (it == leaguesById.end()) {
         sendError(callback, drogon::k404NotFound, "League not found");
         return;
     }
-    auto &ownerLeagues = leagueIdsByOwner[accountEmail];
-    if (std::find(ownerLeagues.begin(), ownerLeagues.end(), leagueId) == ownerLeagues.end()) {
-        ownerLeagues.push_back(leagueId);
-    }
     auto &members = arrayForLeague(membersByLeague, leagueId);
-    bool exists = false;
-    for (Json::ArrayIndex i = 0; i < members.size(); ++i) {
-        if (jsonString(members[i], "email") == accountEmail) {
-            members[i]["status"] = "Active";
-            exists = true;
+    bool invited = false;
+    for (const auto &member : members) {
+        if (canonicalEmail(jsonString(member, "email")) == canonicalEmail(accountEmail)) {
+            const auto status = lowerString(jsonString(member, "status"));
+            invited = status == "invited" || status == "active";
+            break;
         }
     }
-    if (!exists) {
-        Json::Value member;
-        member["email"] = accountEmail;
-        member["role"] = "member";
-        member["status"] = "Active";
-        member["teamName"] = "";
-        members.append(member);
+    if (!invited) {
+        sendError(callback, drogon::k403Forbidden, "Invite not found for this account");
+        return;
     }
-    auto league = it->second.league.toJson();
-    league["members"] = members;
-    callback(jsonResponse(league, drogon::k200OK));
+    Json::Value pending;
+    pending["id"] = leagueId;
+    pending["joinStatus"] = "pending_approval";
+    pending["message"] = "Join request submitted. A commissioner must approve access.";
+    callback(jsonResponse(pending, static_cast<drogon::HttpStatusCode>(202)));
 }
 
 void handleGetRoster(const drogon::HttpRequestPtr&,

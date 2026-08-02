@@ -29,6 +29,11 @@ The API refuses production traffic when `CFF_SECURITY_ENFORCE_PRODUCTION=true` a
 - Authentication and admin rate limits keyed by a non-reversible client fingerprint; account-oriented auth limits also include a hashed email identifier.
 - Twelve-character minimum password policy, 72-byte bcrypt maximum, common-password rejection, and bcrypt cost 12.
 - Server-side 24-hour sessions, logout revocation, and full session revocation after password reset.
+- Session and recovery tokens are stored as SHA-256 digests, not reusable plaintext.
+- Account and invitation emails are canonicalized before authorization.
+- Invited accounts require explicit commissioner approval before league access.
+- Two-user IDOR regression tests cover unrelated, pending, active-member, commissioner, and owner boundaries.
+- Browser bearer tokens use session storage and cached account data is removed on logout.
 - Admin endpoints protected by an independent operations token or an explicitly allowlisted authenticated email.
 - Security response headers, disabled server banner, and no-store caching for API responses.
 - Minimal public health output without secret/configuration flags.
