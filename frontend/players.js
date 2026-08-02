@@ -1,4 +1,5 @@
 const apiBase = window.CFF_API_BASE || '/api';
+const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO !== false;
 
 const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
@@ -6,6 +7,9 @@ const positionFilter = document.getElementById('position-filter');
 const searchResultsEl = document.getElementById('search-results');
 const queueList = document.getElementById('queue-list');
 const queueCount = document.getElementById('queue-count');
+const playerDataStatus = document.getElementById('player-data-status');
+
+let lastResults = [];
 
 function safeText(value, fallback = '') {
   return escapeHtml(value ?? fallback);
@@ -26,31 +30,55 @@ document.getElementById('nav-logout')?.addEventListener('click', () => {
   renderQueue();
 });
 
+async function fetchPlayers(term = '', position = '') {
+  const params = new URLSearchParams({ limit: '50' });
+  if (term) params.set('query', term);
+  if (position) params.set('position', position);
+  const response = await fetch(`${apiBase}/players?${params.toString()}`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) throw new Error(`Player search failed with ${response.status}.`);
+  return (await response.json()).map((player) => ({
+    ...normalizePlayer(player),
+    season: safeNumber(player.season, 0),
+    updatedAt: player.updatedAt || '',
+  }));
+}
+
+async function loadPlayerPool() {
+  if (!searchResultsEl) return;
+  const term = searchInput?.value.trim() || '';
+  const position = positionFilter?.value || '';
+  searchResultsEl.textContent = term ? 'Searching current rosters…' : 'Loading current-season players…';
+  try {
+    lastResults = await fetchPlayers(term, position);
+    renderSearchResults(lastResults);
+    const seasons = lastResults.map((player) => player.season).filter(Boolean);
+    const season = seasons.length ? Math.max(...seasons) : null;
+    if (playerDataStatus) {
+      playerDataStatus.textContent = season
+        ? `${season} active FBS rosters · refreshed by the daily player sync`
+        : 'Active FBS rosters · refreshed by the daily player sync';
+    }
+  } catch (error) {
+    if (allowLocalDemo) {
+      lastResults = applyPositionFilter(filterSamplePlayers(term), position);
+      renderSearchResults(lastResults, true);
+      if (playerDataStatus) playerDataStatus.textContent = 'Offline sample pool';
+      return;
+    }
+    lastResults = [];
+    searchResultsEl.textContent = 'The current player database is temporarily unavailable.';
+    if (playerDataStatus) playerDataStatus.textContent = 'Player sync unavailable';
+  }
+}
+
 searchForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const term = searchInput.value.trim();
-  const position = positionFilter.value;
-  if (!term) {
-    searchResultsEl.textContent = 'Enter a player, school, position, or conference.';
-    searchInput.focus();
-    return;
-  }
-  searchResultsEl.textContent = 'Searching...';
-  try {
-    const params = new URLSearchParams({ query: term });
-    if (position) params.set('position', position);
-    const response = await fetch(`${apiBase}/players?${params.toString()}`);
-    if (!response.ok) throw new Error('Player search failed.');
-    renderSearchResults(applyPositionFilter((await response.json()).map(normalizePlayer), position));
-  } catch {
-    renderSearchResults(applyPositionFilter(filterSamplePlayers(term), position), true);
-  }
+  await loadPlayerPool();
 });
 
-positionFilter?.addEventListener('change', () => {
-  const term = searchInput.value.trim();
-  renderSearchResults(applyPositionFilter(filterSamplePlayers(term), positionFilter.value));
-});
+positionFilter?.addEventListener('change', loadPlayerPool);
 
 function applyPositionFilter(players, position) {
   if (!position) return players;
@@ -60,20 +88,21 @@ function applyPositionFilter(players, position) {
 function renderSearchResults(players = [], fallback = false) {
   if (!searchResultsEl) return;
   if (!players.length) {
-    searchResultsEl.textContent = 'No players matched those filters.';
+    searchResultsEl.textContent = 'No active players matched those filters.';
     return;
   }
   const queuedIds = new Set(getQueue().map((player) => player.id));
   const notice = fallback
-    ? '<div class="row"><div><strong>Offline player pool</strong><div class="muted">Showing cached sample players until the API is reachable.</div></div></div>'
+    ? '<div class="row"><div><strong>Offline player pool</strong><div class="muted">Showing sample players until the current roster database is reachable.</div></div></div>'
     : '';
-  searchResultsEl.innerHTML = notice + players.slice(0, 20).map((player, index) => {
+  searchResultsEl.innerHTML = notice + players.slice(0, 50).map((player, index) => {
     const queued = queuedIds.has(player.id);
+    const seasonLabel = player.season ? ` · ${safeNumber(player.season)}` : '';
     return `
       <div class="row">
         <div>
           <strong>${safeText(player.name, 'Unknown player')}</strong> - ${safeText(player.team, 'Team TBD')} (${safeText(player.position, 'FLEX')})
-          <div class="muted">${safeText(player.conference, 'Conference TBD')} / ${safeText(player.class, 'Class TBD')} / ${safeNumber(player.projection, 0).toFixed(1)} proj</div>
+          <div class="muted">${safeText(player.conference, 'Conference TBD')} / ${safeText(player.class, 'Class TBD')}${seasonLabel}</div>
         </div>
         <button class="button" data-player-index="${index}" type="button" ${queued ? 'disabled' : ''}>${queued ? 'Queued' : 'Add to queue'}</button>
       </div>
@@ -134,7 +163,7 @@ function renderQueue() {
       }
       window.CFF_UI?.notify(`${player.name} removed from your queue.`, 'info');
       renderQueue();
-      renderSearchResults(applyPositionFilter(filterSamplePlayers(searchInput.value.trim()), positionFilter.value));
+      renderSearchResults(lastResults);
     });
   });
 }
@@ -149,7 +178,7 @@ async function initPlayersPage() {
     // Keep the local player queue available when the API is offline.
   }
   renderQueue();
-  renderSearchResults(samplePlayers.slice(0, 6));
+  await loadPlayerPool();
 }
 
 initPlayersPage();
