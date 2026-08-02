@@ -4,7 +4,7 @@ window.CFF_API_BASE = window.CFF_API_BASE || '/api';
 window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
 
 (() => {
-  const scripts = ['polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js'];
+  const scripts = ['polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'footer-links.js'];
 
   function ensureBranding() {
     if (!document.querySelector('link[rel~="icon"]')) {
