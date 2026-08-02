@@ -41,7 +41,45 @@ jobs:
             scripts/render_deploy_and_wait.py \
             scripts/render_smoke_tests.py \
             scripts/frontend_browser_smoke.py \
-            scripts/offsite_backup.py
+            scripts/offsite_backup.py \
+            scripts/ops_ingest.py \
+            scripts/ops_ingest_tests.py
+      - name: Test scheduled ingestion runner
+        run: python scripts/ops_ingest_tests.py
+      - name: Validate Render Blueprint cron configuration
+        run: |
+          python -m pip install --disable-pip-version-check pyyaml
+          python - <<'PY'
+          import yaml
+
+          with open('render.yaml', encoding='utf-8') as handle:
+              blueprint = yaml.safe_load(handle)
+
+          services = {service['name']: service for service in blueprint['services']}
+          api = services['college-ff-api']
+          ingest = services['college-ff-cfbd-ingest']
+
+          api_env = {item.get('key'): item for item in api['envVars'] if item.get('key')}
+          assert api_env['CFBD_INGEST_ON_STARTUP']['value'] == 'false'
+          assert api_env['CFBD_INGEST_INTERVAL_HOURS']['value'] == '0'
+
+          assert ingest['type'] == 'cron'
+          assert ingest['runtime'] == 'python'
+          assert ingest['schedule'] == '0 10 * * *'
+          assert 'ops_ingest.py --run' in ingest['startCommand']
+
+          ingest_env = {item['key']: item for item in ingest['envVars']}
+          assert ingest_env['CFF_API_HOSTPORT']['fromService'] == {
+              'type': 'web',
+              'name': 'college-ff-api',
+              'property': 'hostport',
+          }
+          assert ingest_env['CFF_ADMIN_API_TOKEN']['fromService'] == {
+              'type': 'web',
+              'name': 'college-ff-api',
+              'envVarKey': 'CFF_ADMIN_API_TOKEN',
+          }
+          PY
       - name: Validate Render frontend build
         env:
           CFF_API_BASE: https://example.invalid/api
