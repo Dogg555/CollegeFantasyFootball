@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-time ESPN roster bootstrap for every college-football team ESPN returns."""
+"""One-time ESPN Division I FBS roster bootstrap."""
 
 from __future__ import annotations
 
@@ -17,13 +17,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
-from espn_team_directory import all_teams_url
+from espn_team_directory import fbs_teams_url
 
 ESPN_BASE_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/football/college-football"
 )
-USER_AGENT = "CollegeFantasyFootball-roster-bootstrap/1.1"
-EXPECTED_ALL_TEAM_RANGE = range(100, 1001)
+USER_AGENT = "CollegeFantasyFootball-roster-bootstrap/1.2"
+EXPECTED_FBS_TEAM_RANGE = range(120, 171)
 
 
 @dataclass(frozen=True)
@@ -104,66 +104,98 @@ def fetch_json(url: str, *, timeout: float, retries: int) -> dict[str, Any]:
                 ) from error
             if attempt < retries:
                 delay = _retry_delay(error.headers, attempt)
-                print(f"ESPN HTTP {error.code}; retrying in {delay:.1f}s", file=sys.stderr)
+                print(
+                    f"ESPN HTTP {error.code}; retrying in {delay:.1f}s",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 time.sleep(delay)
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
             last_error = error
             if attempt < retries:
                 delay = _retry_delay({}, attempt)
-                print(f"ESPN request error; retrying in {delay:.1f}s: {error}", file=sys.stderr)
+                print(
+                    f"ESPN request error; retrying in {delay:.1f}s: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 time.sleep(delay)
-    raise IngestError(f"ESPN request failed after {retries} attempts: {url}: {last_error}")
+    raise IngestError(
+        f"ESPN request failed after {retries} attempts: {url}: {last_error}"
+    )
 
 
-def _team_entries(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    entries: list[Mapping[str, Any]] = []
-    sports = payload.get("sports")
-    if not isinstance(sports, list):
-        return entries
-    for sport in sports:
-        if not isinstance(sport, Mapping):
-            continue
-        leagues = sport.get("leagues")
-        if not isinstance(leagues, list):
-            continue
-        for league in leagues:
-            if not isinstance(league, Mapping):
-                continue
-            teams = league.get("teams")
-            if isinstance(teams, list):
-                entries.extend(item for item in teams if isinstance(item, Mapping))
-    return entries
+def _team_nodes(
+    value: Any,
+    conference: str = "FBS",
+) -> Iterator[tuple[Mapping[str, Any], str]]:
+    """Recursively find team objects in ESPN's grouped directory response."""
+    if isinstance(value, list):
+        for item in value:
+            yield from _team_nodes(item, conference)
+        return
+    if not isinstance(value, Mapping):
+        return
+
+    wrapped_team = value.get("team")
+    if isinstance(wrapped_team, Mapping):
+        yield wrapped_team, conference
+        return
+
+    # Some ESPN responses use direct team objects instead of {"team": ...}.
+    if _first_text(value, ("id", "uid")) and _first_text(
+        value, ("location", "shortDisplayName")
+    ):
+        yield value, conference
+        return
+
+    child_conference = conference
+    if any(key in value for key in ("teams", "groups", "children")):
+        label = _first_text(
+            value,
+            ("shortName", "name", "displayName", "abbreviation"),
+        )
+        if label and label.casefold() not in {
+            "fbs",
+            "ncaa football",
+            "college football",
+        }:
+            child_conference = label
+
+    for child in value.values():
+        yield from _team_nodes(child, child_conference)
 
 
-def parse_teams(payload: Mapping[str, Any], conference: str = "NCAA") -> list[Team]:
+def parse_teams(payload: Mapping[str, Any]) -> list[Team]:
     teams: dict[str, Team] = {}
-    for entry in _team_entries(payload):
-        value = entry.get("team")
-        team = value if isinstance(value, Mapping) else entry
+    for team, conference in _team_nodes(payload):
         team_id = _first_text(team, ("id", "uid"))
-        school = _first_text(team, ("location", "shortDisplayName", "displayName", "name"))
+        school = _first_text(
+            team,
+            ("location", "shortDisplayName", "displayName", "name"),
+        )
         if not team_id or not school:
             continue
         teams[team_id] = Team(
             id=team_id,
             school=school,
-            conference=conference,
+            conference=conference or "FBS",
             slug=_first_text(team, ("slug", "abbreviation")),
         )
     return sorted(teams.values(), key=lambda item: item.school.casefold())
 
 
-def fetch_all_teams(
+def fetch_fbs_teams(
     *, timeout: float, retries: int, allow_unexpected_team_count: bool
 ) -> tuple[list[Team], int]:
-    payload = fetch_json(all_teams_url(), timeout=timeout, retries=retries)
+    payload = fetch_json(fbs_teams_url(), timeout=timeout, retries=retries)
     teams = parse_teams(payload)
-    if len(teams) not in EXPECTED_ALL_TEAM_RANGE and not allow_unexpected_team_count:
+    if len(teams) not in EXPECTED_FBS_TEAM_RANGE and not allow_unexpected_team_count:
         raise IngestError(
-            f"ESPN returned {len(teams)} total teams; expected 100-1000. "
+            f"ESPN returned {len(teams)} Division I FBS teams; expected 120-170. "
             "Use --allow-unexpected-team-count only after inspecting the response."
         )
-    print(f"Found {len(teams)} total ESPN college-football teams.", flush=True)
+    print(f"Found {len(teams)} ESPN Division I FBS teams.", flush=True)
     return teams, 1
 
 
@@ -195,7 +227,10 @@ def _class_year(athlete: Mapping[str, Any]) -> str:
     for key in ("experience", "class", "classYear"):
         value = athlete.get(key)
         if isinstance(value, Mapping):
-            text = _first_text(value, ("abbreviation", "displayValue", "name", "shortName", "years"))
+            text = _first_text(
+                value,
+                ("abbreviation", "displayValue", "name", "shortName", "years"),
+            )
         else:
             text = _text(value)
         if text:
@@ -224,21 +259,30 @@ def _weight(athlete: Mapping[str, Any]) -> int | None:
     return int(match.group(0)) if match else None
 
 
-def parse_player(athlete: Mapping[str, Any], team: Team, season: int) -> Player | None:
+def parse_player(
+    athlete: Mapping[str, Any], team: Team, season: int
+) -> Player | None:
     athlete_id = _first_text(athlete, ("id", "uid"))
     if not athlete_id:
         return None
     first_name = _first_text(athlete, ("firstName", "first_name"))
     last_name = _first_text(athlete, ("lastName", "last_name"))
-    full_name = _first_text(athlete, ("fullName", "displayName", "name", "shortName"))
+    full_name = _first_text(
+        athlete,
+        ("fullName", "displayName", "name", "shortName"),
+    )
     if not full_name:
-        full_name = " ".join(value for value in (first_name, last_name) if value).strip()
+        full_name = " ".join(
+            value for value in (first_name, last_name) if value
+        ).strip()
     if not full_name:
         return None
+
     raw = dict(athlete)
     raw.update(
         {
             "cffSource": "espn",
+            "cffScope": "division-i-fbs",
             "cffTeam": team.school,
             "cffConference": team.conference,
             "cffSeason": season,
@@ -262,7 +306,12 @@ def parse_player(athlete: Mapping[str, Any], team: Team, season: int) -> Player 
 
 
 def fetch_rosters(
-    teams: Sequence[Team], *, season: int, timeout: float, retries: int, delay: float
+    teams: Sequence[Team],
+    *,
+    season: int,
+    timeout: float,
+    retries: int,
+    delay: float,
 ) -> tuple[list[Player], int, list[str], int]:
     players: dict[str, Player] = {}
     failures: list[str] = []
@@ -280,57 +329,98 @@ def fetch_rosters(
             ]
             if not roster:
                 failures.append(f"{team.school} (empty roster)")
-                print(f"[{index}/{len(teams)}] {team.school}: empty roster", file=sys.stderr, flush=True)
+                print(
+                    f"[{index}/{len(teams)}] {team.school}: empty roster",
+                    file=sys.stderr,
+                    flush=True,
+                )
             else:
                 successful_teams += 1
                 for player in roster:
                     players[player.id] = player
-                print(f"[{index}/{len(teams)}] {team.school}: {len(roster)} players", flush=True)
+                print(
+                    f"[{index}/{len(teams)}] {team.school}: {len(roster)} players",
+                    flush=True,
+                )
         except IngestError as error:
             calls += 1
             failures.append(f"{team.school} ({error})")
-            print(f"[{index}/{len(teams)}] {team.school}: {error}", file=sys.stderr, flush=True)
+            print(
+                f"[{index}/{len(teams)}] {team.school}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
         if delay > 0 and index < len(teams):
             time.sleep(delay)
     ordered = sorted(players.values(), key=lambda item: (item.team, item.full_name))
     return ordered, calls, failures, successful_teams
 
 
-def write_export(path: Path, teams: Sequence[Team], players: Sequence[Player], season: int) -> None:
+def write_export(
+    path: Path,
+    teams: Sequence[Team],
+    players: Sequence[Player],
+    season: int,
+) -> None:
     payload = {
         "source": "espn",
-        "scope": "all-college-football-teams",
+        "scope": "division-i-fbs",
         "season": season,
         "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "teams": [asdict(team) for team in teams],
         "players": [asdict(player) for player in players],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
 
-def upsert_players(database_url: str, players: Sequence[Player], season: int, call_count: int) -> tuple[int, int]:
+def upsert_players(
+    database_url: str,
+    players: Sequence[Player],
+    season: int,
+    call_count: int,
+) -> tuple[int, int]:
     try:
         import psycopg  # type: ignore[import-not-found]
     except ImportError as error:
         raise IngestError("The runtime image must include psycopg") from error
+
     inserted = 0
     updated = 0
     with psycopg.connect(database_url) as connection:
         with connection.cursor() as cursor:
             cursor.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS season INTEGER")
-            cursor.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE")
-            cursor.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            cursor.execute(
+                "ALTER TABLE players ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+            cursor.execute(
+                "ALTER TABLE players ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+            )
+            # Any ESPN rows from an earlier broader test import are hidden first;
+            # the FBS rows seen below are reactivated by their upserts.
+            cursor.execute(
+                """
+                UPDATE players
+                SET active = FALSE, updated_at = NOW()
+                WHERE season = %s
+                  AND raw->>'cffSource' = 'espn'
+                """,
+                (season,),
+            )
             for player in players:
                 cursor.execute(
                     """
                     INSERT INTO players (
                         id, full_name, first_name, last_name, position, team,
-                        conference, year, height, weight, season, active, last_seen_at, raw
+                        conference, year, height, weight, season, active,
+                        last_seen_at, raw
                     ) VALUES (
                         %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''),
-                        NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''),
-                        %s, %s, TRUE, NOW(), %s::jsonb
+                        NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''),
+                        NULLIF(%s, ''), %s, %s, TRUE, NOW(), %s::jsonb
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         full_name = EXCLUDED.full_name,
@@ -350,9 +440,17 @@ def upsert_players(database_url: str, players: Sequence[Player], season: int, ca
                     RETURNING (xmax = 0) AS inserted
                     """,
                     (
-                        player.id, player.full_name, player.first_name, player.last_name,
-                        player.position, player.team, player.conference, player.year,
-                        player.height, player.weight, player.season,
+                        player.id,
+                        player.full_name,
+                        player.first_name,
+                        player.last_name,
+                        player.position,
+                        player.team,
+                        player.conference,
+                        player.year,
+                        player.height,
+                        player.weight,
+                        player.season,
                         json.dumps(player.raw, separators=(",", ":")),
                     ),
                 )
@@ -364,7 +462,8 @@ def upsert_players(database_url: str, players: Sequence[Player], season: int, ca
             cursor.execute(
                 """
                 INSERT INTO ingestion_runs (
-                    resource, season, finished_at, status, call_count, row_count, error_message
+                    resource, season, finished_at, status, call_count,
+                    row_count, error_message
                 ) VALUES ('players_espn', %s, NOW(), 'success', %s, %s, NULL)
                 """,
                 (season, call_count, inserted + updated),
@@ -373,14 +472,24 @@ def upsert_players(database_url: str, players: Sequence[Player], season: int, ca
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fetch all ESPN college-football rosters and upsert them into Postgres.")
-    parser.add_argument("--season", type=int, default=int(os.environ.get("ESPN_ROSTER_SEASON", "2026")))
+    parser = argparse.ArgumentParser(
+        description="Fetch ESPN Division I FBS rosters and upsert them into Postgres."
+    )
+    parser.add_argument(
+        "--season",
+        type=int,
+        default=int(os.environ.get("ESPN_ROSTER_SEASON", "2026")),
+    )
     parser.add_argument("--database-url", default=os.environ.get("DB_URL", ""))
-    parser.add_argument("--output", type=Path, default=Path("espn-rosters-2026.json"))
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("espn-fbs-rosters-2026.json"),
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--retries", type=int, default=4)
-    parser.add_argument("--delay", type=float, default=0.15)
+    parser.add_argument("--delay", type=float, default=0.2)
     parser.add_argument("--allow-partial", action="store_true")
     parser.add_argument("--allow-unexpected-team-count", action="store_true")
     return parser.parse_args(argv)
@@ -393,7 +502,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.timeout <= 0 or args.retries <= 0 or args.delay < 0:
         raise IngestError("timeout/retries must be positive and delay cannot be negative")
 
-    teams, team_calls = fetch_all_teams(
+    teams, team_calls = fetch_fbs_teams(
         timeout=args.timeout,
         retries=args.retries,
         allow_unexpected_team_count=args.allow_unexpected_team_count,
@@ -408,27 +517,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     total_calls = team_calls + roster_calls
     write_export(args.output, teams, players, args.season)
     print(
-        f"Wrote {len(players)} players from {successful_teams}/{len(teams)} teams to {args.output}",
+        f"Wrote {len(players)} players from {successful_teams}/{len(teams)} FBS teams to {args.output}",
         flush=True,
     )
 
     if failed_teams:
-        print(f"Skipped {len(failed_teams)} teams with unavailable or empty rosters.", file=sys.stderr, flush=True)
+        print(
+            f"Skipped {len(failed_teams)} FBS teams with unavailable or empty rosters.",
+            file=sys.stderr,
+            flush=True,
+        )
     if not players or successful_teams == 0:
-        raise IngestError("ESPN returned no usable rosters; Postgres was not changed")
+        raise IngestError("ESPN returned no usable FBS rosters; Postgres was not changed")
     if args.dry_run:
         print("Dry run complete; Postgres was not changed.", flush=True)
         return 0
     if not args.database_url:
         raise IngestError("DB_URL or --database-url is required unless --dry-run is used")
 
-    inserted, updated = upsert_players(args.database_url, players, args.season, total_calls)
+    inserted, updated = upsert_players(
+        args.database_url,
+        players,
+        args.season,
+        total_calls,
+    )
     print(
         json.dumps(
             {
                 "status": "success",
                 "source": "espn",
-                "scope": "all-college-football-teams",
+                "scope": "division-i-fbs",
                 "season": args.season,
                 "teamsDiscovered": len(teams),
                 "teamsImported": successful_teams,
@@ -450,5 +568,9 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except IngestError as error:
-        print(json.dumps({"status": "failed", "error": str(error)}, indent=2), file=sys.stderr, flush=True)
+        print(
+            json.dumps({"status": "failed", "error": str(error)}, indent=2),
+            file=sys.stderr,
+            flush=True,
+        )
         raise SystemExit(1)
