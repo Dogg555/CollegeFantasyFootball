@@ -164,7 +164,7 @@ function renderLiveScores(scores = [], fallback = false) {
     return;
   }
   const notice = fallback
-    ? '<div class="row"><div><strong>Demo scoreboard</strong><div class="muted">Live data is unavailable, so sample games are shown.</div></div></div>'
+    ? '<div class="row"><div><strong>Offline scoreboard preview</strong><div class="muted">Live data is unavailable, so preview games are shown.</div></div></div>'
     : '';
   liveScoresEl.innerHTML = notice + scores.map((score) => `
     <div class="row">
@@ -231,7 +231,7 @@ function renderSearchResults(players = [], fallback = false) {
   }
   const queuedIds = new Set(getQueue().map((player) => player.id));
   const notice = fallback
-    ? '<div class="row"><div><strong>Offline player pool</strong><div class="muted">Showing cached sample players until the API is reachable.</div></div></div>'
+    ? '<div class="row"><div><strong>Offline player preview</strong><div class="muted">Showing preview players until the API is reachable.</div></div></div>'
     : '';
   searchResultsEl.innerHTML = notice + players.slice(0, 10).map((player, index) => {
     const queued = queuedIds.has(player.id);

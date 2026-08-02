@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reset password - College Fantasy Football</title>
+  <title>About | College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="alpha-ui.css" />
 </head>
 <body>
   <div class="topbar">
@@ -22,34 +23,28 @@
     </nav>
     <div class="nav__actions">
       <a class="button button--ghost" href="signin.html">Sign in</a>
+      <a class="button button--primary" href="index.html">Start a League</a>
     </div>
   </div>
 
-  <main class="auth-layout">
-    <section class="card card--accent auth-card">
-      <div class="card__header">
-        <h2>Request password reset</h2>
-        <span class="pill pill--muted">Recovery</span>
+  <header class="hero hero--subtle">
+    <div class="hero__content">
+      <div class="hero__copy">
+        <p class="pill pill--muted">About</p>
+        <h1>Built for college fantasy managers</h1>
+        <p class="subtitle">College Fantasy Football gives private leagues the tools they need for drafts, rosters, waivers, trades, weekly matchups, and standings.</p>
       </div>
-      <form id="reset-request-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
-        <label class="field">
-          <span>Email</span>
-          <input id="reset-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" />
-        </label>
-        <div class="actions">
-          <button class="button button--primary" type="submit">Send reset link</button>
-        </div>
-        <div id="reset-request-status" class="muted small" role="status"></div>
-      </form>
-    </section>
+    </div>
+  </header>
 
-    <section class="card auth-sidecar">
-      <h2>Already have a token?</h2>
-      <p class="muted">Use the reset token from your email to choose a new password.</p>
-      <div id="auth-api-status" class="muted small" role="status"></div>
-      <div class="cta-row">
-        <a class="button" href="reset-password.html">Enter reset token</a>
-      </div>
+  <main class="layout">
+    <section class="card card--accent">
+      <h2>What It Is</h2>
+      <p class="muted">The app is a closed-beta fantasy football platform focused on the college game. Managers can create leagues, search the player pool, draft rosters, manage weekly decisions, and track league history.</p>
+    </section>
+    <section class="card">
+      <h2>Beta Focus</h2>
+      <p class="muted">The current priority is making the full tester journey reliable: signup, league creation, league joining, draft, lineup management, matchups, scoring, standings, and commissioner workflows.</p>
     </section>
   </main>
 
@@ -59,14 +54,13 @@
       <span>Built for college fantasy managers.</span>
     </div>
     <nav class="footer__links" aria-label="Footer">
-      <a href="about.html">About</a>
+      <a href="index.html">Home</a>
       <a href="contact.html">Contact</a>
       <a href="privacy.html">Privacy</a>
       <a href="terms.html">Terms</a>
     </nav>
   </footer>
   <script src="config.js"></script>
-  <script src="state.js"></script>
-  <script src="auth.js"></script>
+  <script src="alpha-ui.js"></script>
 </body>
 </html>

@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reset password - College Fantasy Football</title>
+  <title>Terms | College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="alpha-ui.css" />
 </head>
 <body>
   <div class="topbar">
@@ -22,34 +23,32 @@
     </nav>
     <div class="nav__actions">
       <a class="button button--ghost" href="signin.html">Sign in</a>
+      <a class="button button--primary" href="index.html">Start a League</a>
     </div>
   </div>
 
-  <main class="auth-layout">
-    <section class="card card--accent auth-card">
-      <div class="card__header">
-        <h2>Request password reset</h2>
-        <span class="pill pill--muted">Recovery</span>
+  <header class="hero hero--subtle">
+    <div class="hero__content">
+      <div class="hero__copy">
+        <p class="pill pill--muted">Terms</p>
+        <h1>Beta Terms</h1>
+        <p class="subtitle">Use the app for private fantasy leagues, tester feedback, and closed-beta evaluation.</p>
       </div>
-      <form id="reset-request-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
-        <label class="field">
-          <span>Email</span>
-          <input id="reset-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" />
-        </label>
-        <div class="actions">
-          <button class="button button--primary" type="submit">Send reset link</button>
-        </div>
-        <div id="reset-request-status" class="muted small" role="status"></div>
-      </form>
-    </section>
+    </div>
+  </header>
 
-    <section class="card auth-sidecar">
-      <h2>Already have a token?</h2>
-      <p class="muted">Use the reset token from your email to choose a new password.</p>
-      <div id="auth-api-status" class="muted small" role="status"></div>
-      <div class="cta-row">
-        <a class="button" href="reset-password.html">Enter reset token</a>
-      </div>
+  <main class="layout">
+    <section class="card">
+      <h2>Beta Availability</h2>
+      <p class="muted">The product is in beta and may change, lose sample data, or experience service interruptions while features are finalized.</p>
+    </section>
+    <section class="card">
+      <h2>Fair Use</h2>
+      <p class="muted">Do not attempt to disrupt the service, access another manager account, scrape protected endpoints, or use the platform for unlawful activity.</p>
+    </section>
+    <section class="card card--accent">
+      <h2>No Affiliation</h2>
+      <p class="muted">College Fantasy Football is an independent fantasy sports project and is not affiliated with or endorsed by any school, conference, athletic association, or broadcaster.</p>
     </section>
   </main>
 
@@ -62,11 +61,9 @@
       <a href="about.html">About</a>
       <a href="contact.html">Contact</a>
       <a href="privacy.html">Privacy</a>
-      <a href="terms.html">Terms</a>
     </nav>
   </footer>
   <script src="config.js"></script>
-  <script src="state.js"></script>
-  <script src="auth.js"></script>
+  <script src="alpha-ui.js"></script>
 </body>
 </html>

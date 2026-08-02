@@ -425,6 +425,7 @@ function normalizeMembers(members = [], invitedEmails = []) {
 function normalizeMemberStatus(status = 'Invited') {
   const lowered = String(status).toLowerCase();
   if (lowered === 'active') return 'Active';
+  if (lowered === 'pending') return 'Pending';
   if (lowered === 'removed') return 'Removed';
   return 'Invited';
 }

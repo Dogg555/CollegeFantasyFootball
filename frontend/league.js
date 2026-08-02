@@ -76,6 +76,13 @@ const managerList = document.getElementById('manager-list');
 const managerCount = document.getElementById('manager-count');
 const copyInviteLinkBtn = document.getElementById('copy-invite-link');
 const inviteLinkStatus = document.getElementById('invite-link-status');
+const inviteFlow = document.getElementById('invite-flow');
+const inviteFlowTitle = document.getElementById('invite-flow-title');
+const inviteFlowCopy = document.getElementById('invite-flow-copy');
+const inviteFlowStatus = document.getElementById('invite-flow-status');
+const inviteFlowDetail = document.getElementById('invite-flow-detail');
+const joinInviteNowBtn = document.getElementById('join-invite-now');
+const inviteSigninLink = document.getElementById('invite-signin-link');
 const stepInvites = document.getElementById('step-invites');
 const stepRules = document.getElementById('step-rules');
 const stepLobby = document.getElementById('step-lobby');
@@ -84,12 +91,14 @@ const draftLobbyLink = document.getElementById('draft-lobby-link');
 const leagueTabs = document.querySelectorAll('[data-league-tab]');
 const leaguePanels = document.querySelectorAll('[data-league-panel]');
 let activeScoreboardWeek = 1;
+const CFF_PENDING_JOIN_KEY = 'cff_pending_join_requests';
 
 function renderLeague() {
   updateSharedNav('league');
   const authState = getAuthState();
   const leagueState = getLeagueState();
   const queue = getQueue();
+  renderInviteFlow();
   renderLeagueList();
   renderCommissionerAccess(isCurrentCommissioner(leagueState));
 
@@ -774,28 +783,36 @@ function populateScoringSettings(settings = scoringPresets.ppr) {
 
 function renderManagers(leagueState) {
   const managers = leagueState?.members || [];
-  if (managerCount) managerCount.textContent = String(managers.length);
+  const pendingCount = managers.filter((member) => member.status === 'Pending').length;
+  if (managerCount) managerCount.textContent = pendingCount ? `${managers.length} / ${pendingCount} pending` : String(managers.length);
   if (!managerList) return;
   if (!managers.length) {
     managerList.textContent = 'No managers invited yet.';
     return;
   }
   const canManage = isCurrentCommissioner(leagueState);
-  managerList.innerHTML = managers.map((member, index) => `
+  managerList.innerHTML = managers.map((member, index) => {
+    const status = member.status || 'Invited';
+    const statusCopy = status === 'Pending'
+      ? 'Requested access'
+      : status === 'Active'
+        ? 'Confirmed manager'
+        : 'Invited, not joined';
+    return `
     <div class="row">
       <div>
         <strong>${escapeHtml(member.teamName || `Manager ${index + 1}`)}</strong>
         <div class="muted">${escapeHtml(member.email)}</div>
-        <div class="muted small">${member.role === 'commissioner' ? 'Commissioner' : 'Member'} / ${member.status || 'Invited'}</div>
+        <div class="muted small">${member.role === 'commissioner' ? 'Commissioner' : 'Member'} / ${statusCopy}</div>
       </div>
       <div class="actions">
         ${canManage ? `
           <input class="lineup-select manager-name-input" data-member-team-name="${escapeHtml(member.email)}" type="text" value="${escapeHtml(member.teamName || '')}" placeholder="Team name">
           <button class="button" data-member-team-save="${escapeHtml(member.email)}" type="button">Save name</button>
         ` : ''}
-        <span class="pill pill--muted">${member.status || 'Invited'}</span>
+        <span class="pill ${status === 'Pending' ? '' : 'pill--muted'}">${status}</span>
         ${canManage && member.email !== getAuthState()?.email ? `
-          <button class="button" data-member-activate="${member.email}" type="button">Confirm</button>
+          <button class="button ${status === 'Pending' ? 'button--primary' : ''}" data-member-activate="${member.email}" type="button">${status === 'Pending' ? 'Approve' : 'Confirm'}</button>
           <button class="button" data-member-role="${member.email}" data-role="${member.role === 'commissioner' ? 'member' : 'commissioner'}" type="button">
             ${member.role === 'commissioner' ? 'Make member' : 'Make commissioner'}
           </button>
@@ -803,7 +820,8 @@ function renderManagers(leagueState) {
         ` : ''}
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
   managerList.querySelectorAll('[data-member-activate]').forEach((button) => {
     button.addEventListener('click', async () => {
       const member = managers.find((item) => item.email === button.dataset.memberActivate);
@@ -938,6 +956,114 @@ async function syncInviteEmailsFromSettings(inviteEmails = [], existingMembers =
   return { invited, failed };
 }
 
+function pendingJoinStore() {
+  try {
+    return JSON.parse(localStorage.getItem(CFF_PENDING_JOIN_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+function pendingJoinKey() {
+  return getAuthState()?.email || 'anonymous';
+}
+
+function pendingJoinRequests() {
+  const store = pendingJoinStore();
+  return Array.isArray(store[pendingJoinKey()]) ? store[pendingJoinKey()] : [];
+}
+
+function savePendingJoinRequests(requests = []) {
+  const store = pendingJoinStore();
+  const key = pendingJoinKey();
+  store[key] = requests;
+  localStorage.setItem(CFF_PENDING_JOIN_KEY, JSON.stringify(store));
+}
+
+function recordPendingJoin(payload = {}) {
+  const leagueId = payload.id || payload.leagueId;
+  if (!leagueId) return;
+  const requests = pendingJoinRequests().filter((request) => request.id !== leagueId);
+  requests.unshift({
+    id: leagueId,
+    message: payload.message || 'Join request submitted. A commissioner must approve access.',
+    createdAt: new Date().toISOString()
+  });
+  savePendingJoinRequests(requests.slice(0, 10));
+}
+
+function clearPendingJoin(leagueId) {
+  if (!leagueId) return;
+  savePendingJoinRequests(pendingJoinRequests().filter((request) => request.id !== leagueId));
+}
+
+function currentInviteId() {
+  return new URLSearchParams(window.location.search).get('invite') || '';
+}
+
+function renderInviteFlow() {
+  if (!inviteFlow || !inviteFlowDetail) return;
+  const invite = currentInviteId();
+  const auth = getAuthState();
+  const pending = pendingJoinRequests();
+  const activeLeague = getLeagueState();
+  if (activeLeague?.id) clearPendingJoin(activeLeague.id);
+  if (!invite && !pending.length) {
+    inviteFlow.hidden = true;
+    return;
+  }
+
+  inviteFlow.hidden = false;
+  if (inviteFlowTitle) inviteFlowTitle.textContent = invite ? 'League invite' : 'Pending league access';
+  if (inviteFlowStatus) inviteFlowStatus.textContent = invite ? 'Invite' : 'Pending';
+  if (inviteSigninLink) {
+    inviteSigninLink.hidden = Boolean(auth);
+    inviteSigninLink.href = invite ? `signin.html?invite=${encodeURIComponent(invite)}` : 'signin.html';
+  }
+  if (joinInviteNowBtn) {
+    joinInviteNowBtn.hidden = !invite || !auth;
+    joinInviteNowBtn.disabled = false;
+  }
+
+  if (invite && !auth) {
+    if (inviteFlowCopy) inviteFlowCopy.textContent = 'Sign in or create an account to request access to this league.';
+    inviteFlowDetail.innerHTML = `
+      <div class="row">
+        <div>
+          <strong>Invite ready</strong>
+          <div class="muted">After signing in, the app will submit your join request for commissioner approval.</div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (invite && auth) {
+    if (inviteFlowCopy) inviteFlowCopy.textContent = 'Submit this invite to request access from the league commissioner.';
+    inviteFlowDetail.innerHTML = `
+      <div class="row">
+        <div>
+          <strong>Ready to join</strong>
+          <div class="muted">League ID: ${escapeHtml(invite)}</div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (inviteFlowCopy) inviteFlowCopy.textContent = 'These requests are waiting for a commissioner to approve you.';
+  inviteFlowDetail.innerHTML = pending.map((request) => `
+    <div class="row">
+      <div>
+        <strong>League ${escapeHtml(request.id)}</strong>
+        <div class="muted">${escapeHtml(request.message)}</div>
+        <div class="muted small">${new Date(request.createdAt).toLocaleString()}</div>
+      </div>
+      <span class="badge">Pending</span>
+    </div>
+  `).join('');
+}
+
 function inviteUrl() {
   const leagueState = getLeagueState();
   const base = `${window.location.origin}${window.location.pathname.replace('league.html', 'signin.html')}`;
@@ -955,30 +1081,38 @@ async function refreshLeagueFromApi() {
 }
 
 async function acceptInviteFromUrl() {
-  const invite = new URLSearchParams(window.location.search).get('invite');
+  const invite = currentInviteId();
   if (!invite || !getAuthState()?.token) return;
   try {
     const joined = await joinLeagueApi(invite);
     if (joined?.joinStatus === 'pending_approval') {
+      recordPendingJoin(joined);
       window.history.replaceState({}, document.title, 'league.html');
-      if (emptyState) {
-        emptyState.hidden = false;
-        emptyState.querySelector('p')?.replaceChildren(document.createTextNode(joined.message || 'Join request submitted. A commissioner must approve access.'));
-      }
+      if (emptyState) emptyState.textContent = joined.message || 'Join request submitted. A commissioner must approve access.';
+      renderInviteFlow();
       window.CFF_UI?.notify(joined.message || 'Join request submitted. A commissioner must approve access.', 'info');
       return;
     }
     if (joined?.id) {
+      clearPendingJoin(joined.id);
       setActiveLeague(joined.id);
       window.history.replaceState({}, document.title, 'league.html');
     }
   } catch {
     setSettingsStatus('Invite could not be joined for this account.', true);
+    renderInviteFlow();
   }
 }
 
 document.getElementById('nav-logout')?.addEventListener('click', () => {
   clearSessionState();
+  renderLeague();
+});
+
+joinInviteNowBtn?.addEventListener('click', async () => {
+  if (!currentInviteId()) return;
+  joinInviteNowBtn.disabled = true;
+  await acceptInviteFromUrl();
   renderLeague();
 });
 

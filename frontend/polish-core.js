@@ -109,7 +109,7 @@
       : 'You are offline. Cached league and draft data remain available on this device.');
   }
 
-  function setBusy(control, busy, label = 'Working…') {
+  function setBusy(control, busy, label = 'Working...') {
     if (!control) return;
     if (busy) {
       if (control.dataset.cffBusy === 'true') return;
@@ -186,7 +186,7 @@
       notify('You are offline. Cached data remains available.', 'error', 6000);
     });
     window.addEventListener('online', () => {
-      setNetworkStatus(true, 'Connection restored. Refreshing current data…');
+      setNetworkStatus(true, 'Connection restored. Refreshing current data...');
       notify('Connection restored.', 'success');
       window.setTimeout(() => setNetworkStatus(true), 2200);
       window.dispatchEvent(new Event('focus'));

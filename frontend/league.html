@@ -13,7 +13,7 @@
       <div class="brand__logo">CF</div>
       <div>
         <div class="brand__title">College Fantasy</div>
-        <div class="brand__subtitle">Modern manager hub</div>
+        <div class="brand__subtitle">Fantasy manager hub</div>
       </div>
     </div>
     <nav class="nav">
@@ -29,6 +29,21 @@
   </div>
 
   <main class="layout league-dashboard" style="max-width: 1080px">
+    <section class="card card--accent" id="invite-flow" hidden>
+      <div class="card__header">
+        <div>
+          <h2 id="invite-flow-title">League invite</h2>
+          <div class="muted small" id="invite-flow-copy">Review your invitation status.</div>
+        </div>
+        <span class="pill" id="invite-flow-status">Invite</span>
+      </div>
+      <div id="invite-flow-detail" class="list"></div>
+      <div class="cta-row" style="margin-top: 12px">
+        <button class="button button--primary" id="join-invite-now" type="button">Join league</button>
+        <a class="button button--ghost" id="invite-signin-link" href="signin.html">Sign in</a>
+      </div>
+    </section>
+
     <section class="league-tabs" aria-label="League sections">
       <button class="league-tab is-active" data-league-tab="overview" type="button">Home</button>
       <button class="league-tab" data-league-tab="team" type="button">My Team</button>
@@ -469,7 +484,18 @@
     </section>
   </main>
 
-  <footer class="footer">Built for college fantasy managers.</footer>
+  <footer class="footer footer--rich">
+    <div class="footer__brand">
+      <strong>College Fantasy Football</strong>
+      <span>Built for college fantasy managers.</span>
+    </div>
+    <nav class="footer__links" aria-label="Footer">
+      <a href="about.html">About</a>
+      <a href="contact.html">Contact</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html">Terms</a>
+    </nav>
+  </footer>
   <script src="config.js"></script>
   <script src="state.js"></script>
   <script src="alpha-ui.js"></script>

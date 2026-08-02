@@ -86,13 +86,13 @@
   }
 
   function formLabel(form) {
-    if (/login/.test(form.id)) return 'Signing in…';
-    if (/signup/.test(form.id)) return 'Creating account…';
-    if (/waiver/.test(form.id)) return 'Submitting claim…';
-    if (/trade/.test(form.id)) return 'Sending offer…';
-    if (/league/.test(form.id)) return 'Saving league…';
-    if (/reset/.test(form.id)) return 'Sending…';
-    return 'Working…';
+    if (/login/.test(form.id)) return 'Signing in...';
+    if (/signup/.test(form.id)) return 'Creating account...';
+    if (/waiver/.test(form.id)) return 'Submitting claim...';
+    if (/trade/.test(form.id)) return 'Sending offer...';
+    if (/league/.test(form.id)) return 'Saving league...';
+    if (/reset/.test(form.id)) return 'Sending...';
+    return 'Working...';
   }
 
   function enhanceForms() {
@@ -150,13 +150,13 @@
   }
 
   function actionLabel(control) {
-    if (control.matches('[data-draft]')) return 'Drafting…';
-    if (control.matches('[data-player], [data-player-index], [data-queue]')) return 'Queuing…';
-    if (control.matches('[data-add], [data-add-free-agent]')) return 'Adding…';
-    if (control.matches('[data-drop], [data-drop-player], [data-remove-league], [data-release]')) return 'Removing…';
-    if (control.matches('[data-process-waiver], [data-process-all-waivers]')) return 'Processing…';
-    if (control.matches('[data-trade-accept], [data-trade-decline], [data-trade-cancel], [data-trade-approve], [data-trade-veto]')) return 'Updating…';
-    return 'Working…';
+    if (control.matches('[data-draft]')) return 'Drafting...';
+    if (control.matches('[data-player], [data-player-index], [data-queue]')) return 'Queuing...';
+    if (control.matches('[data-add], [data-add-free-agent]')) return 'Adding...';
+    if (control.matches('[data-drop], [data-drop-player], [data-remove-league], [data-release]')) return 'Removing...';
+    if (control.matches('[data-process-waiver], [data-process-all-waivers]')) return 'Processing...';
+    if (control.matches('[data-trade-accept], [data-trade-decline], [data-trade-cancel], [data-trade-approve], [data-trade-veto]')) return 'Updating...';
+    return 'Working...';
   }
 
   function enhanceActions() {

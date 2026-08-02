@@ -427,6 +427,7 @@ std::string statusForUi(const std::string &status) {
     if (status == "active") return "Active";
     if (status == "removed") return "Removed";
     if (status == "invited") return "Invited";
+    if (status == "pending") return "Pending";
     return "Pending";
 }
 
@@ -522,6 +523,13 @@ bool dbIsActiveMember(PGconn *conn, const std::string &leagueId, const std::stri
     return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0;
 }
 
+bool dbIsActiveOrPendingMember(PGconn *conn, const std::string &leagueId, const std::string &memberEmail) {
+    auto result = execParams(conn,
+                             "SELECT 1 FROM league_members WHERE league_id = $1 AND email = $2 AND status IN ('active', 'pending') LIMIT 1",
+                             {leagueId, memberEmail});
+    return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0;
+}
+
 bool dbUpsertMember(PGconn *conn,
                     const std::string &leagueId,
                     const std::string &email,
@@ -553,7 +561,7 @@ void dbSyncInvitedMembers(PGconn *conn,
         if (memberEmail.empty() || memberEmail == normalizedCommissionerEmail) continue;
         // League settings retain approved members in invitedEmails. Never demote an
         // active membership while synchronizing that compatibility list.
-        if (dbIsActiveMember(conn, leagueId, memberEmail)) continue;
+        if (dbIsActiveOrPendingMember(conn, leagueId, memberEmail)) continue;
         dbUpsertMember(conn, leagueId, memberEmail, "member", "invited", normalizedCommissionerEmail);
     }
 }
@@ -1026,7 +1034,7 @@ std::optional<Json::Value> dbUpdateMember(const std::string &accountEmail,
     const auto normalizedMemberEmail = canonicalEmail(memberEmail);
     const auto safeRole = role == "commissioner" ? "commissioner" : "member";
     auto safeStatus = statusForDb(status);
-    if (!(safeStatus == "active" || safeStatus == "invited" || safeStatus == "removed")) {
+    if (!(safeStatus == "active" || safeStatus == "invited" || safeStatus == "pending" || safeStatus == "removed")) {
         safeStatus = "invited";
     }
     if (normalizedMemberEmail == ownerEmail) {
@@ -1066,10 +1074,10 @@ std::optional<Json::Value> dbJoinLeague(const std::string &accountEmail, const s
     if (!conn) return std::nullopt;
     auto eligible = execParams(conn.get(),
                                "SELECT 1 FROM leagues WHERE id = $1 AND $2 = ANY(invited_emails) "
-                               "UNION SELECT 1 FROM league_members WHERE league_id = $1 AND email = $2 AND status = 'invited' LIMIT 1",
+                               "UNION SELECT 1 FROM league_members WHERE league_id = $1 AND email = $2 AND status IN ('invited', 'pending') LIMIT 1",
                                {leagueId, accountEmail});
     if (!resultOk(eligible.get(), PGRES_TUPLES_OK) || PQntuples(eligible.get()) == 0) return std::nullopt;
-    if (!dbUpsertMember(conn.get(), leagueId, accountEmail, "member", "invited", "")) return std::nullopt;
+    if (!dbUpsertMember(conn.get(), leagueId, accountEmail, "member", "pending", "")) return std::nullopt;
     Json::Value pending;
     pending["id"] = leagueId;
     pending["joinStatus"] = "pending_approval";
@@ -2836,10 +2844,20 @@ void handleJoinLeague(const drogon::HttpRequestPtr&,
     }
     auto &members = arrayForLeague(membersByLeague, leagueId);
     bool invited = false;
-    for (const auto &member : members) {
-        if (canonicalEmail(jsonString(member, "email")) == canonicalEmail(accountEmail)) {
-            const auto status = lowerString(jsonString(member, "status"));
-            invited = status == "invited" || status == "active";
+    for (Json::ArrayIndex i = 0; i < members.size(); ++i) {
+        if (canonicalEmail(jsonString(members[i], "email")) == canonicalEmail(accountEmail)) {
+            const auto status = lowerString(jsonString(members[i], "status"));
+            invited = status == "invited" || status == "pending" || status == "active";
+            if (status == "active") {
+                auto league = it->second.league.toJson();
+                league["members"] = members;
+                league["joinStatus"] = "active";
+                callback(jsonResponse(league, drogon::k200OK));
+                return;
+            }
+            if (status == "invited") {
+                members[i]["status"] = "Pending";
+            }
             break;
         }
     }

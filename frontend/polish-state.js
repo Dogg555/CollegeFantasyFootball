@@ -68,7 +68,7 @@
     if (!pick || !manager) return;
     let previous = '';
     const announce = () => {
-      const value = `${pick.textContent.trim()} — ${manager.textContent.trim()}`;
+      const value = `${pick.textContent.trim()} - ${manager.textContent.trim()}`;
       if (!value || value === previous || /tbd|no league|complete/i.test(value)) return;
       previous = value;
       ui?.notify(value, 'info', 2600);

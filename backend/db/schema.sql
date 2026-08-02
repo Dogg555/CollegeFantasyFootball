@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS league_members (
   email TEXT NOT NULL,
   team_name TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('commissioner', 'member')),
-  status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited', 'active', 'removed')),
+  status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited', 'pending', 'active', 'removed')),
   invited_by_email TEXT,
   joined_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -171,7 +171,7 @@
     if (game.live) {
       if (normalized.includes('half')) return 'Halftime';
       const quarter = game.quarter > 0 ? `Q${game.quarter}` : 'Live';
-      return game.clock ? `${quarter} · ${game.clock}` : quarter;
+      return game.clock ? `${quarter} / ${game.clock}` : quarter;
     }
     if (normalized.includes('final') || normalized.includes('complete')) return 'Final';
     return game.startDate
@@ -183,7 +183,7 @@
     const normalized = game.status.toLowerCase();
     const hasScore = game.live || normalized.includes('final') || normalized.includes('complete');
     return hasScore
-      ? `<div class="scoreboard-game__score">${game.awayScore}<span>–</span>${game.homeScore}</div>`
+      ? `<div class="scoreboard-game__score">${game.awayScore}<span>-</span>${game.homeScore}</div>`
       : '<div class="scoreboard-game__score scoreboard-game__score--scheduled">vs</div>';
   }
 
@@ -222,9 +222,9 @@
 
     slideIndex = ((slideIndex % slides.length) + slides.length) % slides.length;
     const slide = slides[slideIndex];
-    const pageLabel = slide.pages > 1 ? ` · group ${slide.page} of ${slide.pages}` : '';
+    const pageLabel = slide.pages > 1 ? ` / group ${slide.page} of ${slide.pages}` : '';
     if (meta) {
-      meta.textContent = `Week ${selectedWeek} · ${slide.label}${pageLabel} · ${slideIndex + 1} of ${slides.length}`;
+      meta.textContent = `Week ${selectedWeek} / ${slide.label}${pageLabel} / ${slideIndex + 1} of ${slides.length}`;
     }
 
     scoreList.innerHTML = `<div class="scoreboard-games">${slide.games.map((game) => `
@@ -320,11 +320,11 @@
     const scheduleAge = formatAge(payload.scheduleAgeSeconds);
     const liveCount = Number(payload.liveGameCount || 0);
     const stale = payload.fresh === false;
-    freshness.innerHTML = `<span class="data-freshness${stale ? ' is-stale' : ''}">${stale ? 'Score cache delayed' : 'Score cache current'} · ${age}</span><span>${Number(payload.scheduleGameCount || 0)} scheduled games · schedule ${scheduleAge}${liveCount ? ` · ${liveCount} live` : ''}</span>`;
+    freshness.innerHTML = `<span class="data-freshness${stale ? ' is-stale' : ''}">${stale ? 'Score cache delayed' : 'Score cache current'} &middot; ${age}</span><span>${Number(payload.scheduleGameCount || 0)} scheduled games &middot; schedule ${scheduleAge}${liveCount ? ` &middot; ${liveCount} live` : ''}</span>`;
   }
 
   async function loadScoreboard() {
-    scoreList.innerHTML = '<div class="scoreboard-empty">Loading the weekly schedule…</div>';
+    scoreList.innerHTML = '<div class="scoreboard-empty">Loading the weekly schedule...</div>';
     try {
       const response = await root.fetch(`${apiBase}/scores/live`, {
         headers: { Accept: 'application/json' },

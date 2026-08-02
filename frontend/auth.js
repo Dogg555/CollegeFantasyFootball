@@ -27,6 +27,7 @@ const resetPassword = document.getElementById('reset-password');
 const resetCompleteStatus = document.getElementById('reset-complete-status');
 
 let storedAuth = null;
+let authReadiness = null;
 const urlParams = new URLSearchParams(window.location.search);
 const pendingInvite = urlParams.get('invite');
 const verificationTokenParam = urlParams.get('verify') || urlParams.get('token');
@@ -42,20 +43,57 @@ function authHealthUrl() {
   return `${apiBase.replace(/\/api\/?$/, '')}/api/health`;
 }
 
+function authStatusUrl() {
+  return `${apiBase}/auth/status`;
+}
+
+function describeAuthReadiness(payload = {}) {
+  const database = payload.database ? `DB ${payload.database}` : 'DB unknown';
+  const verification = payload.emailVerificationRequired ? 'verification on' : 'verification off';
+  const email = payload.emailDeliveryConfigured ? 'email ready' : 'email not configured';
+  const policy = payload.passwordPolicy?.minLength
+    ? `passwords ${payload.passwordPolicy.minLength}-${payload.passwordPolicy.maxLength || 72} chars`
+    : '';
+  return ['Auth ready', database, verification, email, policy].filter(Boolean).join(' / ');
+}
+
+function applyPasswordPolicy(policy = {}) {
+  const min = Number(policy.minLength || 12);
+  const max = Number(policy.maxLength || 72);
+  [signupPassword, resetPassword].forEach((input) => {
+    if (!input) return;
+    if (Number.isFinite(min) && min > 0) input.minLength = min;
+    if (Number.isFinite(max) && max > 0) input.maxLength = max;
+  });
+  const helper = document.getElementById('signup-password-help');
+  if (helper && Number.isFinite(min) && Number.isFinite(max)) {
+    helper.textContent = `Use ${min}-${max} characters and avoid common passwords or your email name.`;
+  }
+}
+
 async function checkAuthApiStatus() {
   if (!authApiStatus) return;
-  setStatus(authApiStatus, `API: checking ${apiBase}`);
+  setStatus(authApiStatus, `Auth API: checking ${apiBase}`);
   try {
-    const response = await fetch(authHealthUrl(), { headers: { Accept: 'application/json' } });
+    const response = await fetch(authStatusUrl(), { headers: { Accept: 'application/json' } });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      setStatus(authApiStatus, `API: ${response.status} from ${apiBase}`, true);
+      setStatus(authApiStatus, `Auth API: ${response.status} from ${apiBase}`, true);
       return;
     }
-    const database = payload.database ? ` / database: ${payload.database}` : '';
-    setStatus(authApiStatus, `API: ${payload.status || 'ok'}${database}`);
+    authReadiness = payload;
+    applyPasswordPolicy(payload.passwordPolicy);
+    const degraded = payload.ready === false || payload.status === 'degraded';
+    setStatus(authApiStatus, degraded ? (payload.message || describeAuthReadiness(payload)) : describeAuthReadiness(payload), degraded);
   } catch {
-    setStatus(authApiStatus, `API unreachable at ${apiBase}. Check frontend CFF_API_BASE and backend ALLOWED_ORIGINS.`, true);
+    try {
+      const response = await fetch(authHealthUrl(), { headers: { Accept: 'application/json' } });
+      const payload = await response.json().catch(() => ({}));
+      const database = payload.database ? ` / database: ${payload.database}` : '';
+      setStatus(authApiStatus, `API: ${payload.status || 'ok'}${database}. Auth status endpoint unavailable.`, !response.ok);
+    } catch {
+      setStatus(authApiStatus, `API unreachable at ${apiBase}. Check frontend CFF_API_BASE and backend ALLOWED_ORIGINS.`, true);
+    }
   }
 }
 
@@ -91,7 +129,7 @@ function createLocalSession(email) {
   return {
     email,
     token: `local-demo-${Date.now().toString(36)}`,
-    message: 'Local demo session created'
+    message: 'Local preview session created'
   };
 }
 
@@ -115,6 +153,14 @@ async function postJson(path, body, token = '') {
 
 async function submitAuthForm(path, email, password, statusEl, redirectTo) {
   setStatus(statusEl, 'Working...');
+  if (authReadiness?.signupEnabled === false && path === '/auth/signup') {
+    setStatus(statusEl, authReadiness.message || 'Signup is temporarily unavailable because authentication storage is not ready.', true);
+    return;
+  }
+  if (authReadiness?.loginEnabled === false && path === '/auth/login') {
+    setStatus(statusEl, authReadiness.message || 'Login is temporarily unavailable because authentication storage is not ready.', true);
+    return;
+  }
   let authenticated = false;
   try {
     const data = await postJson(path, { email, password });
@@ -150,7 +196,7 @@ async function submitAuthForm(path, email, password, statusEl, redirectTo) {
       return;
     }
     if (!allowLocalDemo) {
-      setStatus(statusEl, 'API unavailable. Local demo sessions are disabled for this deployment.', true);
+      setStatus(statusEl, 'API unavailable. Local preview sessions are disabled for this deployment.', true);
       return;
     }
     const local = createLocalSession(email);
@@ -192,6 +238,10 @@ verifyForm?.addEventListener('submit', async (event) => {
 
 resendForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (authReadiness?.emailFlowsEnabled === false) {
+    setStatus(resendStatus, 'Verification email cannot be resent until transactional email is configured.', true);
+    return;
+  }
   setStatus(resendStatus, 'Sending...');
   try {
     const email = resendEmail.value.trim();
@@ -204,6 +254,10 @@ resendForm?.addEventListener('submit', async (event) => {
 
 resetRequestForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (authReadiness?.emailFlowsEnabled === false) {
+    setStatus(resetRequestStatus, 'Password reset email cannot be sent until transactional email is configured.', true);
+    return;
+  }
   setStatus(resetRequestStatus, 'Sending...');
   try {
     const data = await postJson('/auth/request-password-reset', { email: resetEmail.value.trim() });

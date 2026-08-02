@@ -89,9 +89,9 @@
       const createCopy = createCard?.querySelector(':scope > p.muted');
       const scheduleHint = document.querySelector('#scoreboard-heading + .muted.small');
 
-      if (heroPill) heroPill.textContent = 'College fantasy';
-      if (heroSubtitle) heroSubtitle.textContent = 'Create a league, build your roster, and follow the college football season.';
-      if (heroHint) heroHint.textContent = 'Set your rules, invite managers, and schedule the draft.';
+      if (heroPill) heroPill.textContent = 'Closed beta opens August 22';
+      if (heroSubtitle) heroSubtitle.textContent = 'A full-season fantasy platform built for college football: private leagues, draft rooms, FBS player search, Saturday scoring, waivers, trades, matchups, and commissioner controls.';
+      if (heroHint) heroHint.textContent = 'Create a league, invite managers, draft players, set lineups, and follow each week from one hub.';
       if (createCopy) createCopy.textContent = 'Choose the league size, scoring format, draft type, and invite list.';
       if (scheduleHint) scheduleHint.textContent = 'Choose a week to view games grouped by kickoff time.';
     }

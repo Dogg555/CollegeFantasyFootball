@@ -71,7 +71,7 @@ function formatSyncTime(value) {
 function renderPlayerMeta(meta = {}) {
   if (playerMetaCount) playerMetaCount.textContent = Number(meta.activePlayers || 0).toLocaleString();
   if (playerMetaTeams) playerMetaTeams.textContent = Number(meta.teams || 0).toLocaleString();
-  if (playerMetaSeason) playerMetaSeason.textContent = meta.season || '—';
+  if (playerMetaSeason) playerMetaSeason.textContent = meta.season || '-';
   if (playerMetaUpdated) playerMetaUpdated.textContent = formatSyncTime(meta.lastUpdated);
   if (playerDataStatus) {
     playerDataStatus.textContent = meta.status === 'ok'
@@ -114,8 +114,8 @@ async function loadPlayerPool({ append = false } = {}) {
     if (allowLocalDemo && !append) {
       lastResults = applyPositionFilter(filterSamplePlayers(term), position);
       renderSearchResults(lastResults, true);
-      if (playerDataStatus) playerDataStatus.textContent = 'Offline sample pool';
-      if (playerResultCount) playerResultCount.textContent = `${lastResults.length} sample players shown`;
+      if (playerDataStatus) playerDataStatus.textContent = 'Offline player preview';
+      if (playerResultCount) playerResultCount.textContent = `${lastResults.length} preview players shown`;
     } else if (!append) {
       lastResults = [];
       searchResultsEl.textContent = 'The current player database is temporarily unavailable.';
@@ -154,7 +154,7 @@ function renderSearchResults(players = [], fallback = false) {
   }
   const queuedIds = new Set(getQueue().map((player) => player.id));
   const notice = fallback
-    ? '<div class="row"><div><strong>Offline player pool</strong><div class="muted">Showing sample players until the current roster database is reachable.</div></div></div>'
+    ? '<div class="row"><div><strong>Offline player preview</strong><div class="muted">Showing preview players until the current roster database is reachable.</div></div></div>'
     : '';
   searchResultsEl.innerHTML = notice + players.map((player, index) => {
     const queued = queuedIds.has(player.id);

@@ -79,8 +79,29 @@ std::optional<int> readPositiveIntEnv(const std::string &key) {
     return static_cast<int>(parsed);
 }
 
+std::size_t readSizeEnv(const std::string &key, std::size_t fallback, std::size_t maximum) {
+    const auto value = readEnv(key);
+    if (!value || value->empty()) {
+        return fallback;
+    }
+    char *end = nullptr;
+    const unsigned long parsed = std::strtoul(value->c_str(), &end, 10);
+    if (end == value->c_str() || parsed == 0 || parsed > maximum) {
+        return fallback;
+    }
+    return static_cast<std::size_t>(parsed);
+}
+
 bool persistentDbRequired() {
     return envFlagEnabled("CFF_REQUIRE_DB");
+}
+
+std::size_t minPasswordLength() {
+    return readSizeEnv("CFF_MIN_PASSWORD_LENGTH", 12, 72);
+}
+
+std::size_t maxPasswordLength() {
+    return readSizeEnv("CFF_MAX_PASSWORD_LENGTH", 72, 72);
 }
 
 void logIngestResult(const std::string &label, const cff::IngestResult &ingestResult) {
@@ -473,12 +494,17 @@ Json::Value dbIngestionStatus() {
 Json::Value healthPayload(const std::optional<std::string> &jwtSecret,
                           const std::unordered_set<std::string> &allowedOrigins) {
     Json::Value payload;
+    const auto passwordMax = maxPasswordLength();
+    const auto passwordMin = std::min(minPasswordLength(), passwordMax);
     payload["status"] = "ok";
     payload["service"] = "college-ff-api";
     payload["jwtSecretConfigured"] = jwtSecret.has_value();
     payload["allowedOriginsConfigured"] = !allowedOrigins.empty();
     payload["persistentDbRequired"] = persistentDbRequired();
     payload["emailDeliveryConfigured"] = emailDeliveryConfigured();
+    payload["emailVerificationRequired"] = emailVerificationRequired();
+    payload["passwordPolicy"]["minLength"] = static_cast<Json::UInt64>(passwordMin);
+    payload["passwordPolicy"]["maxLength"] = static_cast<Json::UInt64>(passwordMax);
 #ifdef CFF_HAS_POSTGRES
     payload["databaseConfigured"] = dbConfigured();
     if (dbConfigured()) {
@@ -500,6 +526,58 @@ Json::Value healthPayload(const std::optional<std::string> &jwtSecret,
         payload["status"] = "degraded";
     }
 #endif
+    return payload;
+}
+
+Json::Value authReadinessPayload() {
+    Json::Value payload;
+    const auto passwordMax = maxPasswordLength();
+    const auto passwordMin = std::min(minPasswordLength(), passwordMax);
+    payload["status"] = "ok";
+    payload["service"] = "college-ff-api";
+    payload["persistentDbRequired"] = persistentDbRequired();
+    payload["emailVerificationRequired"] = emailVerificationRequired();
+    payload["emailDeliveryConfigured"] = emailDeliveryConfigured();
+    payload["emailProvider"] = cff::emailDeliveryProvider();
+    payload["frontendBaseUrlConfigured"] = frontendBaseUrl().has_value();
+    payload["passwordPolicy"]["minLength"] = static_cast<Json::UInt64>(passwordMin);
+    payload["passwordPolicy"]["maxLength"] = static_cast<Json::UInt64>(passwordMax);
+#ifdef CFF_HAS_POSTGRES
+    payload["databaseConfigured"] = dbConfigured();
+    if (dbConfigured()) {
+        auto conn = connectToDb();
+        payload["database"] = conn ? "ok" : "unavailable";
+        if (!conn) {
+            payload["status"] = "degraded";
+        }
+    } else {
+        payload["database"] = "not_configured";
+        if (persistentDbRequired()) {
+            payload["status"] = "degraded";
+        }
+    }
+#else
+    payload["databaseConfigured"] = false;
+    payload["database"] = "not_compiled";
+    if (persistentDbRequired()) {
+        payload["status"] = "degraded";
+    }
+#endif
+    const bool dbReady = !persistentDbRequired() ||
+                         (payload.isMember("database") && payload["database"].asString() == "ok");
+    const bool emailReady = !emailVerificationRequired() || emailDeliveryConfigured();
+    payload["signupEnabled"] = dbReady;
+    payload["loginEnabled"] = dbReady;
+    payload["emailFlowsEnabled"] = emailDeliveryConfigured();
+    payload["ready"] = dbReady && emailReady;
+    if (!dbReady) {
+        payload["message"] = "Authentication database is not ready.";
+    } else if (!emailReady) {
+        payload["status"] = "degraded";
+        payload["message"] = "Email verification is required, but transactional email is not configured.";
+    } else {
+        payload["message"] = "Authentication is ready.";
+    }
     return payload;
 }
 
@@ -753,8 +831,8 @@ bool enforceRateLimit(const drogon::HttpRequestPtr &req,
 
 bool ensureCredentials(const Json::Value &body) {
     constexpr std::size_t kMaxEmail = 254;
-    constexpr std::size_t kMinPassword = 8;
-    constexpr std::size_t kMaxPassword = 72; // bcrypt truncates longer passwords
+    const std::size_t kMaxPassword = maxPasswordLength(); // bcrypt truncates longer passwords
+    const std::size_t kMinPassword = std::min(minPasswordLength(), kMaxPassword);
     if (!(body.isMember("email") && body["email"].isString()
           && body.isMember("password") && body["password"].isString())) {
         return false;
@@ -1332,6 +1410,13 @@ int main(int argc, char* argv[]) {
                              resp->setStatusCode(authorized ? drogon::k200OK : drogon::k401Unauthorized);
                              resp->setBody(payload.toStyledString());
                              resp->addHeader("Content-Type", "application/json");
+                             callback(resp);
+                         },
+                         {drogon::Get})
+        .registerHandler("/api/auth/status",
+                         [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
+                             auto resp = drogon::HttpResponse::newHttpJsonResponse(authReadinessPayload());
+                             resp->setStatusCode(drogon::k200OK);
                              callback(resp);
                          },
                          {drogon::Get})
@@ -1942,6 +2027,7 @@ int main(int argc, char* argv[]) {
                          {drogon::Get})
         .registerHandler("/api/secure/ping", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/validate", preflightHandler, {drogon::Options})
+        .registerHandler("/api/auth/status", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/login", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/signup", preflightHandler, {drogon::Options})
         .registerHandler("/api/auth/logout", preflightHandler, {drogon::Options})
