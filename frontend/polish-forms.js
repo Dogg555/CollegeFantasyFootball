@@ -65,7 +65,31 @@
     future.setSeconds(0, 0);
     const minimum = new Date(future.getTime() - future.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
-      if (!input.min) input.min = minimum;
+      if (input.min) return;
+
+      if (input.id === 'settings-draft-date') {
+        let originalValue = null;
+        const rememberOriginalValue = () => {
+          if (originalValue === null) originalValue = input.value;
+        };
+        const enforceMinimumAfterEdit = () => {
+          rememberOriginalValue();
+          if (!input.value || input.value === originalValue) {
+            input.removeAttribute('min');
+            return;
+          }
+          input.min = minimum;
+        };
+
+        input.addEventListener('focus', rememberOriginalValue);
+        input.addEventListener('pointerdown', rememberOriginalValue);
+        input.addEventListener('keydown', rememberOriginalValue);
+        input.addEventListener('input', enforceMinimumAfterEdit);
+        input.addEventListener('change', enforceMinimumAfterEdit);
+        return;
+      }
+
+      input.min = minimum;
     });
     document.querySelectorAll('input, select, textarea').forEach((field) => {
       field.addEventListener('input', () => field.classList.remove('is-invalid'));
@@ -106,9 +130,14 @@
         event.stopImmediatePropagation();
         form.reportValidity();
         const first = form.querySelector(':invalid');
+        const status = form.querySelector('[role="status"]');
         first?.classList.add('is-invalid');
         first?.focus();
-        ui?.notify('Review the highlighted fields before continuing.', 'error');
+        if (status) {
+          status.textContent = first?.validationMessage || 'Review the highlighted fields before continuing.';
+          status.style.color = 'var(--danger)';
+        }
+        ui?.notify(first?.validationMessage || 'Review the highlighted fields before continuing.', 'error');
         return;
       }
       if (form.dataset.cffSubmitting === 'true') {
