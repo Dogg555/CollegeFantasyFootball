@@ -4,7 +4,7 @@ window.CFF_API_BASE = window.CFF_API_BASE || '/api';
 window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
 
 (() => {
-  const scripts = ['polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'footer-links.js'];
+  const scripts = ['polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'footer-links.js'];
 
   function ensureBranding() {
     if (!document.querySelector('link[rel~="icon"]')) {
@@ -42,6 +42,7 @@ window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
     writeStylesheet('polish.css', 'data-cff-polish="true"');
     writeStylesheet('alpha-ui.css', 'data-cff-modern="true"');
     writeStylesheet('beta-ui.css', 'data-cff-beta="true"');
+    writeStylesheet('league-nav.css', 'data-cff-league-nav="true"');
     scripts.forEach((source) => {
       document.write(`<script src="${source}"><\/script>`);
     });
@@ -51,6 +52,7 @@ window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO !== false;
   appendStylesheet('polish.css', 'cffPolish');
   appendStylesheet('alpha-ui.css', 'cffModern');
   appendStylesheet('beta-ui.css', 'cffBeta');
+  appendStylesheet('league-nav.css', 'cffLeagueNav');
 
   scripts.reduce((chain, source) => chain.then(() => new Promise((resolve, reject) => {
     if (document.querySelector(`script[src="${source}"]`)) {
