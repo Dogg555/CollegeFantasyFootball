@@ -1,0 +1,483 @@
+/* Final closed-beta visual layer. Loaded after the existing alpha and polish styles. */
+:root {
+  --bg: #080d12;
+  --panel: #0f1720;
+  --card: #131d27;
+  --text: #f7f8f3;
+  --muted: #a8b4bf;
+  --accent: #62dfa0;
+  --accent-2: #f6c65f;
+  --line: rgba(255, 255, 255, 0.095);
+  --danger: #ff9c9c;
+  --beta-radius: 14px;
+  --beta-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+}
+
+html {
+  background: var(--bg);
+}
+
+body.beta-ui {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 10% -5%, rgba(98, 223, 160, 0.11), transparent 34rem),
+    radial-gradient(circle at 92% 8%, rgba(246, 198, 95, 0.1), transparent 30rem),
+    linear-gradient(180deg, #0b1118 0, #080d12 440px, #080d12 100%);
+}
+
+body.beta-ui::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.38;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(to bottom, black, transparent 70%);
+}
+
+.beta-ui .topbar {
+  min-height: 76px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.085);
+  background: rgba(8, 13, 18, 0.82);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+
+.beta-ui .brand__logo {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(145deg, #f8ce73, #68e0a4);
+  box-shadow: 0 9px 24px rgba(98, 223, 160, 0.2);
+}
+
+.beta-ui .brand__title {
+  font-size: 1.02rem;
+  letter-spacing: -0.025em;
+}
+
+.beta-ui .brand__subtitle {
+  display: block;
+  color: #8f9da9;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.beta-ui .nav__link,
+.beta-ui .button,
+.beta-ui .icon-button,
+.beta-ui .league-tab,
+.beta-ui .nav-toggle {
+  border-radius: 11px;
+}
+
+.beta-ui .nav__link {
+  padding: 9px 13px;
+}
+
+.beta-ui .nav__link:hover,
+.beta-ui .nav__link.is-active {
+  border-color: rgba(255, 255, 255, 0.11);
+  background: rgba(255, 255, 255, 0.065);
+}
+
+.beta-ui .button {
+  min-height: 44px;
+  padding-inline: 17px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.beta-ui .button--primary {
+  color: #07120d;
+  background: linear-gradient(135deg, #f6c65f 0%, #7de5ad 52%, #55d797 100%);
+  box-shadow: 0 12px 28px rgba(85, 215, 151, 0.18);
+}
+
+.beta-ui .button--primary:hover {
+  box-shadow: 0 16px 34px rgba(85, 215, 151, 0.26);
+}
+
+.beta-ui .card,
+.beta-ui .summary__card,
+.beta-ui .modal__dialog,
+.beta-ui .feature-tile,
+.beta-ui .preview-panel,
+.beta-ui .step-item {
+  border-radius: var(--beta-radius);
+  border-color: rgba(255, 255, 255, 0.095);
+  background:
+    linear-gradient(180deg, rgba(24, 35, 46, 0.98), rgba(14, 22, 30, 0.98));
+  box-shadow: var(--beta-shadow);
+}
+
+.beta-ui .card--accent {
+  border-color: rgba(246, 198, 95, 0.25);
+  background:
+    linear-gradient(145deg, rgba(246, 198, 95, 0.085), rgba(98, 223, 160, 0.055)),
+    linear-gradient(180deg, rgba(24, 35, 46, 0.98), rgba(14, 22, 30, 0.98));
+}
+
+.beta-ui .pill {
+  border-color: rgba(118, 150, 255, 0.24);
+  border-radius: 999px;
+}
+
+.beta-ui .field > span:first-child {
+  color: #e9eee9;
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.beta-ui .field input,
+.beta-ui .field select,
+.beta-ui .field textarea,
+.beta-ui .search input,
+.beta-ui .search select,
+.beta-ui .lineup-select,
+.beta-ui .league-tab-select,
+.beta-ui .scoreboard-select {
+  min-height: 50px;
+  border-radius: 11px;
+  border-color: rgba(255, 255, 255, 0.11);
+  background: rgba(7, 12, 17, 0.68);
+}
+
+.beta-ui .field input:hover,
+.beta-ui .field select:hover,
+.beta-ui .field textarea:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.beta-ui input.is-valid {
+  border-color: rgba(98, 223, 160, 0.62);
+  box-shadow: 0 0 0 3px rgba(98, 223, 160, 0.09);
+}
+
+.beta-ui .list {
+  border-radius: 12px;
+}
+
+.beta-ui .footer--rich {
+  width: min(1180px, calc(100% - 32px));
+  margin: 40px auto 0;
+  padding: 28px 0 36px;
+  border-top: 1px solid var(--line);
+}
+
+/* Authentication pages */
+.beta-ui.page-signup,
+.beta-ui.page-signin,
+.beta-ui.page-reset-request,
+.beta-ui.page-reset-password,
+.beta-ui.page-resend-verification,
+.beta-ui.page-verify-email {
+  min-height: 100vh;
+}
+
+.beta-ui .auth-layout {
+  width: min(1080px, 100%);
+  grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.78fr);
+  gap: 22px;
+  align-items: stretch;
+  padding-block: clamp(38px, 7vw, 78px);
+}
+
+.beta-ui .auth-card,
+.beta-ui .auth-sidecar {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(22px, 4vw, 36px);
+}
+
+.beta-ui .auth-card::before,
+.beta-ui .auth-sidecar::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+}
+
+.beta-ui .auth-card .card__header {
+  margin-bottom: 10px;
+}
+
+.beta-ui .auth-card h2,
+.beta-ui .auth-sidecar h2 {
+  font-size: clamp(1.65rem, 4vw, 2.35rem);
+}
+
+.beta-ui .auth-intro {
+  margin: 0 0 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+.beta-ui .auth-intro p {
+  max-width: 58ch;
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.62;
+}
+
+.beta-ui .auth-kicker {
+  color: var(--accent-2);
+  font-size: 0.76rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.beta-ui .auth-card .form {
+  gap: 17px;
+}
+
+.beta-ui .auth-submit {
+  width: 100%;
+  min-height: 50px;
+  font-size: 1rem;
+}
+
+.beta-ui .auth-card .actions {
+  width: 100%;
+}
+
+.beta-ui .field-feedback {
+  display: block;
+  color: #8795a1;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.beta-ui .field-feedback.is-success {
+  color: #78dca7;
+}
+
+.beta-ui .field-feedback.is-error {
+  color: var(--danger);
+}
+
+.beta-ui .auth-notice {
+  display: grid;
+  gap: 4px;
+  padding: 13px 14px;
+  border: 1px solid rgba(246, 198, 95, 0.21);
+  border-radius: 11px;
+  background: rgba(246, 198, 95, 0.07);
+}
+
+.beta-ui .auth-notice strong {
+  color: #f5d17f;
+  font-size: 0.84rem;
+}
+
+.beta-ui .auth-notice span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.beta-ui .terms-copy {
+  margin: -5px 0 0;
+  color: #84919c;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.beta-ui .terms-copy a {
+  color: #c6d2d9;
+}
+
+.beta-ui #signup-status,
+.beta-ui #login-status,
+.beta-ui #verify-status,
+.beta-ui #resend-status,
+.beta-ui #reset-request-status,
+.beta-ui #reset-complete-status {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  line-height: 1.5;
+}
+
+.beta-ui .auth-sidecar {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 82% 0%, rgba(98, 223, 160, 0.13), transparent 16rem),
+    linear-gradient(180deg, rgba(21, 31, 41, 0.98), rgba(12, 20, 27, 0.98));
+}
+
+.beta-ui .auth-sidecar > p {
+  line-height: 1.65;
+}
+
+.beta-ui .auth-benefits {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 22px;
+}
+
+.beta-ui .auth-benefit {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 13px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.065);
+}
+
+.beta-ui .auth-benefit:last-child {
+  border-bottom: 0;
+}
+
+.beta-ui .auth-benefit > span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(98, 223, 160, 0.25);
+  border-radius: 10px;
+  background: rgba(98, 223, 160, 0.08);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.beta-ui .auth-benefit strong,
+.beta-ui .auth-benefit p {
+  display: block;
+}
+
+.beta-ui .auth-benefit p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.beta-ui .system-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 14px;
+  color: #8fdcb0 !important;
+  font-size: 0.78rem;
+}
+
+.beta-ui .system-status::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(98, 223, 160, 0.1);
+}
+
+.beta-ui .system-status--error {
+  color: #f0bf84 !important;
+}
+
+.beta-ui .system-status--error::before {
+  background: var(--accent-2);
+  box-shadow: 0 0 0 4px rgba(246, 198, 95, 0.1);
+}
+
+/* League navigation grouping */
+.beta-ui .league-tabs {
+  gap: 6px;
+  padding: 8px;
+  border-radius: 13px;
+}
+
+.beta-ui .league-tab {
+  position: relative;
+  min-height: 42px;
+}
+
+.beta-ui .league-tab.is-group-start:not(:first-child) {
+  margin-left: 10px;
+}
+
+.beta-ui .league-tab.is-group-start:not(:first-child)::after {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.beta-ui .league-tab[data-beta-group='team'].is-active,
+.beta-ui .league-tab[data-beta-group='team']:hover {
+  background: rgba(98, 223, 160, 0.11);
+}
+
+.beta-ui .league-tab[data-beta-group='manage'].is-active,
+.beta-ui .league-tab[data-beta-group='manage']:hover {
+  background: rgba(118, 150, 255, 0.12);
+}
+
+.beta-ui .league-tab[data-beta-group='draft'].is-active,
+.beta-ui .league-tab[data-beta-group='draft']:hover {
+  background: rgba(246, 198, 95, 0.13);
+}
+
+@media (max-width: 760px) {
+  .beta-ui .topbar {
+    min-height: 66px;
+  }
+
+  .beta-ui .brand__subtitle {
+    display: none;
+  }
+
+  .beta-ui .auth-layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 18px 14px 34px;
+  }
+
+  .beta-ui .auth-card,
+  .beta-ui .auth-sidecar {
+    padding: 20px;
+  }
+
+  .beta-ui .auth-sidecar {
+    order: 2;
+  }
+
+  .beta-ui .footer--rich {
+    width: calc(100% - 28px);
+  }
+
+  .beta-ui .league-tab.is-group-start:not(:first-child) {
+    margin-left: 4px;
+  }
+}
+
+@media (max-width: 440px) {
+  .beta-ui .auth-card,
+  .beta-ui .auth-sidecar {
+    border-radius: 12px;
+    padding: 17px;
+  }
+
+  .beta-ui .auth-card h2,
+  .beta-ui .auth-sidecar h2 {
+    font-size: 1.55rem;
+  }
+
+  .beta-ui .auth-benefit {
+    grid-template-columns: 32px 1fr;
+  }
+}
