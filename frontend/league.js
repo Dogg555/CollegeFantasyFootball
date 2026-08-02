@@ -959,6 +959,15 @@ async function acceptInviteFromUrl() {
   if (!invite || !getAuthState()?.token) return;
   try {
     const joined = await joinLeagueApi(invite);
+    if (joined?.joinStatus === 'pending_approval') {
+      window.history.replaceState({}, document.title, 'league.html');
+      if (emptyState) {
+        emptyState.hidden = false;
+        emptyState.querySelector('p')?.replaceChildren(document.createTextNode(joined.message || 'Join request submitted. A commissioner must approve access.'));
+      }
+      window.CFF_UI?.notify(joined.message || 'Join request submitted. A commissioner must approve access.', 'info');
+      return;
+    }
     if (joined?.id) {
       setActiveLeague(joined.id);
       window.history.replaceState({}, document.title, 'league.html');

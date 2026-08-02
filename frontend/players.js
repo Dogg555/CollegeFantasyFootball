@@ -51,7 +51,7 @@ async function loadPlayerPool() {
   if (!searchResultsEl) return;
   const term = searchInput?.value.trim() || '';
   const position = positionFilter?.value || '';
-  searchResultsEl.textContent = term ? 'Searching current rosters…' : 'Loading current-season players…';
+  searchResultsEl.textContent = term ? 'Searching current rosters...' : 'Loading current-season players...';
   try {
     lastResults = await fetchPlayers(term, position);
     renderSearchResults(lastResults);
@@ -59,8 +59,8 @@ async function loadPlayerPool() {
     const season = seasons.length ? Math.max(...seasons) : null;
     if (playerDataStatus) {
       playerDataStatus.textContent = season
-        ? `${season} active FBS rosters · refreshed by the daily player sync`
-        : 'Active FBS rosters · refreshed by the daily player sync';
+        ? `${season} active FBS rosters / refreshed by the weekly roster sync`
+        : 'Active FBS rosters / refreshed by the weekly roster sync';
     }
   } catch (error) {
     if (allowLocalDemo) {
@@ -99,7 +99,7 @@ function renderSearchResults(players = [], fallback = false) {
     : '';
   searchResultsEl.innerHTML = notice + players.slice(0, 50).map((player, index) => {
     const queued = queuedIds.has(player.id);
-    const seasonLabel = player.season ? ` · ${safeNumber(player.season)}` : '';
+    const seasonLabel = player.season ? ` / ${safeNumber(player.season)}` : '';
     return `
       <div class="row">
         <div>

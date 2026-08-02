@@ -1186,9 +1186,13 @@ async function updateMemberApi(email, changes = {}) {
 
 async function joinLeagueApi(leagueId) {
   if (!getAuthState()?.token || !leagueId) return null;
-  const league = normalizeLeague(await apiRequest(`/leagues/${encodeURIComponent(leagueId)}/join`, {
+  const payload = await apiRequest(`/leagues/${encodeURIComponent(leagueId)}/join`, {
     method: 'POST'
-  }));
+  });
+  if (payload?.joinStatus === 'pending_approval') {
+    return payload;
+  }
+  const league = normalizeLeague(payload);
   saveLeagueForAccount(league);
   await syncActiveLeagueCollectionsFromApi();
   return league;

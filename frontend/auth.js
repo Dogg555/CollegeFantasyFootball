@@ -11,6 +11,7 @@ const loginPassword = document.getElementById('login-password');
 const loginStatus = document.getElementById('login-status');
 const signOutBtn = document.getElementById('signout-btn');
 const authNote = document.getElementById('auth-note');
+const authApiStatus = document.getElementById('auth-api-status');
 const verifyForm = document.getElementById('verify-form');
 const verifyToken = document.getElementById('verify-token');
 const verifyStatus = document.getElementById('verify-status');
@@ -35,6 +36,27 @@ function setStatus(el, message, isError = false) {
   if (!el) return;
   el.textContent = message;
   el.style.color = isError ? '#ffb3b3' : 'var(--muted)';
+}
+
+function authHealthUrl() {
+  return `${apiBase.replace(/\/api\/?$/, '')}/api/health`;
+}
+
+async function checkAuthApiStatus() {
+  if (!authApiStatus) return;
+  setStatus(authApiStatus, `API: checking ${apiBase}`);
+  try {
+    const response = await fetch(authHealthUrl(), { headers: { Accept: 'application/json' } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setStatus(authApiStatus, `API: ${response.status} from ${apiBase}`, true);
+      return;
+    }
+    const database = payload.database ? ` / database: ${payload.database}` : '';
+    setStatus(authApiStatus, `API: ${payload.status || 'ok'}${database}`);
+  } catch {
+    setStatus(authApiStatus, `API unreachable at ${apiBase}. Check frontend CFF_API_BASE and backend ALLOWED_ORIGINS.`, true);
+  }
 }
 
 function saveAuth(email, token) {
@@ -113,7 +135,10 @@ async function submitAuthForm(path, email, password, statusEl, redirectTo) {
     }
   } catch (error) {
     if (error.status) {
-      setStatus(statusEl, error.data?.error || error.message, true);
+      const verifyHint = error.status === 403 && /verification/i.test(error.data?.error || error.message)
+        ? ' Use the verification link from your email or request a new one.'
+        : '';
+      setStatus(statusEl, `${error.data?.error || error.message}${verifyHint}`, true);
       return;
     }
     if (!allowLocalDemo) {
@@ -227,6 +252,7 @@ async function initAuthPage() {
   await validateAuthSession();
   loadStoredAuth();
   updateAuthUi();
+  await checkAuthApiStatus();
   stripUrlParams();
 }
 

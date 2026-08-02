@@ -32,7 +32,8 @@ Runtime environment:
 - `JWT_SECRET` - required for authenticated API access.
 - `ALLOWED_ORIGINS` - comma-separated frontend origins that can call the API.
 - `CFBD_API_KEY` - required for CollegeFootballData ingestion.
-- `CFBD_INGEST_ON_STARTUP` - optional; set to `true` only when you want ingest to run during service startup.
+- `CFBD_INGEST_ON_STARTUP` - keep `false` in hosted deployments; the Render cron owns full roster refreshes.
+- `CFBD_INGEST_INTERVAL_HOURS` - keep `0` in hosted deployments; the Render cron owns full roster refreshes.
 - `RESEND_API_KEY` - required to send password reset and email verification mail.
 - `CFF_EMAIL_FROM` - verified sender address for auth emails.
 - `CFF_FRONTEND_BASE_URL` - frontend origin used to build reset and verification links.
@@ -77,7 +78,9 @@ The backend can fetch player data directly from the CollegeFootballData API and 
 Triggers:
 - Admin HTTP: `POST /api/admin/ingest/cfbd` (requires the same bearer token used for other secure endpoints).
 - Admin status: `GET /api/admin/ingest/cfbd/status`.
-- Frontend: Players page, Data Ingestion panel.
+- Render cron: `college-ff-cfbd-ingest` runs the full roster refresh weekly.
+
+Ingestion is intentionally not exposed in the public frontend. The Players page only browses and searches data already persisted in Postgres.
 
 ## Fantasy league API
 All league and transaction routes require `Authorization: Bearer <token>`. The API enforces account ownership and a maximum of three leagues per account.

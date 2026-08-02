@@ -10,8 +10,8 @@ Backend service:
 - `CFBD_API_KEY` is set before running ingestion.
 - `CFF_ADMIN_API_TOKEN` is set to a high-entropy private token.
 - `CFF_ADMIN_EMAILS` lists any signed-in accounts allowed to use admin endpoints.
-- `CFBD_INGEST_ON_STARTUP` is `true` if data should refresh on API startup.
-- `CFBD_INGEST_INTERVAL_HOURS` is set to the desired background refresh interval, for example `24`.
+- `CFBD_INGEST_ON_STARTUP` is `false`; the weekly Render cron owns full roster refreshes.
+- `CFBD_INGEST_INTERVAL_HOURS` is `0`; the weekly Render cron owns full roster refreshes.
 - `CFF_REQUIRE_DB` is `true`.
 - `RESEND_API_KEY` is set if password reset/email verification should send real email.
 - `CFF_EMAIL_FROM` is a verified sender.
@@ -60,7 +60,7 @@ curl https://YOUR-RENDER-SERVICE.onrender.com/api/admin/ingest/cfbd/status \
 ```
 
 ## Data Ingestion
-Ingestion is not exposed in the public frontend. For normal hosted operation, let the API run it behind the scenes with `CFBD_INGEST_ON_STARTUP` and `CFBD_INGEST_INTERVAL_HOURS`.
+Ingestion is not exposed in the public frontend. For normal hosted operation, let the `college-ff-cfbd-ingest` Render cron run the full roster refresh weekly.
 
 Run this manually only from a trusted operational terminal after `CFBD_API_KEY` is configured:
 ```sh

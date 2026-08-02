@@ -19,8 +19,8 @@ Backend environment:
 - `ALLOWED_ORIGINS` - comma-separated frontend origins, for example `https://your-site.onrender.com`.
 - `CFBD_API_KEY` - CollegeFootballData API key for player/stat ingestion.
 - `CFBD_API_BASE_URL` - optional override for the CFBD REST API base URL.
-- `CFBD_INGEST_ON_STARTUP=true` - runs player/stat ingestion when the API starts.
-- `CFBD_INGEST_INTERVAL_HOURS=24` - refreshes CFBD data in the background on a schedule.
+- `CFBD_INGEST_ON_STARTUP=false` - keep startup ingestion disabled in hosted deployments.
+- `CFBD_INGEST_INTERVAL_HOURS=0` - keep in-process interval ingestion disabled; the Render cron owns full roster refreshes.
 - `CFF_ADMIN_API_TOKEN` - private bearer token for operational ingestion status/manual ingest.
 - `CFF_ADMIN_EMAILS` - comma-separated account emails allowed to use admin ingestion endpoints.
 - `RESEND_API_KEY` - Resend API key for password reset and email verification mail.
@@ -80,7 +80,7 @@ Useful smoke checks after deploy:
 - `GET /api/admin/ingest/cfbd/status` with `Authorization: Bearer <token>`
 - `POST /api/admin/ingest/cfbd` with `Authorization: Bearer <token>` when `CFBD_API_KEY` is set.
 
-Ingestion is intentionally not exposed in the public frontend. Use `CFBD_INGEST_ON_STARTUP` and `CFBD_INGEST_INTERVAL_HOURS` for normal hosted refreshes. The admin endpoints require `CFF_ADMIN_API_TOKEN` or a signed-in account listed in `CFF_ADMIN_EMAILS`.
+Ingestion is intentionally not exposed in the public frontend. Use the `college-ff-cfbd-ingest` Render cron for weekly hosted roster refreshes. The admin endpoints require `CFF_ADMIN_API_TOKEN` or a signed-in account listed in `CFF_ADMIN_EMAILS`.
 
 Private ingestion helper:
 ```sh

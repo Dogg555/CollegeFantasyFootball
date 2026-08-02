@@ -15,7 +15,17 @@ from playwright.sync_api import sync_playwright
 BASE_URL = os.environ.get("CFF_FRONTEND_BASE_URL", "").strip().rstrip("/") + "/"
 EXPECTED_COMMIT = os.environ.get("RENDER_COMMIT_SHA", "").strip()
 ARTIFACT_DIR = pathlib.Path("browser-artifacts")
-PAGES = ["index.html", "signin.html", "signup.html", "reset-password.html", "league.html", "players.html"]
+PAGES = [
+    "index.html",
+    "signin.html",
+    "signup.html",
+    "verify-email.html",
+    "resend-verification.html",
+    "reset-request.html",
+    "reset-password.html",
+    "league.html",
+    "players.html",
+]
 VIEWPORTS = {
     "desktop": {"width": 1440, "height": 900},
     "mobile": {"width": 390, "height": 844},

@@ -427,11 +427,17 @@ std::optional<std::string> dbResetPassword(const std::string &token, const std::
 Json::Value dbIngestionStatus() {
     Json::Value payload;
     payload["configured"] = dbConfigured();
+    payload["cfbdApiConfigured"] = readEnv("CFBD_API_KEY").has_value();
+    payload["season"] = readEnv("CFBD_SEASON").value_or("");
+    payload["fullRosterSchedule"] = "weekly";
+    payload["manualTriggerAvailable"] = true;
+    payload["ready"] = false;
     payload["runs"] = Json::Value{Json::arrayValue};
     payload["counts"] = Json::Value{Json::objectValue};
     auto conn = connectToDb();
     if (!conn) {
         payload["status"] = "unavailable";
+        payload["error"] = "Postgres is unavailable.";
         return payload;
     }
 
@@ -447,6 +453,18 @@ Json::Value dbIngestionStatus() {
         payload["counts"]["players"] = static_cast<Json::Int64>(std::stoll(PQgetvalue(counts.get(), 0, 1)));
         payload["counts"]["games"] = static_cast<Json::Int64>(std::stoll(PQgetvalue(counts.get(), 0, 2)));
         payload["counts"]["playerStats"] = static_cast<Json::Int64>(std::stoll(PQgetvalue(counts.get(), 0, 3)));
+        payload["ready"] = payload["counts"]["players"].asInt64() > 0;
+    }
+
+    auto latest = execParams(conn.get(),
+                             "SELECT resource, COALESCE(status, ''), COALESCE(to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), COALESCE(error_message, '') "
+                             "FROM ingestion_runs WHERE resource IN ('players', 'scoreboard') ORDER BY started_at DESC LIMIT 1",
+                             {});
+    if (resultOk(latest.get(), PGRES_TUPLES_OK) && PQntuples(latest.get()) > 0) {
+        payload["latestRun"]["resource"] = PQgetvalue(latest.get(), 0, 0);
+        payload["latestRun"]["status"] = PQgetvalue(latest.get(), 0, 1);
+        payload["latestRun"]["finishedAt"] = PQgetvalue(latest.get(), 0, 2);
+        payload["latestRun"]["error"] = PQgetvalue(latest.get(), 0, 3);
     }
 
     auto runs = execParams(conn.get(),

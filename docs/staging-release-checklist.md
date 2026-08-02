@@ -8,7 +8,7 @@ Set these values on `college-ff-api` before deploying:
 - `JWT_SECRET`: a unique random value of at least 32 characters. The Blueprint uses `generateValue: true` for new services.
 - `CFF_ADMIN_API_TOKEN`: a different unique random value of at least 32 characters. Copy the same value into GitHub Actions secret `CFF_STAGING_ADMIN_API_TOKEN`.
 - `CFF_REQUIRE_EMAIL_VERIFICATION=false` until the broader beta email service is ready.
-- `CFBD_API_KEY`: the CollegeFootballData API key used by the daily player ingestion job.
+- `CFBD_API_KEY`: the CollegeFootballData API key used by the weekly player ingestion job.
 
 The staging workflow sends one request with the configured frontend origin and one with an untrusted origin. It fails unless the exact origin is allowed and the untrusted origin is rejected.
 
@@ -32,9 +32,9 @@ Only required when the workflow input **Include email-verification acceptance ch
 
 The workflow tests Chromium at 1440×900 and 390×844, checks for load failures, browser errors, horizontal overflow, mobile navigation, and password-policy drift, then uploads full-page screenshots for 14 days. Review the screenshot artifact for visual issues that automated checks cannot judge.
 
-## Daily CFBD data ingestion
+## Weekly CFBD data ingestion
 
-The Blueprint defines `college-ff-cfbd-ingest`, a Render cron job that runs every day at `10:00 UTC`.
+The Blueprint defines `college-ff-cfbd-ingest`, a Render cron job that runs every Monday at `08:00 UTC`.
 
 The job:
 
@@ -57,7 +57,7 @@ After syncing the Blueprint, open the cron job's **Runs** page and trigger one m
 - both health checks report `status=ok` and `database=ok`;
 - the ingest response reports `status=ok`;
 - the status response contains the latest completed run;
-- the next scheduled run is shown for `10:00 UTC`;
+- the next scheduled run is shown for Monday at `08:00 UTC`;
 - the Players page returns current CFBD data.
 
 Render schedules cron expressions in UTC. A dedicated Render cron service has a minimum monthly charge and should exit after the ingestion finishes.
