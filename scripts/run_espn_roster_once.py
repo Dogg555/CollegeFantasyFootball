@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the ESPN Division I FBS roster bootstrap once across future deployments."""
+"""Run and verify the one-time ESPN Division I FBS roster bootstrap."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def main() -> int:
         ) from error
 
     season = configured_season()
-    lock_name = "cff:espn-roster-bootstrap"
+    lock_name = "cff:espn-roster-bootstrap-fbs"
 
     with psycopg.connect(database_url, autocommit=True) as connection:
         with connection.cursor() as cursor:
@@ -60,26 +60,39 @@ def main() -> int:
             row = cursor.fetchone()
             if not row or not bool(row[0]):
                 print(
-                    "[espn-bootstrap] another deployment is already running the one-time import; skipping",
+                    "[espn-bootstrap] another deployment is already running the FBS import; skipping",
                     flush=True,
                 )
                 return 0
 
             cursor.execute(
                 """
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM ingestion_runs
-                    WHERE resource = 'players_espn'
-                      AND status = 'success'
-                      AND COALESCE(row_count, 0) > 0
-                )
-                """
+                SELECT
+                    EXISTS (
+                        SELECT 1
+                        FROM ingestion_runs
+                        WHERE resource = 'players_espn_fbs'
+                          AND season = %s
+                          AND status = 'success'
+                          AND COALESCE(row_count, 0) > 0
+                    ),
+                    (
+                        SELECT COUNT(*)
+                        FROM players
+                        WHERE active = TRUE
+                          AND season = %s
+                          AND raw->>'cffSource' = 'espn'
+                          AND raw->>'cffScope' = 'division-i-fbs'
+                    )
+                """,
+                (season, season),
             )
             completed = cursor.fetchone()
-            if completed and bool(completed[0]):
+            marker_exists = bool(completed and completed[0])
+            visible_rows = int(completed[1]) if completed and completed[1] is not None else 0
+            if marker_exists and visible_rows > 0:
                 print(
-                    "[espn-bootstrap] a successful ESPN FBS roster import already exists; no ESPN requests were made",
+                    f"[espn-bootstrap] verified {visible_rows} active ESPN FBS players already exist; no ESPN requests were made",
                     flush=True,
                 )
                 return 0
@@ -103,12 +116,49 @@ def main() -> int:
                 command.append("--allow-unexpected-team-count")
 
             print(
-                f"[espn-bootstrap] no successful prior import found; starting one-time {season} Division I FBS import",
+                f"[espn-bootstrap] starting one-time {season} Division I FBS import",
+                flush=True,
+            )
+            print(
+                "[espn-bootstrap] roster lines are fetch progress; database rows become visible only after the final transaction commits",
                 flush=True,
             )
             subprocess.run(command, check=True)
+
             print(
-                "[espn-bootstrap] FBS import completed successfully; future deployments will skip it",
+                "[espn-bootstrap] importer exited; verifying committed rows through Postgres",
+                flush=True,
+            )
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM players
+                WHERE active = TRUE
+                  AND season = %s
+                  AND raw->>'cffSource' = 'espn'
+                  AND raw->>'cffScope' = 'division-i-fbs'
+                """,
+                (season,),
+            )
+            verified = cursor.fetchone()
+            verified_rows = int(verified[0]) if verified and verified[0] is not None else 0
+            if verified_rows <= 0:
+                raise BootstrapError(
+                    "The importer exited successfully, but Postgres returned zero active ESPN FBS players after commit"
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO ingestion_runs (
+                    resource, season, finished_at, status, call_count,
+                    row_count, error_message
+                )
+                VALUES ('players_espn_fbs', %s, NOW(), 'success', 0, %s, NULL)
+                """,
+                (season, verified_rows),
+            )
+            print(
+                f"[espn-bootstrap] verified {verified_rows} active ESPN FBS players in Postgres; future deployments will skip the import",
                 flush=True,
             )
             return 0
