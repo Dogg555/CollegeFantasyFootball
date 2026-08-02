@@ -45,7 +45,12 @@ The job:
 5. Reads `GET /api/admin/ingest/cfbd/status` after completion.
 6. Exits nonzero when the endpoint reports a partial or failed ingest, so Render records a failed run.
 
-The API's startup and in-process interval ingestion are disabled in the Blueprint to prevent duplicate schedules. Keep `CFBD_INGEST_ON_STARTUP=false` and do not set `CFBD_INGEST_INTERVAL_HOURS` on the API service.
+The API's startup and in-process interval ingestion are disabled in the Blueprint to prevent duplicate schedules. Keep:
+
+- `CFBD_INGEST_ON_STARTUP=false`
+- `CFBD_INGEST_INTERVAL_HOURS=0`
+
+The interval is explicitly set to `0` because Render preserves existing environment variables that are merely omitted during later Blueprint syncs.
 
 After syncing the Blueprint, open the cron job's **Runs** page and trigger one manual run. Confirm:
 
