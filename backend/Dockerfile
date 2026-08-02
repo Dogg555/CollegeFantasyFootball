@@ -56,10 +56,22 @@ RUN git clone --branch 1.10.5 --depth 1 https://github.com/libcpr/cpr.git /tmp/c
  && ldconfig \
  && rm -rf /tmp/cpr
 
-WORKDIR /app/backend
-COPY backend /app/backend
-COPY scripts/espn_roster_ingest.py scripts/run_espn_roster_once.py /app/scripts/
+# Render builds from the repository root so the one-time ESPN scripts are
+# available. Existing local/CI commands still build with ./backend as context.
+# Normalize either context shape into /app/backend and /app/scripts.
+WORKDIR /app
+COPY . /context
+RUN set -eux; \
+    mkdir -p /app/backend /app/scripts; \
+    if [ -d /context/backend ]; then \
+        cp -a /context/backend/. /app/backend/; \
+        cp /context/scripts/espn_roster_ingest.py /app/scripts/; \
+        cp /context/scripts/run_espn_roster_once.py /app/scripts/; \
+    else \
+        cp -a /context/. /app/backend/; \
+    fi
 
+WORKDIR /app/backend
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CXX_FLAGS_RELEASE="-O0 -g0 -DNDEBUG" \
