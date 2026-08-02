@@ -23,6 +23,8 @@ services:
         sync: false
       - key: CFBD_INGEST_ON_STARTUP
         value: "false"
+      - key: CFBD_INGEST_INTERVAL_HOURS
+        value: "0"
       - key: RESEND_API_KEY
         sync: false
       - key: CFF_EMAIL_FROM
@@ -103,6 +105,29 @@ services:
         sync: false
       - key: CFF_ADMIN_API_TOKEN
         sync: false
+    plan: starter
+    schedule: "0 10 * * *"
+    buildCommand: python -m py_compile scripts/ops_ingest.py
+    startCommand: >-
+      sh -c 'export CFF_API_BASE_URL="http://${CFF_API_HOSTPORT}";
+      exec python scripts/ops_ingest.py --run'
+    envVars:
+      - key: CFF_API_HOSTPORT
+        fromService:
+          type: web
+          name: college-ff-api
+          property: hostport
+      - key: CFF_ADMIN_API_TOKEN
+        fromService:
+          type: web
+          name: college-ff-api
+          envVarKey: CFF_ADMIN_API_TOKEN
+      - key: CFF_INGEST_TIMEOUT_SECONDS
+        value: "900"
+      - key: CFF_INGEST_HEALTH_RETRIES
+        value: "6"
+      - key: CFF_INGEST_RETRY_DELAY_SECONDS
+        value: "10"
 
   - type: cron
     name: college-ff-db-backup
