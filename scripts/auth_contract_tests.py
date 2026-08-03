@@ -300,6 +300,145 @@ def healthy_contracts() -> dict[str, Any]:
             f"operations CORS origin wrong for {operations_path}: {operations_preflight.headers!r}",
         )
 
+
+    league_missing_token = expect(call("GET", "/api/leagues"), 401, "league list without token")
+    require(
+        league_missing_token.get("error") == "Unauthorized",
+        f"league missing-token response changed: {league_missing_token!r}",
+    )
+    league_two_param_missing_token = expect(
+        call("GET", "/api/leagues/missing/rosters/manager@example.test"),
+        401,
+        "two-parameter league route without token",
+    )
+    require(
+        league_two_param_missing_token.get("error") == "Unauthorized",
+        f"two-parameter league authorization changed: {league_two_param_missing_token!r}",
+    )
+
+    league_name = f"Auth Contract League {time.time_ns()}"
+    created_league = expect(
+        call(
+            "POST",
+            "/api/leagues",
+            token=session,
+            payload={"name": league_name, "teams": 4},
+        ),
+        201,
+        "create league",
+    )
+    league_id = str(created_league.get("id", ""))
+    require(league_id, f"created league id missing: {created_league!r}")
+    require(created_league.get("name") == league_name, f"league name changed: {created_league!r}")
+    require(created_league.get("teams") == 4, f"four-team league contract changed: {created_league!r}")
+
+    leagues = expect(call("GET", "/api/leagues", token=session), 200, "list leagues")
+    require(
+        isinstance(leagues, list) and any(item.get("id") == league_id for item in leagues),
+        f"created league absent from list: {leagues!r}",
+    )
+    fetched_league = expect(
+        call("GET", f"/api/leagues/{league_id}", token=session),
+        200,
+        "get league",
+    )
+    require(fetched_league.get("id") == league_id, f"league fetch changed: {fetched_league!r}")
+
+    updated_name = league_name + " Updated"
+    update_payload = dict(fetched_league)
+    update_payload["name"] = updated_name
+    updated_league = expect(
+        call("PUT", f"/api/leagues/{league_id}", token=session, payload=update_payload),
+        200,
+        "update league",
+    )
+    require(updated_league.get("name") == updated_name, f"league update changed: {updated_league!r}")
+
+    roster = expect(call("GET", f"/api/leagues/{league_id}/roster", token=session), 200, "league roster")
+    require(isinstance(roster, list), f"league roster is not an array: {roster!r}")
+    manager_roster = expect(
+        call("GET", f"/api/leagues/{league_id}/rosters/{EMAIL}", token=session),
+        200,
+        "manager roster",
+    )
+    require(isinstance(manager_roster, list), f"manager roster is not an array: {manager_roster!r}")
+
+    for path, label in (
+        (f"/api/leagues/{league_id}/waivers", "league waivers"),
+        (f"/api/leagues/{league_id}/trades", "league trades"),
+        (f"/api/leagues/{league_id}/transactions", "league transactions"),
+        (f"/api/leagues/{league_id}/feed", "league feed"),
+    ):
+        collection = expect(call("GET", path, token=session), 200, label)
+        require(isinstance(collection, list), f"{label} is not an array: {collection!r}")
+
+    league_preflight_paths = (
+        "/api/leagues",
+        f"/api/leagues/{league_id}",
+        f"/api/leagues/{league_id}/members",
+        f"/api/leagues/{league_id}/members/member@example.test",
+        f"/api/leagues/{league_id}/join",
+        f"/api/leagues/{league_id}/roster",
+        f"/api/leagues/{league_id}/rosters/{EMAIL}",
+        f"/api/leagues/{league_id}/roster/drop",
+        f"/api/leagues/{league_id}/roster/player-1/slot",
+        f"/api/leagues/{league_id}/free-agents",
+        f"/api/leagues/{league_id}/draft",
+        f"/api/leagues/{league_id}/draft/queue",
+        f"/api/leagues/{league_id}/draft/order",
+        f"/api/leagues/{league_id}/draft/picks",
+        f"/api/leagues/{league_id}/draft/reset",
+        f"/api/leagues/{league_id}/draft/undo",
+        f"/api/leagues/{league_id}/waivers",
+        f"/api/leagues/{league_id}/waivers/process",
+        f"/api/leagues/{league_id}/waivers/claim-1/process",
+        f"/api/leagues/{league_id}/waivers/claim-1/status",
+        f"/api/leagues/{league_id}/waivers/reorder",
+        f"/api/leagues/{league_id}/waiver-priority",
+        f"/api/leagues/{league_id}/waiver-priority/reset",
+        f"/api/leagues/{league_id}/trades",
+        f"/api/leagues/{league_id}/trades/trade-1/status",
+        f"/api/leagues/{league_id}/matchups",
+        f"/api/leagues/{league_id}/matchups/generate",
+        f"/api/leagues/{league_id}/matchups/generate-season",
+        f"/api/leagues/{league_id}/score/week/1",
+        f"/api/leagues/{league_id}/score/week/1/finalize",
+        f"/api/leagues/{league_id}/transactions",
+        f"/api/leagues/{league_id}/feed",
+        f"/api/leagues/{league_id}/feed/posts",
+    )
+    require(len(league_preflight_paths) == 33, "league preflight coverage list changed")
+    for league_path in league_preflight_paths:
+        league_preflight = call(
+            "OPTIONS",
+            league_path,
+            headers={
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type, authorization",
+            },
+        )
+        require(
+            league_preflight.status == 204,
+            f"league preflight failed for {league_path}: {league_preflight.status}",
+        )
+        require(
+            league_preflight.headers.get("access-control-allow-origin") == ORIGIN,
+            f"league CORS origin wrong for {league_path}: {league_preflight.headers!r}",
+        )
+
+    deleted_league = expect(
+        call("DELETE", f"/api/leagues/{league_id}", token=session),
+        200,
+        "delete league",
+    )
+    require(deleted_league.get("deleted") is True, f"league delete changed: {deleted_league!r}")
+    expect(call("GET", f"/api/leagues/{league_id}", token=session), 404, "deleted league lookup")
+    leagues_after_delete = expect(call("GET", "/api/leagues", token=session), 200, "list after league delete")
+    require(
+        all(item.get("id") != league_id for item in leagues_after_delete),
+        f"deleted league still listed: {leagues_after_delete!r}",
+    )
+
     duplicate = expect(call("POST", "/api/auth/signup", payload={"email": EMAIL.upper(), "password": PASSWORD}), 202, "duplicate signup")
     require(duplicate.get("valid") is False, f"duplicate created session: {duplicate!r}")
     no_keys(duplicate, ("token", "email"), "duplicate")
@@ -351,6 +490,10 @@ def healthy_contracts() -> dict[str, Any]:
         "operationsRoutes": True,
         "operationsAuthorization": True,
         "operationsCors": True,
+        "leagueRoutes": True,
+        "leagueAuthorization": True,
+        "leagueLifecycle": True,
+        "leagueCors": True,
     }
 
 
