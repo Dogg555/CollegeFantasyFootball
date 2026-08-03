@@ -46,6 +46,8 @@ def main() -> int:
         'accepted["signupAccepted"] = true',
         'accepted["valid"] = false',
         'accepted["emailVerificationRequired"] = true',
+        'const auto &jsonObject = resp->getJsonObject()',
+        '*jsonObject = accepted',
         'static_cast<drogon::HttpStatusCode>(202)',
         'Check your email for a verification link',
         'Json::writeString(writer, accepted)',
