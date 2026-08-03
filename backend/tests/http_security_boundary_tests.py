@@ -6,6 +6,7 @@ main = (root / "backend/src/main.cpp").read_text(encoding="utf-8")
 auth_routes = (root / "backend/src/auth_routes.cpp").read_text(encoding="utf-8")
 operations_routes = (root / "backend/src/operations_routes.cpp").read_text(encoding="utf-8")
 league_routes = (root / "backend/src/league_routes.cpp").read_text(encoding="utf-8")
+public_routes = (root / "backend/src/public_routes.cpp").read_text(encoding="utf-8")
 security = (root / "backend/src/http_security.cpp").read_text(encoding="utf-8")
 header = (root / "backend/src/http_security.h").read_text(encoding="utf-8")
 cmake = (root / "backend/CMakeLists.txt").read_text(encoding="utf-8")
@@ -44,10 +45,12 @@ for implementation in (
         raise SystemExit(f"shared HTTP security implementation leaked into operations_routes.cpp: {implementation}")
     if implementation in league_routes:
         raise SystemExit(f"shared HTTP security implementation leaked into league_routes.cpp: {implementation}")
+    if implementation in public_routes:
+        raise SystemExit(f"shared HTTP security implementation leaked into public_routes.cpp: {implementation}")
 
 required_main_delegation = (
     "cff::http::applyCorsHeaders(req, resp, allowedOrigins)",
-    "cff::http::buildPreflightResponse(req, allowedOrigins)",
+    "cff::public_api::registerPublicRoutes(app, allowedOrigins)",
 )
 for delegation in required_main_delegation:
     if delegation not in main:
@@ -71,7 +74,6 @@ for delegation in required_operations_delegation:
     if delegation not in operations_routes:
         raise SystemExit(f"operations_routes.cpp HTTP security delegation missing: {delegation}")
 
-
 required_league_route_delegation = (
     "cff::http::requireAccount(req, callback, jwtSecret, accountEmail)",
     "cff::http::buildPreflightResponse(request, allowedOrigins)",
@@ -79,6 +81,13 @@ required_league_route_delegation = (
 for delegation in required_league_route_delegation:
     if delegation not in league_routes:
         raise SystemExit(f"league_routes.cpp HTTP security delegation missing: {delegation}")
+
+required_public_route_delegation = (
+    "cff::http::buildPreflightResponse(request, allowedOrigins)",
+)
+for delegation in required_public_route_delegation:
+    if delegation not in public_routes:
+        raise SystemExit(f"public_routes.cpp HTTP security delegation missing: {delegation}")
 
 required_behavior = (
     'error["error"] = "Unauthorized"',

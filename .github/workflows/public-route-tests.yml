@@ -1,0 +1,56 @@
+name: Public route contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/src/main.cpp"
+      - "backend/src/public_routes.h"
+      - "backend/src/public_routes.cpp"
+      - "backend/src/player_catalog.h"
+      - "backend/src/player_catalog.cpp"
+      - "backend/src/live_scores.h"
+      - "backend/src/live_scores.cpp"
+      - "scripts/public_route_contract_tests.py"
+      - ".github/workflows/public-route-tests.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/src/main.cpp"
+      - "backend/src/public_routes.h"
+      - "backend/src/public_routes.cpp"
+      - "backend/src/player_catalog.h"
+      - "backend/src/player_catalog.cpp"
+      - "backend/src/live_scores.h"
+      - "backend/src/live_scores.cpp"
+      - "scripts/public_route_contract_tests.py"
+      - ".github/workflows/public-route-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-route-contracts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-route-boundary:
+    name: Public player and score route contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate public route contract source
+        run: python -m py_compile scripts/public_route_contract_tests.py
+
+      - name: Verify public route ownership and behavior
+        run: python scripts/public_route_contract_tests.py
