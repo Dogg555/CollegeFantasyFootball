@@ -6,6 +6,11 @@ on:
     paths:
       - "scripts/refactor_app_config.py"
       - ".github/workflows/bootstrap-app-config-refactor.yml"
+  pull_request:
+    branches: [Test]
+    paths:
+      - "scripts/refactor_app_config.py"
+      - ".github/workflows/bootstrap-app-config-refactor.yml"
 
 permissions:
   contents: write
