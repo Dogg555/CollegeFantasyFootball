@@ -1,0 +1,44 @@
+name: HTTP server runtime contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/main.cpp"
+      - "backend/src/server_runtime.h"
+      - "backend/src/server_runtime.cpp"
+      - "backend/src/app_config.h"
+      - "backend/src/http_security.h"
+      - "backend/tests/server_runtime_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/server-runtime-tests.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/main.cpp"
+      - "backend/src/server_runtime.h"
+      - "backend/src/server_runtime.cpp"
+      - "backend/src/app_config.h"
+      - "backend/src/http_security.h"
+      - "backend/tests/server_runtime_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/server-runtime-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server-runtime-boundary:
+    name: Security, CORS, listener, and startup ordering contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate server runtime boundary source
+        run: python -m py_compile backend/tests/server_runtime_boundary_tests.py
+      - name: Verify server runtime ownership and startup order
+        run: python backend/tests/server_runtime_boundary_tests.py
