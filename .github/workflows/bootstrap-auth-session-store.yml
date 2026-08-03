@@ -38,8 +38,7 @@ jobs:
             backend/src/auth_session_store.h \
             backend/src/auth_session_store.cpp \
             backend/tests/auth_session_store_tests.cpp \
-            backend/CMakeLists.txt \
-            .github/workflows/app-config-tests.yml
+            backend/CMakeLists.txt
           git diff --cached --check
           git commit -m "Extract authentication session store"
           git push origin HEAD:refactor/extract-auth-session-store
