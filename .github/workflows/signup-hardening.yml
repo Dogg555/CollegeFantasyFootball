@@ -82,6 +82,29 @@ jobs:
             college-ff-api-signup \
             /srv/db/migrate.sh
 
+      - name: Install test-only rejected signup trigger
+        run: |
+          docker run --rm -i --network host \
+            -e PGPASSWORD=postgres \
+            postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE OR REPLACE FUNCTION reject_forced_signup()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            IF NEW.email LIKE 'forced-failure-%@example.test' THEN
+              RAISE EXCEPTION 'forced signup insert failure' USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+
+          DROP TRIGGER IF EXISTS trg_reject_forced_signup ON users;
+          CREATE TRIGGER trg_reject_forced_signup
+          BEFORE INSERT ON users
+          FOR EACH ROW
+          EXECUTE FUNCTION reject_forced_signup();
+          SQL
+
       - name: Generate ephemeral test values
         shell: bash
         run: |
