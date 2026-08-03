@@ -40,6 +40,7 @@ add_executable(college_ff_server
     src/handlers/league_handler.cpp
     src/league_models.cpp
     src/player_catalog.cpp
+    src/ingest_runtime.cpp
     src/cfbd_ingest.cpp
     src/live_scores.cpp
 )
@@ -57,6 +58,7 @@ target_include_directories(college_ff_server PRIVATE src)
 
 find_package(PostgreSQL REQUIRED)
 find_package(CURL REQUIRED)
+find_package(Threads REQUIRED)
 
 # Prefer CMake configs when available; fall back to pkg-config for pqxx and cpr.
 find_package(pqxx CONFIG QUIET)
@@ -79,6 +81,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 target_link_libraries(college_ff_server PRIVATE
     PostgreSQL::PostgreSQL
     CURL::libcurl
+    Threads::Threads
 )
 
 if (pqxx_FOUND)
@@ -143,4 +146,15 @@ if (BUILD_TESTING)
     )
     target_include_directories(auth_account_store_tests PRIVATE src)
     add_test(NAME auth_account_store_tests COMMAND auth_account_store_tests)
+
+    add_executable(ingest_runtime_tests
+        tests/ingest_runtime_tests.cpp
+        src/ingest_runtime.cpp
+    )
+    target_include_directories(ingest_runtime_tests PRIVATE src)
+    target_link_libraries(ingest_runtime_tests PRIVATE
+        Threads::Threads
+        nlohmann_json::nlohmann_json
+    )
+    add_test(NAME ingest_runtime_tests COMMAND ingest_runtime_tests)
 endif()

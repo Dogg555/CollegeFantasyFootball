@@ -1,0 +1,60 @@
+name: CFBD ingestion runtime contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/main.cpp"
+      - "backend/src/ingest_runtime.h"
+      - "backend/src/ingest_runtime.cpp"
+      - "backend/src/cfbd_ingest.h"
+      - "backend/tests/ingest_runtime_tests.cpp"
+      - "backend/tests/ingest_runtime_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/ingest-runtime-tests.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/main.cpp"
+      - "backend/src/ingest_runtime.h"
+      - "backend/src/ingest_runtime.cpp"
+      - "backend/src/cfbd_ingest.h"
+      - "backend/tests/ingest_runtime_tests.cpp"
+      - "backend/tests/ingest_runtime_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/ingest-runtime-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ingest-runtime-contracts:
+    name: Startup and scheduled ingestion contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ingestion contract dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nlohmann-json3-dev
+
+      - name: Compile ingestion runtime contracts
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -pthread \
+            -Ibackend/src \
+            backend/src/ingest_runtime.cpp \
+            backend/tests/ingest_runtime_tests.cpp \
+            -o /tmp/ingest_runtime_tests
+
+      - name: Run deterministic ingestion runtime contracts
+        run: /tmp/ingest_runtime_tests
+
+      - name: Verify ingestion runtime ownership boundary
+        run: python backend/tests/ingest_runtime_boundary_tests.py
