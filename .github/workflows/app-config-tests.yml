@@ -55,6 +55,10 @@ jobs:
               'routes.count("{drogon::Options}")',
               'routes.count("{{drogon::Options}}")',
           )
+          block = block.replace(
+              'contract = f\'"{{path}}", {{preflight_name}}, {{drogon::Options}}\'',
+              'contract = f\'"{{path}}", {{preflight_name}}, {{{{drogon::Options}}}}\'',
+          )
           path.write_text(text[:start] + block + text[end:], encoding="utf-8")
           PY
       - name: Apply exact league route transformation
