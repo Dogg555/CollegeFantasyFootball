@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   stability:
-    name: Settings, join codes, and player state
+    name: Settings, joins, team names, and player state
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -50,10 +50,13 @@ jobs:
           RENDER_GIT_BRANCH: ci
         run: |
           node --check frontend/league-beta-stability.js
+          node --check frontend/team-names.js
           python -m py_compile scripts/league_beta_stability_tests.py
           sh scripts/render-build-frontend.sh
           grep -F 'league-beta-stability.js?v=beta-stability-ci' frontend-dist/league.html
+          grep -F 'team-names.js?v=beta-stability-ci' frontend-dist/league.html
           grep -F 'league-beta-stability.js?v=beta-stability-ci' frontend-dist/players.html
+          grep -F 'team-names.js?v=beta-stability-ci' frontend-dist/players.html
           grep -F 'runtime-compat.js?v=beta-stability-ci' frontend-dist/league.html
 
       - name: Build production API image
@@ -81,7 +84,8 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in {1..45}; do
-            if curl -fsS http://127.0.0.1:8080/health | grep -q '"status" : "ok"'; then
+            if curl -fsS http://127.0.0.1:8080/health \
+              | python -c 'import json, sys; payload = json.load(sys.stdin); raise SystemExit(0 if payload.get("status") == "ok" else 1)'; then
               exit 0
             fi
             sleep 2

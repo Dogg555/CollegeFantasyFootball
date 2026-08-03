@@ -21,6 +21,7 @@ add_executable(college_ff_server
     src/security_hardening.cpp
     src/health_status.cpp
     src/league_beta_stability.cpp
+    src/team_name_handler.cpp
     src/json_utils.cpp
     src/handlers/league_handler.cpp
     src/league_models.cpp
@@ -31,7 +32,8 @@ add_executable(college_ff_server
 
 # Drogon 1.9.7's handler traits support free-function pointers but not the
 # function-reference type preserved by registerHandler's forwarding argument.
-# Apply the narrow compatibility specialization only to the new module.
+# Apply the narrow compatibility specialization only to the module that uses
+# named free-function registration directly.
 set_source_files_properties(
     src/league_beta_stability.cpp
     PROPERTIES COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/src/drogon_function_reference_compat.h"

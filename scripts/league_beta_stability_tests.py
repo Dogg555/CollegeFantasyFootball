@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Integration checks for league settings, join codes, and real player pools."""
+"""Integration checks for league settings, joins, team names, and real player pools."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -72,11 +73,26 @@ def canonical(value):
     return value
 
 
+def canonical_setting(field: str, value):
+    if field == "draftDate":
+        match = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})", str(value or ""))
+        return match.group(1) if match else ""
+    return canonical(value)
+
+
+def member_by_email(members, email: str):
+    return next((member for member in members if member.get("email") == email), None)
+
+
 def main():
     suffix = str(int(time.time() * 1000))
+    short_suffix = suffix[-6:]
     commissioner_email = f"beta-commissioner-{suffix}@example.com"
     invited_email = f"beta-invited-{suffix}@example.com"
     requester_email = f"beta-requester-{suffix}@example.com"
+    invited_team = f"Invited Owls {short_suffix}"
+    requester_team = f"Saturday Sharks {short_suffix}"
+    renamed_team = f"Sharks Reloaded {short_suffix}"
 
     commissioner_token = signup(commissioner_email)
     invited_token = signup(invited_email)
@@ -150,7 +166,7 @@ def main():
     )
     for field in fields:
         require(
-            canonical(saved.get(field)) == canonical(settings.get(field)),
+            canonical_setting(field, saved.get(field)) == canonical_setting(field, settings.get(field)),
             f"{field} did not persist: requested={settings.get(field)!r} saved={saved.get(field)!r}",
         )
     require(saved.get("invitedEmails") == [invited_email], f"invite emails were not canonicalized: {saved}")
@@ -160,7 +176,7 @@ def main():
     require(persisted, "saved league disappeared from the commissioner list")
     for field in fields:
         require(
-            canonical(persisted.get(field)) == canonical(saved.get(field)),
+            canonical_setting(field, persisted.get(field)) == canonical_setting(field, saved.get(field)),
             f"{field} changed after a fresh list read: saved={saved.get(field)!r} listed={persisted.get(field)!r}",
         )
 
@@ -179,6 +195,13 @@ def main():
         token=invited_token,
     )
     require(invited_join.get("id") == league_id, f"invited account was not activated: {invited_join}")
+    invited_name_result = request(
+        "PUT",
+        f"/api/leagues/{league_id}/team-name",
+        {"teamName": invited_team},
+        token=invited_token,
+    )
+    require(invited_name_result.get("teamName") == invited_team, f"invited manager could not choose a team name: {invited_name_result}")
 
     pending = request(
         "POST",
@@ -188,25 +211,74 @@ def main():
         expected=(202,),
     )
     require(pending.get("joinStatus") == "pending_approval", f"uninvited account did not create a request: {pending}")
+    pending_name_result = request(
+        "PUT",
+        f"/api/leagues/{league_id}/team-name",
+        {"teamName": requester_team},
+        token=requester_token,
+    )
+    require(
+        pending_name_result.get("status") == "Pending" and pending_name_result.get("teamName") == requester_team,
+        f"pending manager could not choose a team name: {pending_name_result}",
+    )
 
     members = request(
         "GET",
         f"/api/leagues/{league_id}/members",
         token=commissioner_token,
     )
-    requester = next((member for member in members if member.get("email") == requester_email), None)
-    require(requester and requester.get("status") == "Pending", f"pending request is missing: {members}")
+    requester = member_by_email(members, requester_email)
+    require(
+        requester and requester.get("status") == "Pending" and requester.get("teamName") == requester_team,
+        f"pending request or chosen team name is missing: {members}",
+    )
+
+    duplicate = request(
+        "PUT",
+        f"/api/leagues/{league_id}/team-name",
+        {"teamName": requester_team.lower()},
+        token=invited_token,
+        expected=(409,),
+    )
+    require(duplicate.get("code") == "TEAM_NAME_TAKEN", f"duplicate team name was not rejected: {duplicate}")
+
+    invalid = request(
+        "PUT",
+        f"/api/leagues/{league_id}/team-name",
+        {"teamName": "x"},
+        token=invited_token,
+        expected=(400,),
+    )
+    require(invalid.get("code") == "INVALID_TEAM_NAME", f"invalid team name was not rejected: {invalid}")
 
     request(
         "PUT",
         f"/api/leagues/{league_id}/members/{requester_email}",
-        {"role": "member", "status": "Active", "teamName": "Beta Requester"},
+        {"role": "member", "status": "Active", "teamName": requester_team},
         token=commissioner_token,
     )
     requester_leagues = request("GET", "/api/leagues", token=requester_token)
     require(
         any(league.get("id") == league_id for league in requester_leagues),
         "approved account cannot access the league",
+    )
+
+    renamed = request(
+        "PUT",
+        f"/api/leagues/{league_id}/team-name",
+        {"teamName": renamed_team},
+        token=requester_token,
+    )
+    require(renamed.get("teamName") == renamed_team, f"active manager could not rename their team: {renamed}")
+    refreshed_members = request(
+        "GET",
+        f"/api/leagues/{league_id}/members",
+        token=commissioner_token,
+    )
+    refreshed_requester = member_by_email(refreshed_members, requester_email)
+    require(
+        refreshed_requester and refreshed_requester.get("teamName") == renamed_team,
+        f"manager team name did not persist for the league: {refreshed_members}",
     )
 
     roster = request("GET", f"/api/leagues/{league_id}/roster", token=commissioner_token)
@@ -231,6 +303,11 @@ def main():
         "settingsVerified": list(fields),
         "invitedJoin": "active",
         "uninvitedJoin": "approved",
+        "teamNames": {
+            "invited": invited_team,
+            "requester": renamed_team,
+            "duplicatesRejected": True,
+        },
         "playerPoolCount": len(player_pool),
     }, indent=2))
 
