@@ -8,9 +8,12 @@ on:
       - "backend/src/app_config.cpp"
       - "backend/src/auth_core.h"
       - "backend/src/auth_core.cpp"
+      - "backend/src/auth_session_store.h"
+      - "backend/src/auth_session_store.cpp"
       - "backend/src/main.cpp"
       - "backend/tests/app_config_tests.cpp"
       - "backend/tests/auth_core_tests.cpp"
+      - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
       - ".github/workflows/app-config-tests.yml"
   pull_request:
@@ -20,9 +23,12 @@ on:
       - "backend/src/app_config.cpp"
       - "backend/src/auth_core.h"
       - "backend/src/auth_core.cpp"
+      - "backend/src/auth_session_store.h"
+      - "backend/src/auth_session_store.cpp"
       - "backend/src/main.cpp"
       - "backend/tests/app_config_tests.cpp"
       - "backend/tests/auth_core_tests.cpp"
+      - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
       - ".github/workflows/app-config-tests.yml"
   workflow_dispatch:
@@ -72,3 +78,29 @@ jobs:
 
       - name: Run authentication core tests
         run: /tmp/auth_core_tests
+
+  auth-session-contracts:
+    name: Authentication session persistence contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install crypt development library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcrypt-dev
+
+      - name: Compile authentication session tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -Ibackend/src \
+            backend/src/app_config.cpp \
+            backend/src/auth_core.cpp \
+            backend/src/auth_session_store.cpp \
+            backend/tests/auth_session_store_tests.cpp \
+            -lcrypt \
+            -o /tmp/auth_session_store_tests
+
+      - name: Run authentication session tests
+        run: /tmp/auth_session_store_tests
