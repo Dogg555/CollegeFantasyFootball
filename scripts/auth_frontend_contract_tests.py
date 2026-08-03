@@ -27,7 +27,7 @@ def main() -> int:
     require("X-CFF-Request-Id", "request correlation is not surfaced")
     require("accountMayExist", "enumeration-safe duplicate signup response is not handled")
     require("The account may already have been created", "ambiguous signup failures need recovery guidance")
-    require("Local preview sessions are disabled", "production network failures must not create sessions")
+    require("if (!allowLocalDemo)", "production network failures must not create local sessions")
     require("['localhost', '127.0.0.1', '::1']", "demo sessions must remain localhost-only")
 
     if "Account already exists" in AUTH:
