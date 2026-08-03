@@ -24,6 +24,7 @@
 #ifdef CFF_HAS_POSTGRES
 #include <postgresql/libpq-fe.h>
 #endif
+#include "auth_core.h"
 #include "app_config.h"
 #include "cfbd_ingest.h"
 #include "email_delivery.h"
@@ -35,6 +36,10 @@
 
 #ifdef DROGON_FOUND
 namespace {
+using cff::auth::canonicalEmail;
+using cff::auth::hashPassword;
+using cff::auth::randomToken;
+using cff::auth::verifyPassword;
 using cff::config::csvEmailSetFromEnv;
 using cff::config::emailVerificationRequired;
 using cff::config::exposeAuthTokens;
@@ -75,23 +80,6 @@ void startBackgroundCfbdIngest(int intervalHours) {
             logIngestResult("background ingest", cff::runCfbdIngestOnce());
         }
     }).detach();
-}
-
-std::string lowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return value;
-}
-
-std::string canonicalEmail(std::string value) {
-    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
-        return !std::isspace(ch);
-    }));
-    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
-        return !std::isspace(ch);
-    }).base(), value.end());
-    return lowerAscii(std::move(value));
 }
 
 std::string jsonToString(const Json::Value &value) {
@@ -503,86 +491,13 @@ bool authStorageUnavailable() {
 #endif
 }
 
-template <std::size_t N>
-bool fillFromUrandom(std::array<unsigned char, N> &bytes) {
-    std::ifstream urandom("/dev/urandom", std::ios::in | std::ios::binary);
-    if (!urandom.is_open()) {
-        return false;
-    }
-    urandom.read(reinterpret_cast<char*>(bytes.data()),
-                 static_cast<std::streamsize>(bytes.size()));
-    return urandom.gcount() == static_cast<std::streamsize>(bytes.size());
-}
-
-
-std::optional<std::string> hashPassword(const std::string &password) {
-    constexpr int kCost = 12;
-    constexpr std::size_t kSaltLen = 16;
-    std::array<unsigned char, kSaltLen> saltBytes{};
-    if (!fillFromUrandom(saltBytes)) {
-        std::random_device rd;
-        for (auto &byte : saltBytes) {
-            byte = static_cast<unsigned char>(rd());
-        }
-    }
-    char saltBuf[128];
-    if (!crypt_gensalt_rn("$2b$", kCost,
-                          reinterpret_cast<const char *>(saltBytes.data()),
-                          saltBytes.size(),
-                          saltBuf, sizeof(saltBuf))) {
-        return std::nullopt;
-    }
-    struct crypt_data data;
-    data.initialized = 0;
-    const char *hash = crypt_r(password.c_str(), saltBuf, &data);
-    if (!hash) {
-        return std::nullopt;
-    }
-    return std::string{hash};
-}
-
-bool verifyPassword(const std::string &password, const std::string &hash) {
-    struct crypt_data data;
-    data.initialized = 0;
-    const char *computed = crypt_r(password.c_str(), hash.c_str(), &data);
-    if (!computed) {
-        return false;
-    }
-    return hash == computed;
-}
-
 bool hasBearerToken(const drogon::HttpRequestPtr &req, std::string &outToken) {
-    const auto authHeader = req->getHeader("authorization");
-    if (authHeader.size() < 8) {
+    const auto token = cff::auth::bearerTokenFromHeader(req->getHeader("authorization"));
+    if (!token) {
         return false;
     }
-    constexpr std::string_view bearerPrefix = "Bearer ";
-    if (authHeader.rfind(bearerPrefix, 0) != 0) {
-        return false;
-    }
-    outToken = authHeader.substr(bearerPrefix.size());
+    outToken = *token;
     return true;
-}
-
-std::string randomToken() {
-    constexpr std::size_t kTokenBytes = 32; // 256 bits of entropy
-    std::array<unsigned char, kTokenBytes> bytes{};
-    if (!fillFromUrandom(bytes)) {
-        std::random_device rd;
-        for (auto &b : bytes) {
-            b = static_cast<unsigned char>(rd());
-        }
-    }
-
-    static constexpr char kHex[] = "0123456789abcdef";
-    std::string token;
-    token.reserve(6 + bytes.size() * 2);
-    token.append("token-");
-    for (auto byte : bytes) {
-        token.push_back(kHex[byte >> 4]);
-        token.push_back(kHex[byte & 0x0F]);
-    }
-    return token;
 }
 
 std::optional<std::string> issueTokenForUser(const std::string &email) {
@@ -712,23 +627,17 @@ std::string firstHeaderValue(std::string value) {
 }
 
 bool ensureCredentials(const Json::Value &body) {
-    constexpr std::size_t kMaxEmail = 254;
-    const std::size_t kMaxPassword = maxPasswordLength(); // bcrypt truncates longer passwords
-    const std::size_t kMinPassword = std::min(minPasswordLength(), kMaxPassword);
     if (!(body.isMember("email") && body["email"].isString()
           && body.isMember("password") && body["password"].isString())) {
         return false;
     }
 
-    const auto email = body["email"].asString();
-    const auto password = body["password"].asString();
-    if (email.empty() || email.size() > kMaxEmail) {
-        return false;
-    }
-    if (password.size() < kMinPassword || password.size() > kMaxPassword) {
-        return false;
-    }
-    return true;
+    const auto passwordMax = maxPasswordLength();
+    const auto passwordMin = std::min(minPasswordLength(), passwordMax);
+    return cff::auth::credentialsValid(body["email"].asString(),
+                                       body["password"].asString(),
+                                       passwordMin,
+                                       passwordMax);
 }
 
 void handleSignup(const drogon::HttpRequestPtr &req,
@@ -1175,7 +1084,7 @@ bool isAdminRequest(const drogon::HttpRequestPtr &req,
         return false;
     }
     const auto admins = csvEmailSetFromEnv("CFF_ADMIN_EMAILS");
-    if (!admins.empty() && admins.find(lowerAscii(*email)) != admins.end()) {
+    if (!admins.empty() && admins.find(canonicalEmail(*email)) != admins.end()) {
         adminIdentity = *email;
         return true;
     }
