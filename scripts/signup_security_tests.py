@@ -152,6 +152,22 @@ def main() -> int:
     require(missing_password.status == 400, "missing password should be rejected")
     require(missing_password.json().get("code") == "invalid_password", "missing password code missing")
 
+    timestamp = time.time_ns()
+
+    # A real database insert failure must not be disguised as an existing
+    # account. CI installs a test-only trigger for this address prefix.
+    failed_email = f"forced-failure-{timestamp}@example.test"
+    failed_insert = signup(failed_email, request_id="signup-security-forced-failure")
+    require(
+        failed_insert.status == 500,
+        f"forced insert failure returned {failed_insert.status}: {failed_insert.body!r}",
+    )
+    failed_json = failed_insert.json()
+    require(failed_json.get("code") == "account_creation_failed", "insert failure code missing")
+    require(failed_json.get("accountMayExist") is not True, "failed insert was disguised as a duplicate")
+    require("token" not in failed_json, "failed insert exposed a token")
+
+    email = f"signup-hardening-{timestamp}@example.test"
     email = "signup-hardening@example.test"
     created = signup(email, request_id="signup-security-created")
     created_json = assert_generic_signup_response(created)
@@ -175,6 +191,17 @@ def main() -> int:
     )
 
     duplicate = signup(email, request_id="signup-security-duplicate")
+    require(duplicate.status == 202, f"duplicate signup should be accepted generically, got {duplicate.status}")
+    duplicate_json = duplicate.json()
+    require(
+        duplicate_json.get("accountMayExist") is True,
+        f"generic duplicate marker missing: {duplicate_json!r}",
+    )
+    require(duplicate_json.get("valid") is False, "generic duplicate response must not create a session")
+    require("token" not in duplicate_json, "generic duplicate response exposed a token")
+    serialized_duplicate = json.dumps(duplicate_json).lower()
+    require("already exists" not in serialized_duplicate, "duplicate signup disclosed account existence")
+    require(email not in serialized_duplicate, "duplicate signup reflected the registered email")
     duplicate_json = assert_generic_signup_response(duplicate)
     require(duplicate_json == created_json, "new and duplicate signup bodies are distinguishable")
     require(
@@ -192,6 +219,11 @@ def main() -> int:
     require(throttled.json().get("code") == "rate_limited", "rate-limit code missing")
     require(int(throttled.headers.get("retry-after", "0")) > 0, "Retry-After header missing")
 
+    # Recovery endpoints intentionally use the same generic response whether
+    # an address exists or not. Verify the exact safe contract rather than
+    # rejecting the phrase "if the account exists", which is itself generic.
+    unknown = f"unknown-{timestamp}@example.test"
+    resend = request(
     # Recovery copy may safely say "if the account exists". The security
     # invariant is that known and unknown addresses receive the same status and
     # body, including when transactional email delivery is unavailable.
@@ -206,6 +238,16 @@ def main() -> int:
         method="POST",
         payload={"email": unknown},
     )
+    require(resend.status == 200, "unknown-account resend must return a generic success")
+    resend_json = resend.json()
+    require(resend_json.get("status") == "ok", "resend generic status missing")
+    require(
+        resend_json.get("message") ==
+        "If the account exists and needs verification, a verification email will be sent.",
+        f"unexpected resend response: {resend_json!r}",
+    )
+    require("emailVerificationToken" not in resend_json, "resend exposed a verification token")
+    require(unknown not in json.dumps(resend_json).lower(), "resend reflected the submitted email")
     assert_indistinguishable(known_resend, unknown_resend, "resend-verification response")
 
     known_reset = request(
@@ -218,6 +260,16 @@ def main() -> int:
         method="POST",
         payload={"email": unknown},
     )
+    require(reset.status == 200, "unknown-account reset request must return a generic success")
+    reset_json = reset.json()
+    require(reset_json.get("status") == "ok", "reset generic status missing")
+    require(
+        reset_json.get("message") ==
+        "If the account exists, a password reset email will be sent.",
+        f"unexpected reset response: {reset_json!r}",
+    )
+    require("passwordResetToken" not in reset_json, "reset response exposed a reset token")
+    require(unknown not in json.dumps(reset_json).lower(), "reset response reflected the submitted email")
     assert_indistinguishable(known_reset, unknown_reset, "password-reset request response")
 
     blocked_origin = request(

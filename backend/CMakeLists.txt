@@ -19,6 +19,7 @@ add_executable(college_ff_server
     src/email_delivery.cpp
     src/league_invite_email.cpp
     src/security_hardening.cpp
+    src/signup_response.cpp
     src/health_status.cpp
     src/league_beta_stability.cpp
     src/team_name_handler.cpp

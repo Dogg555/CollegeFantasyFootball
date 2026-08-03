@@ -6,6 +6,8 @@ on:
     paths:
       - "backend/CMakeLists.txt"
       - "backend/src/security_hardening.cpp"
+      - "backend/src/signup_response.cpp"
+      - "backend/db/account-admin.sh"
       - "frontend/auth.js"
       - "frontend/config.js"
       - "render.yaml"
@@ -18,6 +20,8 @@ on:
     paths:
       - "backend/CMakeLists.txt"
       - "backend/src/security_hardening.cpp"
+      - "backend/src/signup_response.cpp"
+      - "backend/db/account-admin.sh"
       - "frontend/auth.js"
       - "frontend/config.js"
       - "render.yaml"
@@ -36,7 +40,7 @@ concurrency:
 
 jobs:
   signup:
-    name: Frontend and verification-required signup
+    name: Signup, duplicate prevention, and account reset
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -60,9 +64,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Validate frontend request handling
+      - name: Validate frontend and account tooling
         run: |
           node --check frontend/auth.js
+          sh -n backend/db/account-admin.sh
           python scripts/auth_frontend_contract_tests.py
           python -m py_compile scripts/signup_security_tests.py
 
@@ -77,11 +82,43 @@ jobs:
             college-ff-api-signup \
             /srv/db/migrate.sh
 
-      - name: Generate ephemeral test secrets
+      - name: Install test-only rejected signup trigger
+        run: |
+          docker run --rm -i --network host \
+            -e PGPASSWORD=postgres \
+            postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE OR REPLACE FUNCTION reject_forced_signup()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            IF NEW.email LIKE 'forced-failure-%@example.test' THEN
+              RAISE EXCEPTION 'forced signup insert failure' USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+
+          DROP TRIGGER IF EXISTS trg_reject_forced_signup ON users;
+          CREATE TRIGGER trg_reject_forced_signup
+          BEFORE INSERT ON users
+          FOR EACH ROW
+          EXECUTE FUNCTION reject_forced_signup();
+          SQL
+
+      - name: Generate ephemeral test values
         shell: bash
         run: |
-          echo "CFF_TEST_JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "CFF_TEST_ADMIN_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          set -euo pipefail
+          jwt_secret="$(openssl rand -hex 32)"
+          admin_token="$(openssl rand -hex 32)"
+          account_password="$(openssl rand -base64 32 | tr -d '\n' | tr '/+' 'Aa')-A1!"
+          echo "::add-mask::$jwt_secret"
+          echo "::add-mask::$admin_token"
+          echo "::add-mask::$account_password"
+          echo "CFF_TEST_JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          echo "CFF_TEST_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
+          echo "CFF_ACCOUNT_RESET_PASSWORD=$account_password" >> "$GITHUB_ENV"
+          echo "CFF_ACCOUNT_RESET_EMAIL=account-reset-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.test" >> "$GITHUB_ENV"
 
       - name: Start verification-required API without email delivery
         run: |
@@ -127,12 +164,64 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Prove test account reset and re-registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          signup() {
+            local output_file="$1"
+            curl -sS -o "$output_file" -w '%{http_code}' \
+              -H 'Accept: application/json' \
+              -H 'Content-Type: application/json' \
+              -H 'Origin: https://frontend.example.test' \
+              --data "$(python -c 'import json, os; print(json.dumps({"email": os.environ["CFF_ACCOUNT_RESET_EMAIL"], "password": os.environ["CFF_ACCOUNT_RESET_PASSWORD"]}))')" \
+              http://127.0.0.1:8080/api/auth/signup
+          }
+
+          first_status="$(signup /tmp/account-reset-first.json)"
+          test "$first_status" = "201"
+
+          docker run --rm --network host \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            --entrypoint sh college-ff-api-signup \
+            /srv/db/account-admin.sh inspect --email "$CFF_ACCOUNT_RESET_EMAIL"
+
+          if docker run --rm --network host \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            --entrypoint sh college-ff-api-signup \
+            /srv/db/account-admin.sh delete --email "$CFF_ACCOUNT_RESET_EMAIL"; then
+            echo "Account deletion succeeded without exact confirmation" >&2
+            exit 1
+          fi
+
+          docker run --rm --network host \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            --entrypoint sh college-ff-api-signup \
+            /srv/db/account-admin.sh delete \
+              --email "$CFF_ACCOUNT_RESET_EMAIL" \
+              --confirm-email "$CFF_ACCOUNT_RESET_EMAIL"
+
+          remaining="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -tAc \
+            "SELECT COUNT(*) FROM users WHERE email = lower('$CFF_ACCOUNT_RESET_EMAIL')")"
+          test "$remaining" = "0"
+
+          second_status="$(signup /tmp/account-reset-second.json)"
+          test "$second_status" = "201"
+
+          duplicate_rows="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -tAc \
+            "SELECT COUNT(*) FROM users WHERE email = lower('$CFF_ACCOUNT_RESET_EMAIL')")"
+          test "$duplicate_rows" = "1"
+
       - name: Verify account and recovery tokens are hashed
         run: |
           raw_recovery="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 psql -h 127.0.0.1 -U postgres -d cff -tAc "SELECT COUNT(*) FROM users WHERE email_verification_token LIKE 'token-%' OR password_reset_token LIKE 'token-%'")"
           raw_sessions="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 psql -h 127.0.0.1 -U postgres -d cff -tAc "SELECT COUNT(*) FROM auth_tokens WHERE token LIKE 'token-%'")"
+          duplicate_accounts="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 psql -h 127.0.0.1 -U postgres -d cff -tAc "SELECT COUNT(*) FROM (SELECT lower(email) FROM users GROUP BY lower(email) HAVING COUNT(*) > 1) duplicates")"
           test "$raw_recovery" = "0"
           test "$raw_sessions" = "0"
+          test "$duplicate_accounts" = "0"
 
       - name: Backend logs
         if: always()
