@@ -1,0 +1,119 @@
+name: Signup hardening
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/src/security_hardening.cpp"
+      - "frontend/auth.js"
+      - "frontend/config.js"
+      - "render.yaml"
+      - ".env.example"
+      - "scripts/signup_security_tests.py"
+      - "scripts/auth_frontend_contract_tests.py"
+      - ".github/workflows/signup-hardening.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/src/security_hardening.cpp"
+      - "frontend/auth.js"
+      - "frontend/config.js"
+      - "render.yaml"
+      - ".env.example"
+      - "scripts/signup_security_tests.py"
+      - "scripts/auth_frontend_contract_tests.py"
+      - ".github/workflows/signup-hardening.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signup-hardening-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signup:
+    name: Frontend and verification-required signup
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate frontend request handling
+        run: |
+          node --check frontend/auth.js
+          python scripts/auth_frontend_contract_tests.py
+          python -m py_compile scripts/signup_security_tests.py
+
+      - name: Build production API image
+        run: docker build -f backend/Dockerfile -t college-ff-api-signup .
+
+      - name: Apply production migrations
+        run: |
+          docker run --rm --network host \
+            --entrypoint sh \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            college-ff-api-signup \
+            /srv/db/migrate.sh
+
+      - name: Start verification-required API without email delivery
+        run: |
+          docker run -d --name college-ff-api-signup --network host \
+            -e PORT=8080 \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            -e JWT_SECRET=ci-signup-jwt-secret-2026-at-least-32-characters \
+            -e ALLOWED_ORIGINS=https://frontend.example.test \
+            -e CFF_ADMIN_API_TOKEN=ci-signup-admin-token-2026-at-least-32-characters \
+            -e CFF_REQUIRE_DB=true \
+            -e CFF_RUN_MIGRATIONS_ON_STARTUP=false \
+            -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION=true \
+            -e CFF_EXPOSE_AUTH_TOKENS=false \
+            -e CFF_LOG_AUTH_TOKENS=false \
+            -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
+            -e CFF_TRUST_PROXY_HEADERS=false \
+            -e CFF_MIN_PASSWORD_LENGTH=12 \
+            -e CFF_MAX_REQUEST_BODY_BYTES=262144 \
+            -e CFF_AUTH_REQUEST_BODY_BYTES=8192 \
+            -e CFF_AUTH_BURST_CLIENT_LIMIT=240 \
+            -e CFF_AUTH_BURST_WINDOW_SECONDS=60 \
+            -e CFF_SIGNUP_CLIENT_LIMIT=120 \
+            -e CFF_SIGNUP_ACCOUNT_LIMIT=5 \
+            -e CFF_SIGNUP_RATE_WINDOW_MINUTES=60 \
+            college-ff-api-signup
+
+      - name: Run signup reliability and security tests
+        env:
+          CFF_API_BASE_URL: http://127.0.0.1:8080
+          CFF_SECURITY_TEST_ORIGIN: https://frontend.example.test
+        run: python scripts/signup_security_tests.py
+
+      - name: Verify account and recovery tokens are hashed
+        run: |
+          raw_recovery="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 psql -h 127.0.0.1 -U postgres -d cff -tAc "SELECT COUNT(*) FROM users WHERE email_verification_token LIKE 'token-%' OR password_reset_token LIKE 'token-%'")"
+          raw_sessions="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 psql -h 127.0.0.1 -U postgres -d cff -tAc "SELECT COUNT(*) FROM auth_tokens WHERE token LIKE 'token-%'")"
+          test "$raw_recovery" = "0"
+          test "$raw_sessions" = "0"
+
+      - name: Backend logs
+        if: always()
+        run: docker logs college-ff-api-signup || true
