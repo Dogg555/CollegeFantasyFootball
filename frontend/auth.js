@@ -1,6 +1,8 @@
 const apiBase = window.CFF_API_BASE || '/api';
 const allowLocalDemo = window.CFF_ALLOW_LOCAL_DEMO === true
   && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+const AUTH_REQUEST_TIMEOUT_MS = 15000;
+const AUTH_STATUS_TIMEOUT_MS = 8000;
 
 const signupForm = document.getElementById('signup-form');
 const signupEmail = document.getElementById('signup-email');
@@ -40,12 +42,107 @@ function setStatus(el, message, isError = false) {
   el.style.color = isError ? '#ffb3b3' : 'var(--muted)';
 }
 
+function canonicalEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 function authHealthUrl() {
   return `${apiBase.replace(/\/api\/?$/, '')}/api/health`;
 }
 
 function authStatusUrl() {
   return `${apiBase}/auth/status`;
+}
+
+function requestReference(error) {
+  const value = String(error?.requestId || '').trim();
+  return value ? ` Reference: ${value}.` : '';
+}
+
+function retryAfterMessage(value) {
+  const seconds = Number.parseInt(value, 10);
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'Try again later.';
+  if (seconds < 60) return `Try again in about ${seconds} seconds.`;
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `Try again in about ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+  const hours = Math.ceil(minutes / 60);
+  return `Try again in about ${hours} hour${hours === 1 ? '' : 's'}.`;
+}
+
+function describeRequestError(error, fallback = 'The request could not be completed.') {
+  const reference = requestReference(error);
+  if (error?.status === 429) {
+    return `Too many attempts. ${retryAfterMessage(error.retryAfter)}${reference}`;
+  }
+  if (error?.status === 503 || error?.unavailable) {
+    return `The authentication service is temporarily unavailable. No local account or session was created.${reference}`;
+  }
+  if (error?.timedOut) {
+    return `The request timed out. Check your connection before trying again.${reference}`;
+  }
+  return `${error?.data?.error || error?.message || fallback}${reference}`;
+}
+
+function beginFormSubmission(form, busyLabel) {
+  if (!form || form.dataset.submitting === 'true') return null;
+  form.dataset.submitting = 'true';
+  form.setAttribute('aria-busy', 'true');
+  const button = form.querySelector('button[type="submit"]');
+  const originalLabel = button?.textContent || '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = busyLabel;
+  }
+  return () => {
+    delete form.dataset.submitting;
+    form.removeAttribute('aria-busy');
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
+  };
+}
+
+async function fetchJson(url, options = {}, timeoutMs = AUTH_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      cache: 'no-store',
+      credentials: 'omit',
+      headers: {
+        Accept: 'application/json',
+        ...(options.headers || {})
+      },
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data?.error || `Request failed with ${response.status}`);
+      error.status = response.status;
+      error.data = data;
+      error.retryAfter = response.headers.get('Retry-After') || '';
+      error.requestId = response.headers.get('X-CFF-Request-Id') || '';
+      error.unavailable = response.status === 503;
+      throw error;
+    }
+    return {
+      data,
+      requestId: response.headers.get('X-CFF-Request-Id') || ''
+    };
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error('Request timed out');
+      timeoutError.timedOut = true;
+      timeoutError.unavailable = true;
+      throw timeoutError;
+    }
+    if (!error?.status) error.unavailable = true;
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 function describeAuthReadiness(payload = {}) {
@@ -74,26 +171,20 @@ function applyPasswordPolicy(policy = {}) {
 
 async function checkAuthApiStatus() {
   if (!authApiStatus) return;
-  setStatus(authApiStatus, `Auth API: checking ${apiBase}`);
+  setStatus(authApiStatus, 'Checking authentication service...');
   try {
-    const response = await fetch(authStatusUrl(), { headers: { Accept: 'application/json' } });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      setStatus(authApiStatus, `Auth API: ${response.status} from ${apiBase}`, true);
-      return;
-    }
+    const { data: payload } = await fetchJson(authStatusUrl(), {}, AUTH_STATUS_TIMEOUT_MS);
     authReadiness = payload;
     applyPasswordPolicy(payload.passwordPolicy);
     const degraded = payload.ready === false || payload.status === 'degraded';
     setStatus(authApiStatus, degraded ? (payload.message || describeAuthReadiness(payload)) : describeAuthReadiness(payload), degraded);
   } catch {
     try {
-      const response = await fetch(authHealthUrl(), { headers: { Accept: 'application/json' } });
-      const payload = await response.json().catch(() => ({}));
+      const { data: payload } = await fetchJson(authHealthUrl(), {}, AUTH_STATUS_TIMEOUT_MS);
       const database = payload.database ? ` / database: ${payload.database}` : '';
-      setStatus(authApiStatus, `API: ${payload.status || 'ok'}${database}. Auth status endpoint unavailable.`, !response.ok);
+      setStatus(authApiStatus, `API: ${payload.status || 'ok'}${database}. Authentication status is temporarily unavailable.`);
     } catch {
-      setStatus(authApiStatus, `API unreachable at ${apiBase}. Check frontend CFF_API_BASE and backend ALLOWED_ORIGINS.`, true);
+      setStatus(authApiStatus, 'Authentication service is currently unreachable. Please try again later.', true);
     }
   }
 }
@@ -121,9 +212,7 @@ function updateAuthUi() {
       ? `Signed in as ${storedAuth.email}.`
       : 'Not signed in yet.';
   }
-  if (signOutBtn) {
-    signOutBtn.hidden = !storedAuth;
-  }
+  if (signOutBtn) signOutBtn.hidden = !storedAuth;
 }
 
 function createLocalSession(email) {
@@ -137,76 +226,97 @@ function createLocalSession(email) {
 async function postJson(path, body, token = '') {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const resp = await fetch(`${apiBase}${path}`, {
+  const { data } = await fetchJson(`${apiBase}${path}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body || {})
   });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const error = new Error(data?.error || `Request failed with ${resp.status}`);
-    error.status = resp.status;
-    error.data = data;
-    throw error;
-  }
   return data;
 }
 
-async function submitAuthForm(path, email, password, statusEl, redirectTo) {
-  setStatus(statusEl, 'Working...');
-  if (authReadiness?.signupEnabled === false && path === '/auth/signup') {
-    setStatus(statusEl, authReadiness.message || 'Signup is temporarily unavailable because authentication storage is not ready.', true);
-    return;
-  }
-  if (authReadiness?.loginEnabled === false && path === '/auth/login') {
-    setStatus(statusEl, authReadiness.message || 'Login is temporarily unavailable because authentication storage is not ready.', true);
-    return;
-  }
-  let authenticated = false;
+function redirectToVerification(email, delivered) {
+  const targetPage = delivered ? 'verify-email.html' : 'resend-verification.html';
+  const next = new URL(targetPage, window.location.href);
+  next.searchParams.set('email', email);
+  window.setTimeout(() => {
+    window.location.href = next.pathname + next.search;
+  }, 1100);
+}
+
+async function submitAuthForm(path, rawEmail, password, statusEl, redirectTo, form) {
+  const finish = beginFormSubmission(form, path === '/auth/signup' ? 'Creating account...' : 'Signing in...');
+  if (!finish) return;
+  const email = canonicalEmail(rawEmail);
+  setStatus(statusEl, path === '/auth/signup' ? 'Creating account...' : 'Signing in...');
   try {
-    const data = await postJson(path, { email, password });
-    if (data.token) {
-      saveAuth(data.email || email, data.token);
-      authenticated = true;
-    }
-    const verifyRequired = data.emailVerificationRequired && !data.emailVerified;
-    const verificationDelivered = data.emailSent === true;
-    const verifyCopy = verifyRequired
-      ? verificationDelivered
-        ? ' Check your email to verify before signing in.'
-        : ' Your account was created, but the verification email could not be delivered. Fix the email provider and then request a new verification email.'
-      : '';
-    setStatus(statusEl, `${data.message || 'Success'}${verifyCopy}`, verifyRequired && !verificationDelivered);
-    if (verifyRequired && !authenticated) {
-      const targetPage = verificationDelivered ? 'verify-email.html' : 'resend-verification.html';
-      const next = new URL(targetPage, window.location.href);
-      next.searchParams.set('email', email);
-      setTimeout(() => { window.location.href = next.pathname + next.search; }, 1000);
+    if (authReadiness?.signupEnabled === false && path === '/auth/signup') {
+      setStatus(statusEl, authReadiness.message || 'Signup is temporarily unavailable because authentication storage is not ready.', true);
       return;
     }
-  } catch (error) {
-    if (error.status) {
-      const message = error.data?.error || error.message;
-      const verifyHint = error.status === 403 && /verification/i.test(message)
-        ? ' Use the verification link from your email or request a new one.'
-        : '';
-      const existingAccountHint = path === '/auth/signup' && error.status === 409 && /account already exists/i.test(message)
-        ? ' A previous signup may already have created this unverified account. Use Resend verification instead of signing up again.'
-        : '';
-      setStatus(statusEl, `${message}${verifyHint}${existingAccountHint}`, true);
+    if (authReadiness?.loginEnabled === false && path === '/auth/login') {
+      setStatus(statusEl, authReadiness.message || 'Login is temporarily unavailable because authentication storage is not ready.', true);
       return;
     }
-    if (!allowLocalDemo) {
-      setStatus(statusEl, 'API unavailable. Local preview sessions are disabled for this deployment.', true);
-      return;
+
+    let authenticated = false;
+    try {
+      const data = await postJson(path, { email, password });
+      if (data.token) {
+        saveAuth(data.email || email, data.token);
+        authenticated = true;
+      }
+
+      if (path === '/auth/signup' && data.accountMayExist === true) {
+        setStatus(statusEl, data.message || 'Request accepted. Check your email, use Resend verification, or sign in if you already registered.');
+        redirectToVerification(email, false);
+        return;
+      }
+
+      const verifyRequired = data.emailVerificationRequired && !data.emailVerified;
+      const verificationDelivered = data.emailSent === true;
+      if (verifyRequired && !authenticated) {
+        const message = verificationDelivered
+          ? 'Account created. Check your email to verify it before signing in.'
+          : 'Account created, but the verification email was not delivered. Use Resend verification to request another message.';
+        setStatus(statusEl, message);
+        redirectToVerification(email, verificationDelivered);
+        return;
+      }
+
+      setStatus(statusEl, data.message || 'Success');
+      if (authenticated && redirectTo) {
+        window.location.href = pendingInvite
+          ? `${redirectTo}?invite=${encodeURIComponent(pendingInvite)}`
+          : redirectTo;
+      }
+    } catch (error) {
+      if (path === '/auth/signup' && error.status === 409) {
+        setStatus(statusEl, 'Request accepted. Check your email, use Resend verification, or sign in if you already registered.');
+        redirectToVerification(email, false);
+        return;
+      }
+      if (path === '/auth/signup' && (error.timedOut || (!error.status && error.unavailable))) {
+        setStatus(statusEl, `The signup request could not be confirmed. The account may already have been created; use Resend verification or sign in before retrying.${requestReference(error)}`, true);
+        return;
+      }
+      if (error.status) {
+        const verifyHint = error.status === 403 && /verification/i.test(error.data?.error || error.message)
+          ? ' Use the verification link from your email or request a new one.'
+          : '';
+        setStatus(statusEl, `${describeRequestError(error)}${verifyHint}`, true);
+        return;
+      }
+      if (!allowLocalDemo) {
+        setStatus(statusEl, describeRequestError(error, 'Authentication service unavailable.'), true);
+        return;
+      }
+      const local = createLocalSession(email);
+      saveAuth(local.email, local.token);
+      setStatus(statusEl, local.message);
+      if (redirectTo) window.location.href = redirectTo;
     }
-    const local = createLocalSession(email);
-    saveAuth(local.email, local.token);
-    authenticated = true;
-    setStatus(statusEl, local.message);
-  }
-  if (authenticated && redirectTo) {
-    window.location.href = pendingInvite ? `${redirectTo}?invite=${encodeURIComponent(pendingInvite)}` : redirectTo;
+  } finally {
+    finish();
   }
 }
 
@@ -218,22 +328,26 @@ function stripUrlParams() {
 
 signupForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
-  await submitAuthForm('/auth/signup', signupEmail.value.trim(), signupPassword.value, signupStatus, pendingInvite ? 'league.html' : 'signin.html');
+  await submitAuthForm('/auth/signup', signupEmail.value, signupPassword.value, signupStatus, pendingInvite ? 'league.html' : 'signin.html', signupForm);
 });
 
 loginForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
-  await submitAuthForm('/auth/login', loginEmail.value.trim(), loginPassword.value, loginStatus, 'league.html');
+  await submitAuthForm('/auth/login', loginEmail.value, loginPassword.value, loginStatus, 'league.html', loginForm);
 });
 
 verifyForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  const finish = beginFormSubmission(verifyForm, 'Verifying...');
+  if (!finish) return;
   setStatus(verifyStatus, 'Verifying...');
   try {
     const data = await postJson('/auth/verify-email', { token: verifyToken.value.trim() });
     setStatus(verifyStatus, data.message || 'Email verified. You can sign in now.');
   } catch (error) {
-    setStatus(verifyStatus, error.data?.error || error.message || 'Could not verify email.', true);
+    setStatus(verifyStatus, describeRequestError(error, 'Could not verify email.'), true);
+  } finally {
+    finish();
   }
 });
 
@@ -243,13 +357,16 @@ resendForm?.addEventListener('submit', async (event) => {
     setStatus(resendStatus, 'Verification email cannot be resent until transactional email is configured.', true);
     return;
   }
+  const finish = beginFormSubmission(resendForm, 'Sending...');
+  if (!finish) return;
   setStatus(resendStatus, 'Sending...');
   try {
-    const email = resendEmail.value.trim();
-    const data = await postJson('/auth/resend-verification', { email });
-    setStatus(resendStatus, data.message || 'Verification email queued.');
+    const data = await postJson('/auth/resend-verification', { email: canonicalEmail(resendEmail.value) });
+    setStatus(resendStatus, data.message || 'If the account needs verification, an email will be sent.');
   } catch (error) {
-    setStatus(resendStatus, error.data?.error || error.message || 'Could not resend verification.', true);
+    setStatus(resendStatus, describeRequestError(error, 'Could not resend verification.'), true);
+  } finally {
+    finish();
   }
 });
 
@@ -259,22 +376,28 @@ resetRequestForm?.addEventListener('submit', async (event) => {
     setStatus(resetRequestStatus, 'Password reset email cannot be sent until transactional email is configured.', true);
     return;
   }
+  const finish = beginFormSubmission(resetRequestForm, 'Sending...');
+  if (!finish) return;
   setStatus(resetRequestStatus, 'Sending...');
   try {
-    const data = await postJson('/auth/request-password-reset', { email: resetEmail.value.trim() });
+    const data = await postJson('/auth/request-password-reset', { email: canonicalEmail(resetEmail.value) });
     setStatus(resetRequestStatus, data.message || 'If the account exists, a reset email will be sent.');
     if (data.passwordResetToken) {
       const next = new URL('reset-password.html', window.location.href);
       next.searchParams.set('token', data.passwordResetToken);
-      setTimeout(() => { window.location.href = next.pathname + next.search; }, 600);
+      window.setTimeout(() => { window.location.href = next.pathname + next.search; }, 600);
     }
   } catch (error) {
-    setStatus(resetRequestStatus, error.data?.error || error.message || 'Could not request password reset.', true);
+    setStatus(resetRequestStatus, describeRequestError(error, 'Could not request password reset.'), true);
+  } finally {
+    finish();
   }
 });
 
 resetCompleteForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  const finish = beginFormSubmission(resetCompleteForm, 'Resetting...');
+  if (!finish) return;
   setStatus(resetCompleteStatus, 'Resetting...');
   try {
     const data = await postJson('/auth/reset-password', {
@@ -283,9 +406,11 @@ resetCompleteForm?.addEventListener('submit', async (event) => {
     });
     setStatus(resetCompleteStatus, data.message || 'Password reset. Sign in with your new password.');
     resetPassword.value = '';
-    setTimeout(() => { window.location.href = 'signin.html'; }, 800);
+    window.setTimeout(() => { window.location.href = 'signin.html'; }, 800);
   } catch (error) {
-    setStatus(resetCompleteStatus, error.data?.error || error.message || 'Could not reset password.', true);
+    setStatus(resetCompleteStatus, describeRequestError(error, 'Could not reset password.'), true);
+  } finally {
+    finish();
   }
 });
 
@@ -305,11 +430,11 @@ signOutBtn?.addEventListener('click', async () => {
 async function initAuthPage() {
   if (verifyToken && verificationTokenParam) verifyToken.value = verificationTokenParam;
   if (resetToken && resetTokenParam) resetToken.value = resetTokenParam;
-  const emailParam = urlParams.get('email') || '';
+  const emailParam = canonicalEmail(urlParams.get('email') || '');
   if (resendEmail && emailParam) resendEmail.value = emailParam;
   if (resetEmail && emailParam) resetEmail.value = emailParam;
   if (loginEmail && emailParam) loginEmail.value = emailParam;
-  if (resendEmail && signupEmail?.value) resendEmail.value = signupEmail.value;
+  if (resendEmail && signupEmail?.value) resendEmail.value = canonicalEmail(signupEmail.value);
   loadStoredAuth();
   updateAuthUi();
   await validateAuthSession();
