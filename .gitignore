@@ -47,6 +47,7 @@ ENV/
 .coverage
 htmlcov/
 .pytest_cache/
+simulation-artifacts/
 
 ############################################
 # Node / Frontend
