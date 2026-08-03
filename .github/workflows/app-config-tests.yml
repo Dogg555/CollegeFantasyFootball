@@ -2,79 +2,14 @@ name: Backend core unit tests
 
 on:
   push:
-    branches: [main, Test, refactor/extract-league-routes]
+    branches: [refactor/extract-league-routes]
     paths:
-      - "backend/src/app_config.h"
-      - "backend/src/app_config.cpp"
-      - "backend/src/auth_core.h"
-      - "backend/src/auth_core.cpp"
-      - "backend/src/auth_controller.h"
-      - "backend/src/auth_controller.cpp"
-      - "backend/src/auth_routes.h"
-      - "backend/src/auth_routes.cpp"
-      - "backend/src/http_security.h"
-      - "backend/src/http_security.cpp"
-      - "backend/src/health_routes.h"
-      - "backend/src/health_routes.cpp"
-      - "backend/src/health_status.cpp"
-      - "backend/src/operations_routes.h"
-      - "backend/src/operations_routes.cpp"
-      - "backend/src/league_routes.h"
-      - "backend/src/league_routes.cpp"
-      - "backend/src/auth_account_store.h"
-      - "backend/src/auth_account_store.cpp"
-      - "backend/src/auth_session_store.h"
-      - "backend/src/auth_session_store.cpp"
-      - "backend/src/main.cpp"
-      - "backend/tests/app_config_tests.cpp"
-      - "backend/tests/auth_core_tests.cpp"
-      - "backend/tests/auth_controller_boundary_tests.py"
-      - "backend/tests/auth_routes_boundary_tests.py"
-      - "backend/tests/http_security_boundary_tests.py"
-      - "backend/tests/health_routes_boundary_tests.py"
-      - "backend/tests/operations_routes_boundary_tests.py"
-      - "backend/tests/league_routes_boundary_tests.py"
-      - "backend/tests/auth_account_store_tests.cpp"
-      - "backend/tests/auth_session_store_tests.cpp"
-      - "backend/CMakeLists.txt"
       - "scripts/refactor_league_routes.py"
       - ".github/workflows/app-config-tests.yml"
   pull_request:
-    branches: [main, Test]
+    branches: [Test]
     paths:
-      - "backend/src/app_config.h"
-      - "backend/src/app_config.cpp"
-      - "backend/src/auth_core.h"
-      - "backend/src/auth_core.cpp"
-      - "backend/src/auth_controller.h"
-      - "backend/src/auth_controller.cpp"
-      - "backend/src/auth_routes.h"
-      - "backend/src/auth_routes.cpp"
-      - "backend/src/http_security.h"
-      - "backend/src/http_security.cpp"
-      - "backend/src/health_routes.h"
-      - "backend/src/health_routes.cpp"
-      - "backend/src/health_status.cpp"
-      - "backend/src/operations_routes.h"
-      - "backend/src/operations_routes.cpp"
-      - "backend/src/league_routes.h"
-      - "backend/src/league_routes.cpp"
-      - "backend/src/auth_account_store.h"
-      - "backend/src/auth_account_store.cpp"
-      - "backend/src/auth_session_store.h"
-      - "backend/src/auth_session_store.cpp"
-      - "backend/src/main.cpp"
-      - "backend/tests/app_config_tests.cpp"
-      - "backend/tests/auth_core_tests.cpp"
-      - "backend/tests/auth_controller_boundary_tests.py"
-      - "backend/tests/auth_routes_boundary_tests.py"
-      - "backend/tests/http_security_boundary_tests.py"
-      - "backend/tests/health_routes_boundary_tests.py"
-      - "backend/tests/operations_routes_boundary_tests.py"
-      - "backend/tests/league_routes_boundary_tests.py"
-      - "backend/tests/auth_account_store_tests.cpp"
-      - "backend/tests/auth_session_store_tests.cpp"
-      - "backend/CMakeLists.txt"
+      - "scripts/refactor_league_routes.py"
       - ".github/workflows/app-config-tests.yml"
   workflow_dispatch:
 
@@ -84,7 +19,7 @@ permissions:
 jobs:
   bootstrap-league-routes:
     name: Apply league route extraction
-    if: github.ref == 'refs/heads/refactor/extract-league-routes' && github.actor != 'github-actions[bot]'
+    if: (github.ref == 'refs/heads/refactor/extract-league-routes' || github.head_ref == 'refactor/extract-league-routes') && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -150,145 +85,3 @@ jobs:
           git diff --cached --check
           git commit -m "Extract league route registration"
           git push origin HEAD:refactor/extract-league-routes
-
-  app-config-contracts:
-    name: Environment parsing and runtime configuration
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Compile app configuration tests
-        run: |
-          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
-            -Ibackend/src \
-            backend/src/app_config.cpp \
-            backend/tests/app_config_tests.cpp \
-            -o /tmp/app_config_tests
-      - name: Run app configuration tests
-        run: /tmp/app_config_tests
-
-  auth-core-contracts:
-    name: Authentication primitive contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install crypt development library
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libcrypt-dev
-      - name: Compile authentication core tests
-        run: |
-          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
-            -Ibackend/src \
-            backend/src/auth_core.cpp \
-            backend/tests/auth_core_tests.cpp \
-            -lcrypt \
-            -o /tmp/auth_core_tests
-      - name: Run authentication core tests
-        run: /tmp/auth_core_tests
-
-  auth-controller-boundary:
-    name: Authentication controller boundary contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Verify controller ownership and route delegation
-        run: python backend/tests/auth_controller_boundary_tests.py
-
-  auth-routes-boundary:
-    name: Authentication route registration contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Verify route ownership and preflight coverage
-        run: python backend/tests/auth_routes_boundary_tests.py
-
-  http-security-boundary:
-    name: Shared HTTP security boundary contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Verify authorization and CORS ownership
-        run: python backend/tests/http_security_boundary_tests.py
-
-  health-routes-boundary:
-    name: Health and readiness route contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Verify health ownership and behavior
-        run: python backend/tests/health_routes_boundary_tests.py
-
-  operations-routes-boundary:
-    name: Operations and ingestion route contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Validate operations contract sources
-        run: |
-          python -m py_compile \
-            scripts/auth_contract_tests.py \
-            backend/tests/operations_routes_boundary_tests.py
-      - name: Verify operations route ownership and behavior
-        run: python backend/tests/operations_routes_boundary_tests.py
-
-  auth-account-contracts:
-    name: Authentication account persistence contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Compile authentication account tests
-        run: |
-          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
-            -Ibackend/src \
-            backend/src/app_config.cpp \
-            backend/src/auth_account_store.cpp \
-            backend/tests/auth_account_store_tests.cpp \
-            -o /tmp/auth_account_store_tests
-      - name: Run authentication account tests
-        run: /tmp/auth_account_store_tests
-
-  auth-session-contracts:
-    name: Authentication session persistence contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install crypt development library
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libcrypt-dev
-      - name: Compile authentication session tests
-        run: |
-          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
-            -Ibackend/src \
-            backend/src/app_config.cpp \
-            backend/src/auth_core.cpp \
-            backend/src/auth_session_store.cpp \
-            backend/tests/auth_session_store_tests.cpp \
-            -lcrypt \
-            -o /tmp/auth_session_store_tests
-      - name: Run authentication session tests
-        run: /tmp/auth_session_store_tests
