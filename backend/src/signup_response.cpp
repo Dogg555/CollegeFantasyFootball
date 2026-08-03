@@ -8,7 +8,6 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace {
 
@@ -90,10 +89,19 @@ AccountPresence accountPresence(const std::string &email) {
 void replaceJson(const drogon::HttpResponsePtr &response,
                  const Json::Value &payload,
                  drogon::HttpStatusCode status) {
-    Json::StreamWriterBuilder writer;
-    writer["indentation"] = "";
+    // newHttpJsonResponse retains a Json::Value and serializes it immediately
+    // before transmission. Updating only setBody() is therefore overwritten by
+    // the retained value. Mutate that value directly so Drogon generates the
+    // intended response and calculates the correct content length.
+    const auto jsonObject = response->getJsonObject();
+    if (jsonObject) {
+        *jsonObject = payload;
+    } else {
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+        response->setBody(Json::writeString(writer, payload));
+    }
     response->removeHeader("Content-Length");
-    response->setBody(Json::writeString(writer, payload));
     response->setContentTypeCode(drogon::CT_APPLICATION_JSON);
     response->setStatusCode(status);
     response->addHeader("Cache-Control", "no-store");
@@ -140,9 +148,6 @@ void normalizeDuplicateSignup(const drogon::HttpRequestPtr &request,
 
 struct SignupResponseInstaller {
     SignupResponseInstaller() {
-        // Post-handling advice runs before pre-sending advice. Replacing the
-        // body here ensures Drogon recalculates serialization metadata rather
-        // than sending a 202 status with the original 409 JSON body.
         drogon::app().registerPostHandlingAdvice(normalizeDuplicateSignup);
     }
 };
