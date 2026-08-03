@@ -5,6 +5,7 @@ root = Path(__file__).resolve().parents[2]
 main = (root / "backend/src/main.cpp").read_text(encoding="utf-8")
 routes = (root / "backend/src/auth_routes.cpp").read_text(encoding="utf-8")
 header = (root / "backend/src/auth_routes.h").read_text(encoding="utf-8")
+security = (root / "backend/src/http_security.cpp").read_text(encoding="utf-8")
 cmake = (root / "backend/CMakeLists.txt").read_text(encoding="utf-8")
 
 route_paths = (
@@ -39,17 +40,28 @@ required_route_contracts = (
     'payload["signupEnabled"] = dbReady',
     'payload["loginEnabled"] = dbReady',
     'payload["emailFlowsEnabled"] = emailDeliveryReady()',
-    'resp->setStatusCode(drogon::k204NoContent)',
-    'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type")',
-    'resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")',
+    'cff::http::bearerToken(req)',
+    'cff::http::isAuthorized(req, jwtSecret)',
+    'cff::http::buildPreflightResponse(req, allowedOrigins)',
 )
 for contract in required_route_contracts:
     if contract not in routes:
         raise SystemExit(f"auth route contract missing: {contract}")
 
+shared_preflight_contracts = (
+    'resp->setStatusCode(drogon::k204NoContent)',
+    'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type")',
+    'resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")',
+)
+for contract in shared_preflight_contracts:
+    if contract not in security:
+        raise SystemExit(f"shared preflight contract missing: {contract}")
+
 if routes.count("{drogon::Options}") != len(route_paths):
     raise SystemExit("every authentication endpoint must retain an OPTIONS route")
 if "src/auth_routes.cpp" not in cmake:
     raise SystemExit("auth_routes.cpp is not part of the production target")
+if "src/http_security.cpp" not in cmake:
+    raise SystemExit("http_security.cpp is not part of the production target")
 
 print("authentication route boundary contracts passed")
