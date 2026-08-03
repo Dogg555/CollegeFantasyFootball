@@ -74,11 +74,11 @@ function describeRequestError(error, fallback = 'The request could not be comple
   if (error?.status === 429) {
     return `Too many attempts. ${retryAfterMessage(error.retryAfter)}${reference}`;
   }
-  if (error?.status === 503 || error?.unavailable) {
-    return `The authentication service is temporarily unavailable. No local account or session was created.${reference}`;
-  }
   if (error?.timedOut) {
     return `The request timed out. Check your connection before trying again.${reference}`;
+  }
+  if (error?.status === 503 || error?.unavailable) {
+    return `The authentication service is temporarily unavailable. No local account or session was created.${reference}`;
   }
   return `${error?.data?.error || error?.message || fallback}${reference}`;
 }
@@ -266,8 +266,14 @@ async function submitAuthForm(path, rawEmail, password, statusEl, redirectTo, fo
         authenticated = true;
       }
 
+      if (path === '/auth/signup' && data.signupAccepted === true) {
+        setStatus(statusEl, data.message || 'Request accepted. Check your email for a verification link, or use Resend verification if it does not arrive.');
+        redirectToVerification(email, false);
+        return;
+      }
+
       if (path === '/auth/signup' && data.accountMayExist === true) {
-        setStatus(statusEl, data.message || 'Request accepted. Check your email, use Resend verification, or sign in if you already registered.');
+        setStatus(statusEl, 'Request accepted. Check your email for a verification link, or use Resend verification if it does not arrive.');
         redirectToVerification(email, false);
         return;
       }
@@ -291,7 +297,7 @@ async function submitAuthForm(path, rawEmail, password, statusEl, redirectTo, fo
       }
     } catch (error) {
       if (path === '/auth/signup' && error.status === 409) {
-        setStatus(statusEl, 'Request accepted. Check your email, use Resend verification, or sign in if you already registered.');
+        setStatus(statusEl, 'Request accepted. Check your email for a verification link, or use Resend verification if it does not arrive.');
         redirectToVerification(email, false);
         return;
       }
