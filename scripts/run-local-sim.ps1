@@ -27,7 +27,7 @@ $ApiUrl = "http://127.0.0.1:$ApiPort"
 $FrontendUrl = "http://127.0.0.1:$FrontendPort"
 
 function Invoke-Compose {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
     & docker @ComposeArgs @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose failed: $($Arguments -join ' ')"
@@ -68,7 +68,7 @@ try {
     Write-Host 'Starting disposable CFF simulation environment...' -ForegroundColor Cyan
     $UpArgs = @('up', '-d')
     if (-not $NoBuild) { $UpArgs += '--build' }
-    Invoke-Compose @UpArgs
+    Invoke-Compose -Arguments $UpArgs
 
     Write-Host "Waiting for API health at $ApiUrl/health..." -ForegroundColor Cyan
     $Healthy = $false
@@ -85,13 +85,17 @@ try {
         }
     }
     if (-not $Healthy) {
-        Invoke-Compose logs backend
+        Invoke-Compose -Arguments @('logs', 'backend')
         throw 'The local simulation API did not become healthy.'
     }
 
     Write-Host 'Seeding deterministic simulation players...' -ForegroundColor Cyan
-    Invoke-Compose cp 'scripts/sim_seed.sql' 'postgres:/tmp/sim_seed.sql'
-    Invoke-Compose exec -T postgres psql -U cff_sim -d cff_sim -v ON_ERROR_STOP=1 -f /tmp/sim_seed.sql
+    Invoke-Compose -Arguments @('cp', 'scripts/sim_seed.sql', 'postgres:/tmp/sim_seed.sql')
+    Invoke-Compose -Arguments @(
+        'exec', '-T', 'postgres',
+        'psql', '-U', 'cff_sim', '-d', 'cff_sim',
+        '-v', 'ON_ERROR_STOP=1', '-f', '/tmp/sim_seed.sql'
+    )
 
     Write-Host "Running $Teams-team lifecycle simulation ($Iterations iteration(s))..." -ForegroundColor Cyan
     Invoke-Simulator
