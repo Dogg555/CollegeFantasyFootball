@@ -76,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
+          docker run -i --rm --network host -e PGPASSWORD=postgres postgres:16 \
             psql -h 127.0.0.1 -U postgres -d cff -v ON_ERROR_STOP=1 <<'SQL'
           INSERT INTO players (
               id, full_name, team, position, conference, year,
@@ -139,6 +139,20 @@ jobs:
               schedule_game_count = EXCLUDED.schedule_game_count,
               updated_at = EXCLUDED.updated_at;
           SQL
+
+      - name: Verify isolated public route fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture_state="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -tA -F '|' -v ON_ERROR_STOP=1 \
+            -c "SELECT (SELECT COUNT(*) FROM players WHERE id LIKE 'public-contract-%'), jsonb_array_length(payload), game_count, live_game_count, schedule_game_count FROM live_score_cache WHERE id=1")"
+          IFS='|' read -r player_count payload_count game_count live_game_count schedule_game_count <<< "$fixture_state"
+          test "$player_count" = "105"
+          test "$payload_count" = "2"
+          test "$game_count" = "2"
+          test "$live_game_count" = "1"
+          test "$schedule_game_count" = "2"
 
       - name: Generate ephemeral runtime secret
         shell: bash
