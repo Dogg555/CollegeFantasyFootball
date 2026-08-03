@@ -21,8 +21,10 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
 $ComposeArgs = @('compose', '-p', 'cff-sim', '-f', 'docker-compose.sim.yml')
-$ApiUrl = "http://127.0.0.1:$($env:CFF_SIM_API_PORT ?? '18080')"
-$FrontendUrl = "http://127.0.0.1:$($env:CFF_SIM_FRONTEND_PORT ?? '13000')"
+$ApiPort = if ([string]::IsNullOrWhiteSpace($env:CFF_SIM_API_PORT)) { '18080' } else { $env:CFF_SIM_API_PORT }
+$FrontendPort = if ([string]::IsNullOrWhiteSpace($env:CFF_SIM_FRONTEND_PORT)) { '13000' } else { $env:CFF_SIM_FRONTEND_PORT }
+$ApiUrl = "http://127.0.0.1:$ApiPort"
+$FrontendUrl = "http://127.0.0.1:$FrontendPort"
 
 function Invoke-Compose {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
@@ -63,7 +65,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 
 $Succeeded = $false
 try {
-    Write-Host "Starting disposable CFF simulation environment..." -ForegroundColor Cyan
+    Write-Host 'Starting disposable CFF simulation environment...' -ForegroundColor Cyan
     $UpArgs = @('up', '-d')
     if (-not $NoBuild) { $UpArgs += '--build' }
     Invoke-Compose @UpArgs
@@ -101,7 +103,7 @@ try {
 finally {
     if ($KeepEnvironment) {
         Write-Host 'Simulation environment left running.' -ForegroundColor Yellow
-        Write-Host "Stop it with: docker compose -p cff-sim -f docker-compose.sim.yml down --volumes --remove-orphans"
+        Write-Host 'Stop it with: docker compose -p cff-sim -f docker-compose.sim.yml down --volumes --remove-orphans'
     }
     else {
         Write-Host 'Stopping disposable simulation environment...' -ForegroundColor Cyan
