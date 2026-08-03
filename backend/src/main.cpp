@@ -31,13 +31,12 @@
 #include "health_routes.h"
 #include "operations_routes.h"
 #include "league_routes.h"
+#include "public_routes.h"
 #include "auth_account_store.h"
 #include "auth_session_store.h"
 #include "app_config.h"
 #include "cfbd_ingest.h"
 #include "email_delivery.h"
-#include "live_scores.h"
-#include "player_catalog.h"
 #endif
 
 #ifdef DROGON_FOUND
@@ -92,15 +91,6 @@ std::string firstHeaderValue(std::string value) {
     return value;
 }
 
-std::optional<std::string> getOptionalParam(const drogon::HttpRequestPtr &req, const std::string &key) {
-    auto value = req->getParameter(key);
-    if (value.empty()) {
-        return std::nullopt;
-    }
-    return value;
-}
-
-
 } // namespace
 #endif
 
@@ -141,10 +131,6 @@ int main(int argc, char* argv[]) {
         cff::http::applyCorsHeaders(req, resp, allowedOrigins);
     });
 
-    auto preflightHandler = [allowedOrigins](const drogon::HttpRequestPtr &req,
-                                             std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-        callback(cff::http::buildPreflightResponse(req, allowedOrigins));
-    };
     const bool ingestOnStartup = runtimeConfig.ingestOnStartup;
     if (ingestOnStartup) {
         std::cout << "[cfbd] CFBD_INGEST_ON_STARTUP enabled; starting ingest..." << std::endl;
@@ -166,79 +152,9 @@ int main(int argc, char* argv[]) {
 
     cff::league::registerLeagueRoutes(app, jwtSecret, allowedOrigins);
 
-    app.registerHandler("/api/scores/live",
-                         [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::cachedLiveScorePayload());
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
-                         },
-                         {drogon::Get})
-        .registerHandler("/api/scores/live/meta",
-                         [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::cachedLiveScoreMeta());
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
-                         },
-                         {drogon::Get})
-        .registerHandler("/api/players/meta",
-                         [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::playerCatalogMeta());
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
-                         },
-                         {drogon::Get})
-        .registerHandler("/api/players",
-                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-#ifndef CFF_HAS_POSTGRES
-                             Json::Value error;
-                             error["error"] = "Player search unavailable: backend not built with PostgreSQL support.";
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-                             resp->setStatusCode(drogon::k503ServiceUnavailable);
-                             callback(resp);
-                             return;
-#else
-                             const auto query = req->getParameter("query");
-                             auto positionFilter = getOptionalParam(req, "position");
-                             auto conferenceFilter = getOptionalParam(req, "conference");
-                             auto teamFilter = getOptionalParam(req, "team");
+    cff::public_api::registerPublicRoutes(app, allowedOrigins);
 
-                             std::size_t limit = 25;
-                             const auto limitParam = req->getParameter("limit");
-                             if (!limitParam.empty()) {
-                                 char *end = nullptr;
-                                 const auto parsed = std::strtoul(limitParam.c_str(), &end, 10);
-                                 if (end != limitParam.c_str() && parsed > 0) {
-                                     limit = std::min<std::size_t>(parsed, 100);
-                                 }
-                             }
-
-                             std::size_t offset = 0;
-                             const auto offsetParam = req->getParameter("offset");
-                             if (!offsetParam.empty()) {
-                                 char *end = nullptr;
-                                 const auto parsed = std::strtoul(offsetParam.c_str(), &end, 10);
-                                 if (end != offsetParam.c_str()) offset = std::min<std::size_t>(parsed, 5000);
-                             }
-
-                             const auto results = cff::searchPlayers(
-                                 query, positionFilter, conferenceFilter, teamFilter, limit, offset
-                             );
-                             Json::Value payload(Json::arrayValue);
-                             for (const auto &player : results) {
-                                 payload.append(player.toJson());
-                             }
-
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
- #endif
-                         },
-                         {drogon::Get})
-        .registerHandler("/api/scores/live", preflightHandler, {drogon::Options})
-        .registerHandler("/api/scores/live/meta", preflightHandler, {drogon::Options})
-        .registerHandler("/api/players", preflightHandler, {drogon::Options})
-        .registerHandler("/api/players/meta", preflightHandler, {drogon::Options})
-        .run();
+    app.run();
 #else
     // Stub output to avoid hard dependency on Drogon in early scaffolding.
     std::cout << "College Fantasy Football backend scaffold (Drogon not linked)." << std::endl;
