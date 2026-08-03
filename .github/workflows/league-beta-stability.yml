@@ -81,7 +81,8 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in {1..45}; do
-            if curl -fsS http://127.0.0.1:8080/health | grep -q '"status" : "ok"'; then
+            if curl -fsS http://127.0.0.1:8080/health \
+              | python -c 'import json, sys; payload = json.load(sys.stdin); raise SystemExit(0 if payload.get("status") == "ok" else 1)'; then
               exit 0
             fi
             sleep 2
