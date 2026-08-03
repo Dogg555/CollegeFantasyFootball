@@ -46,12 +46,15 @@ def main() -> int:
         'accepted["signupAccepted"] = true',
         'accepted["valid"] = false',
         'static_cast<drogon::HttpStatusCode>(202)',
+        'Check your email for a verification link',
     ):
         if required not in SIGNUP_HARDENING:
             raise AssertionError(f"signup response hardening contract missing: {required}")
     for forbidden in ('accountMayExist', 'emailSent', 'accepted["email"]'):
         if forbidden in SIGNUP_HARDENING:
             raise AssertionError(f"generic verification signup response leaks: {forbidden}")
+    if SIGNUP_HARDENING.count('accepted["signupAccepted"]') != 1:
+        raise AssertionError("signup response must have one canonical acceptance marker")
     if "src/signup_response_hardening.cpp" not in CMAKE:
         raise AssertionError("signup response hardening is not compiled")
 
