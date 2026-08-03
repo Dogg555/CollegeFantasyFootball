@@ -10,6 +10,8 @@ on:
       - "backend/src/auth_core.cpp"
       - "backend/src/auth_controller.h"
       - "backend/src/auth_controller.cpp"
+      - "backend/src/auth_routes.h"
+      - "backend/src/auth_routes.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -18,6 +20,7 @@ on:
       - "backend/tests/app_config_tests.cpp"
       - "backend/tests/auth_core_tests.cpp"
       - "backend/tests/auth_controller_boundary_tests.py"
+      - "backend/tests/auth_routes_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -31,6 +34,8 @@ on:
       - "backend/src/auth_core.cpp"
       - "backend/src/auth_controller.h"
       - "backend/src/auth_controller.cpp"
+      - "backend/src/auth_routes.h"
+      - "backend/src/auth_routes.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -39,6 +44,7 @@ on:
       - "backend/tests/app_config_tests.cpp"
       - "backend/tests/auth_core_tests.cpp"
       - "backend/tests/auth_controller_boundary_tests.py"
+      - "backend/tests/auth_routes_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -97,6 +103,18 @@ jobs:
           python-version: "3.12"
       - name: Verify controller ownership and route delegation
         run: python backend/tests/auth_controller_boundary_tests.py
+
+  auth-routes-boundary:
+    name: Authentication route registration contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify route ownership and preflight coverage
+        run: python backend/tests/auth_routes_boundary_tests.py
 
   auth-account-contracts:
     name: Authentication account persistence contracts

@@ -19,6 +19,7 @@ add_executable(college_ff_server
     src/app_config.cpp
     src/auth_core.cpp
     src/auth_controller.cpp
+    src/auth_routes.cpp
     src/auth_account_store.cpp
     src/auth_session_store.cpp
     src/email_delivery.cpp
