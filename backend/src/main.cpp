@@ -28,6 +28,7 @@
 #include "auth_controller.h"
 #include "auth_routes.h"
 #include "http_security.h"
+#include "health_routes.h"
 #include "auth_account_store.h"
 #include "auth_session_store.h"
 #include "app_config.h"
@@ -46,13 +47,8 @@ using cff::auth::hashPassword;
 using cff::auth::randomToken;
 using cff::auth::verifyPassword;
 using cff::config::csvEmailSetFromEnv;
-using cff::config::emailVerificationRequired;
 using cff::config::exposeAuthTokens;
-using cff::config::frontendBaseUrl;
 using cff::config::logAuthTokens;
-using cff::config::maxPasswordLength;
-using cff::config::minPasswordLength;
-using cff::config::persistentDbRequired;
 using cff::config::readEnv;
 using cff::config::sharedSecretAuthAllowed;
 
@@ -80,10 +76,6 @@ std::string jsonToString(const Json::Value &value) {
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";
     return Json::writeString(builder, value);
-}
-
-bool emailDeliveryConfigured() {
-    return frontendBaseUrl().has_value() && cff::emailDeliveryConfigured();
 }
 
 #ifdef CFF_HAS_POSTGRES
@@ -217,52 +209,6 @@ Json::Value dbIngestionStatus() {
 }
 #endif
 
-Json::Value healthPayload(const std::optional<std::string> &jwtSecret,
-                          const std::unordered_set<std::string> &allowedOrigins) {
-    Json::Value payload;
-    const auto passwordMax = maxPasswordLength();
-    const auto passwordMin = std::min(minPasswordLength(), passwordMax);
-    payload["status"] = "ok";
-    payload["service"] = "college-ff-api";
-    payload["jwtSecretConfigured"] = jwtSecret.has_value();
-    payload["allowedOriginsConfigured"] = !allowedOrigins.empty();
-    payload["persistentDbRequired"] = persistentDbRequired();
-    payload["emailDeliveryConfigured"] = emailDeliveryConfigured();
-    payload["emailVerificationRequired"] = emailVerificationRequired();
-    payload["passwordPolicy"]["minLength"] = static_cast<Json::UInt64>(passwordMin);
-    payload["passwordPolicy"]["maxLength"] = static_cast<Json::UInt64>(passwordMax);
-#ifdef CFF_HAS_POSTGRES
-    payload["databaseConfigured"] = dbConfigured();
-    if (dbConfigured()) {
-        auto conn = connectToDb();
-        payload["database"] = conn ? "ok" : "unavailable";
-        if (!conn && persistentDbRequired()) {
-            payload["status"] = "degraded";
-        }
-    } else {
-        payload["database"] = "not_configured";
-        if (persistentDbRequired()) {
-            payload["status"] = "degraded";
-        }
-    }
-#else
-    payload["databaseConfigured"] = false;
-    payload["database"] = "not_compiled";
-    if (persistentDbRequired()) {
-        payload["status"] = "degraded";
-    }
-#endif
-    return payload;
-}
-
-drogon::HttpStatusCode healthStatusCode(const Json::Value &payload) {
-    const auto status = payload.isMember("status") ? payload["status"].asString() : "ok";
-    if (persistentDbRequired() && status != "ok") {
-        return drogon::k503ServiceUnavailable;
-    }
-    return drogon::k200OK;
-}
-
 std::string firstHeaderValue(std::string value) {
     const auto comma = value.find(',');
     if (comma != std::string::npos) {
@@ -343,14 +289,6 @@ int main(int argc, char* argv[]) {
     };
 
     const bool ingestOnStartup = runtimeConfig.ingestOnStartup;
-    const auto healthHandler = [jwtSecret, allowedOrigins](const drogon::HttpRequestPtr&,
-                                                           std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-        const auto payload = healthPayload(jwtSecret, allowedOrigins);
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
-        resp->setStatusCode(healthStatusCode(payload));
-        callback(resp);
-    };
-
     if (ingestOnStartup) {
         std::cout << "[cfbd] CFBD_INGEST_ON_STARTUP enabled; starting ingest..." << std::endl;
         logIngestResult("startup ingest", cff::runCfbdIngestOnce());
@@ -361,10 +299,11 @@ int main(int argc, char* argv[]) {
     }
 
     app.addListener("0.0.0.0", static_cast<unsigned short>(std::stoi(port)), useSsl)
-        .setThreadNum(std::thread::hardware_concurrency())
-        .registerHandler("/health", healthHandler, {drogon::Get})
-        .registerHandler("/api/health", healthHandler, {drogon::Get})
-        .registerHandler("/api/secure/ping",
+        .setThreadNum(std::thread::hardware_concurrency());
+
+    cff::health::registerHealthRoutes(app, jwtSecret, allowedOrigins);
+
+    app.registerHandler("/api/secure/ping",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              auto resp = drogon::HttpResponse::newHttpResponse();
                              if (!cff::http::isAuthorized(req, jwtSecret)) {
@@ -1011,7 +950,6 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/leagues/{1}/feed/posts", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/scores/live", preflightHandler, {drogon::Options})
         .registerHandler("/api/scores/live/meta", preflightHandler, {drogon::Options})
-        .registerHandler("/api/health", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd/status", preflightHandler, {drogon::Options})
         .registerHandler("/api/admin/ingest/cfbd/live", preflightHandler, {drogon::Options})

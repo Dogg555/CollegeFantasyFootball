@@ -28,6 +28,7 @@ add_executable(college_ff_server
     src/security_hardening.cpp
     src/signup_response.cpp
     src/health_status.cpp
+    src/health_routes.cpp
     src/league_beta_stability.cpp
     src/team_name_handler.cpp
     src/json_utils.cpp
