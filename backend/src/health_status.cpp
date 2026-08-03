@@ -122,6 +122,13 @@ struct RuntimeAdviceInstaller {
     }
 };
 
+// security_hardening.cpp also registers a sync advice. On the production Linux
+// toolchain, set an explicit initialization priority so preflight handling is
+// registered first and an OPTIONS request is never parsed as a login payload.
+#if defined(__GNUC__)
+RuntimeAdviceInstaller runtimeAdviceInstaller __attribute__((init_priority(200)));
+#else
 RuntimeAdviceInstaller runtimeAdviceInstaller;
+#endif
 
 }  // namespace
