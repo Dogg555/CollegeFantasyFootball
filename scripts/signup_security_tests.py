@@ -116,6 +116,20 @@ def main() -> int:
     require(missing_password.json().get("code") == "invalid_password", "missing password code missing")
 
     timestamp = time.time_ns()
+
+    # A real database insert failure must not be disguised as an existing
+    # account. CI installs a test-only trigger for this address prefix.
+    failed_email = f"forced-failure-{timestamp}@example.test"
+    failed_insert = signup(failed_email, request_id="signup-security-forced-failure")
+    require(
+        failed_insert.status == 500,
+        f"forced insert failure returned {failed_insert.status}: {failed_insert.body!r}",
+    )
+    failed_json = failed_insert.json()
+    require(failed_json.get("code") == "account_creation_failed", "insert failure code missing")
+    require(failed_json.get("accountMayExist") is not True, "failed insert was disguised as a duplicate")
+    require("token" not in failed_json, "failed insert exposed a token")
+
     email = f"signup-hardening-{timestamp}@example.test"
     created = signup(email, request_id="signup-security-created")
     require(created.status == 201, f"new account signup returned {created.status}: {created.body!r}")
@@ -137,7 +151,10 @@ def main() -> int:
     duplicate = signup(email, request_id="signup-security-duplicate")
     require(duplicate.status == 202, f"duplicate signup should be accepted generically, got {duplicate.status}")
     duplicate_json = duplicate.json()
-    require(duplicate_json.get("accountMayExist") is True, "generic duplicate marker missing")
+    require(
+        duplicate_json.get("accountMayExist") is True,
+        f"generic duplicate marker missing: {duplicate_json!r}",
+    )
     require(duplicate_json.get("valid") is False, "generic duplicate response must not create a session")
     require("token" not in duplicate_json, "generic duplicate response exposed a token")
     serialized_duplicate = json.dumps(duplicate_json).lower()
