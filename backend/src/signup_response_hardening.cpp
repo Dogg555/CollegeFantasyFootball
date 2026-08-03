@@ -26,7 +26,8 @@ void hideVerificationSignupState(const drogon::HttpRequestPtr &request,
     }
 
     const auto status = static_cast<int>(response->getStatusCode());
-    if (status != 201 && status != 202 && status != 409) return;
+    const bool successful = status >= 200 && status < 300;
+    if (!successful && status != 409) return;
 
     Json::Value accepted;
     accepted["status"] = "accepted";
