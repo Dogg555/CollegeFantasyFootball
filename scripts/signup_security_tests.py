@@ -175,7 +175,9 @@ def main() -> int:
     require(throttled.json().get("code") == "rate_limited", "rate-limit code missing")
     require(int(throttled.headers.get("retry-after", "0")) > 0, "Retry-After header missing")
 
-    # Recovery endpoints must remain enumeration-safe for unknown accounts.
+    # Recovery endpoints intentionally use the same generic response whether
+    # an address exists or not. Verify the exact safe contract rather than
+    # rejecting the phrase "if the account exists", which is itself generic.
     unknown = f"unknown-{timestamp}@example.test"
     resend = request(
         "/api/auth/resend-verification",
@@ -183,7 +185,15 @@ def main() -> int:
         payload={"email": unknown},
     )
     require(resend.status == 200, "unknown-account resend must return a generic success")
-    require("exists" not in json.dumps(resend.json()).lower(), "resend response disclosed account existence")
+    resend_json = resend.json()
+    require(resend_json.get("status") == "ok", "resend generic status missing")
+    require(
+        resend_json.get("message") ==
+        "If the account exists and needs verification, a verification email will be sent.",
+        f"unexpected resend response: {resend_json!r}",
+    )
+    require("emailVerificationToken" not in resend_json, "resend exposed a verification token")
+    require(unknown not in json.dumps(resend_json).lower(), "resend reflected the submitted email")
 
     reset = request(
         "/api/auth/request-password-reset",
@@ -191,7 +201,15 @@ def main() -> int:
         payload={"email": unknown},
     )
     require(reset.status == 200, "unknown-account reset request must return a generic success")
-    require("exists" not in json.dumps(reset.json()).lower(), "reset response disclosed account existence")
+    reset_json = reset.json()
+    require(reset_json.get("status") == "ok", "reset generic status missing")
+    require(
+        reset_json.get("message") ==
+        "If the account exists, a password reset email will be sent.",
+        f"unexpected reset response: {reset_json!r}",
+    )
+    require("passwordResetToken" not in reset_json, "reset response exposed a reset token")
+    require(unknown not in json.dumps(reset_json).lower(), "reset response reflected the submitted email")
 
     blocked_origin = request(
         "/api/auth/signup",
