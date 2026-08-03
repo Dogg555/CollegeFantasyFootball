@@ -26,6 +26,7 @@
 #endif
 #include "auth_core.h"
 #include "auth_controller.h"
+#include "auth_routes.h"
 #include "auth_account_store.h"
 #include "auth_session_store.h"
 #include "app_config.h"
@@ -259,69 +260,6 @@ drogon::HttpStatusCode healthStatusCode(const Json::Value &payload) {
         return drogon::k503ServiceUnavailable;
     }
     return drogon::k200OK;
-}
-
-Json::Value authReadinessPayload() {
-    Json::Value payload;
-    const auto passwordMax = maxPasswordLength();
-    const auto passwordMin = std::min(minPasswordLength(), passwordMax);
-    payload["status"] = "ok";
-    payload["service"] = "college-ff-api";
-    payload["persistentDbRequired"] = persistentDbRequired();
-    payload["emailVerificationRequired"] = emailVerificationRequired();
-    payload["emailDeliveryConfigured"] = emailDeliveryConfigured();
-    payload["emailProvider"] = cff::emailDeliveryProvider();
-    payload["frontendBaseUrlConfigured"] = frontendBaseUrl().has_value();
-    payload["passwordPolicy"]["minLength"] = static_cast<Json::UInt64>(passwordMin);
-    payload["passwordPolicy"]["maxLength"] = static_cast<Json::UInt64>(passwordMax);
-#ifdef CFF_HAS_POSTGRES
-    payload["databaseConfigured"] = dbConfigured();
-    if (dbConfigured()) {
-        auto conn = connectToDb();
-        payload["database"] = conn ? "ok" : "unavailable";
-        if (!conn) {
-            payload["status"] = "degraded";
-        }
-    } else {
-        payload["database"] = "not_configured";
-        if (persistentDbRequired()) {
-            payload["status"] = "degraded";
-        }
-    }
-#else
-    payload["databaseConfigured"] = false;
-    payload["database"] = "not_compiled";
-    if (persistentDbRequired()) {
-        payload["status"] = "degraded";
-    }
-#endif
-    const bool dbReady = !persistentDbRequired() ||
-                         (payload.isMember("database") && payload["database"].asString() == "ok");
-    const bool emailReady = !emailVerificationRequired() || emailDeliveryConfigured();
-    payload["signupEnabled"] = dbReady;
-    payload["loginEnabled"] = dbReady;
-    payload["emailFlowsEnabled"] = emailDeliveryConfigured();
-    payload["ready"] = dbReady && emailReady;
-    if (!dbReady) {
-        payload["message"] = "Authentication database is not ready.";
-    } else if (!emailReady) {
-        payload["status"] = "degraded";
-        payload["message"] = "Email verification is required, but transactional email is not configured.";
-    } else {
-        payload["message"] = "Authentication is ready.";
-    }
-    return payload;
-}
-
-bool authStorageUnavailable() {
-#ifdef CFF_HAS_POSTGRES
-    if (!persistentDbRequired()) return false;
-    if (!dbConfigured()) return true;
-    auto conn = connectToDb();
-    return !conn;
-#else
-    return persistentDbRequired();
-#endif
 }
 
 bool hasBearerToken(const drogon::HttpRequestPtr &req, std::string &outToken) {
@@ -576,79 +514,11 @@ int main(int argc, char* argv[]) {
                              callback(resp);
                         },
                          {drogon::Post, drogon::Get})
-        .registerHandler("/api/auth/validate",
-                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             auto resp = drogon::HttpResponse::newHttpResponse();
-                             if (authStorageUnavailable()) {
-                                 Json::Value error;
-                                 error["valid"] = false;
-                                 error["unavailable"] = true;
-                                 error["error"] = "Authentication service is temporarily unavailable";
-                                 resp->setStatusCode(drogon::k503ServiceUnavailable);
-                                 resp->setBody(error.toStyledString());
-                                 resp->addHeader("Content-Type", "application/json");
-                                 callback(resp);
-                                 return;
-                             }
-                             std::string token;
-                             hasBearerToken(req, token);
-                             const bool authorized = isAuthorized(req, jwtSecret);
-                             Json::Value payload;
-                             payload["valid"] = authorized;
-                             if (authorized) {
-                                 if (auto email = emailForToken(token)) {
-                                     payload["email"] = *email;
-                                 }
-                             }
-                             resp->setStatusCode(authorized ? drogon::k200OK : drogon::k401Unauthorized);
-                             resp->setBody(payload.toStyledString());
-                             resp->addHeader("Content-Type", "application/json");
-                             callback(resp);
-                         },
-                         {drogon::Get})
-        .registerHandler("/api/auth/status",
-                         [](const drogon::HttpRequestPtr&, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(authReadinessPayload());
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
-                         },
-                         {drogon::Get})
-        .registerHandler("/api/auth/login",
-                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             cff::auth::handleLogin(req, std::move(callback), jwtSecret);
-                         },
-                         {drogon::Post})
-        .registerHandler("/api/auth/signup",
-                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             cff::auth::handleSignup(req, std::move(callback), jwtSecret);
-                         },
-                         {drogon::Post})
-        .registerHandler("/api/auth/logout",
-                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             cff::auth::handleLogout(req, std::move(callback));
-                         },
-                         {drogon::Post})
-        .registerHandler("/api/auth/verify-email",
-                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             cff::auth::handleVerifyEmail(req, std::move(callback));
-                         },
-                         {drogon::Post})
-        .registerHandler("/api/auth/resend-verification",
-                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             cff::auth::handleResendVerification(req, std::move(callback));
-                         },
-                         {drogon::Post})
-        .registerHandler("/api/auth/request-password-reset",
-                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             cff::auth::handleRequestPasswordReset(req, std::move(callback));
-                         },
-                         {drogon::Post})
-        .registerHandler("/api/auth/reset-password",
-                         [](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             cff::auth::handleResetPassword(req, std::move(callback));
-                         },
-                         {drogon::Post})
-        .registerHandler("/api/admin/ingest/cfbd",
+        ;
+
+    cff::auth::registerAuthRoutes(app, jwtSecret, allowedOrigins);
+
+    app.registerHandler("/api/admin/ingest/cfbd",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              std::string adminIdentity;
                              if (!requireAdmin(req, callback, jwtSecret, adminIdentity)) {
@@ -1241,15 +1111,6 @@ int main(int argc, char* argv[]) {
                          },
                          {drogon::Get})
         .registerHandler("/api/secure/ping", preflightHandler, {drogon::Options})
-        .registerHandler("/api/auth/validate", preflightHandler, {drogon::Options})
-        .registerHandler("/api/auth/status", preflightHandler, {drogon::Options})
-        .registerHandler("/api/auth/login", preflightHandler, {drogon::Options})
-        .registerHandler("/api/auth/signup", preflightHandler, {drogon::Options})
-        .registerHandler("/api/auth/logout", preflightHandler, {drogon::Options})
-        .registerHandler("/api/auth/verify-email", preflightHandler, {drogon::Options})
-        .registerHandler("/api/auth/resend-verification", preflightHandler, {drogon::Options})
-        .registerHandler("/api/auth/request-password-reset", preflightHandler, {drogon::Options})
-        .registerHandler("/api/auth/reset-password", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/members", preflightOneParamHandler, {drogon::Options})
