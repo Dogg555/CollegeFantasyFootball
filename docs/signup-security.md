@@ -6,8 +6,9 @@ The production signup path follows these rules:
 - Authentication requests use bounded client-side timeouts and are never automatically retried.
 - Submit buttons are disabled while an authentication request is active.
 - A timed-out signup is treated as ambiguous because the server may have committed the account before the response was lost.
-- Failed verification-email delivery does not turn successful account creation into a failed-signup message.
-- Duplicate signup requests return an enumeration-safe accepted response rather than confirming that an address is registered.
+- With email verification required, new and already-registered addresses receive the same HTTP status and generic response body.
+- The verification-required signup response does not expose the submitted email, delivery state, account-existence marker, or authentication token.
+- Users are directed to check their email or use the enumeration-safe Resend verification flow.
 - Invalid email, missing-password, and weak-password requests do not consume the strict signup allowance.
 - A high short-window authentication burst ceiling still protects JSON parsing and request resources from malformed-request floods.
 - Valid signup attempts are limited by both apparent client and canonical-email fingerprint.
@@ -24,3 +25,5 @@ The production signup path follows these rules:
 | `CFF_SIGNUP_RATE_WINDOW_MINUTES` | 60 | Strict signup-window duration |
 
 Rate settings should be adjusted only with retained abuse and legitimate-user evidence. The per-email limit is the primary signup-abuse control; the higher client limit avoids locking unrelated users behind a shared proxy or network address.
+
+The indistinguishable signup response is enforced when `CFF_REQUIRE_EMAIL_VERIFICATION=true`, which is the required production configuration. Development environments that intentionally disable verification may return an immediate authenticated session for a newly created account and therefore do not provide the same account-enumeration protection.
