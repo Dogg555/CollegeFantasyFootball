@@ -16,6 +16,7 @@ endif()
 
 add_executable(college_ff_server
     src/main.cpp
+    src/app_config.cpp
     src/email_delivery.cpp
     src/league_invite_email.cpp
     src/security_hardening.cpp
@@ -94,3 +95,14 @@ if (NOT CRYPT_LIB)
 endif()
 target_link_libraries(college_ff_server PRIVATE Drogon::Drogon ${CRYPT_LIB})
 target_compile_definitions(college_ff_server PRIVATE DROGON_FOUND)
+
+
+include(CTest)
+if (BUILD_TESTING)
+    add_executable(app_config_tests
+        tests/app_config_tests.cpp
+        src/app_config.cpp
+    )
+    target_include_directories(app_config_tests PRIVATE src)
+    add_test(NAME app_config_tests COMMAND app_config_tests)
+endif()

@@ -1,0 +1,44 @@
+name: App configuration tests
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/app_config.h"
+      - "backend/src/app_config.cpp"
+      - "backend/src/main.cpp"
+      - "backend/tests/app_config_tests.cpp"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/app-config-tests.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/app_config.h"
+      - "backend/src/app_config.cpp"
+      - "backend/src/main.cpp"
+      - "backend/tests/app_config_tests.cpp"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/app-config-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-contracts:
+    name: Environment parsing and runtime configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile app configuration tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -Ibackend/src \
+            backend/src/app_config.cpp \
+            backend/tests/app_config_tests.cpp \
+            -o /tmp/app_config_tests
+
+      - name: Run app configuration tests
+        run: /tmp/app_config_tests
