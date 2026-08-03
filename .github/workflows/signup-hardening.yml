@@ -147,10 +147,22 @@ jobs:
             college-ff-api-signup
 
       - name: Run signup reliability and security tests
+        shell: bash
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
           CFF_SECURITY_TEST_ORIGIN: https://frontend.example.test
-        run: python scripts/signup_security_tests.py
+        run: |
+          set -o pipefail
+          python scripts/signup_security_tests.py 2>&1 | tee signup-security-test.log
+
+      - name: Retain signup test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signup-security-diagnostics
+          path: signup-security-test.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Prove test account reset and re-registration
         shell: bash
