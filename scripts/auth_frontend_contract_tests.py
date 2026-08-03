@@ -50,10 +50,12 @@ def main() -> int:
         'Check your email for a verification link',
         'Json::StreamWriterBuilder writer',
         'Json::writeString(writer, accepted)',
+        'registerPostHandlingAdvice(hideVerificationSignupState)',
     ):
         if required not in SIGNUP_HARDENING:
             raise AssertionError(f"signup response hardening contract missing: {required}")
     for forbidden in (
+        'registerPreSendingAdvice(hideVerificationSignupState)',
         'status != 201 && status != 202 && status != 409',
         'accountMayExist',
         'emailSent',
@@ -61,7 +63,7 @@ def main() -> int:
         'replacement->body()',
     ):
         if forbidden in SIGNUP_HARDENING:
-            raise AssertionError(f"generic verification signup response leaks, misses valid statuses, or serializes unsafely: {forbidden}")
+            raise AssertionError(f"generic verification signup response leaks, uses the wrong hook, misses valid statuses, or serializes unsafely: {forbidden}")
     if SIGNUP_HARDENING.count('accepted["signupAccepted"]') != 1:
         raise AssertionError("signup response must have one canonical acceptance marker")
     if "src/signup_response_hardening.cpp" not in CMAKE:
