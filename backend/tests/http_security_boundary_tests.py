@@ -4,6 +4,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[2]
 main = (root / "backend/src/main.cpp").read_text(encoding="utf-8")
 auth_routes = (root / "backend/src/auth_routes.cpp").read_text(encoding="utf-8")
+operations_routes = (root / "backend/src/operations_routes.cpp").read_text(encoding="utf-8")
 security = (root / "backend/src/http_security.cpp").read_text(encoding="utf-8")
 header = (root / "backend/src/http_security.h").read_text(encoding="utf-8")
 cmake = (root / "backend/CMakeLists.txt").read_text(encoding="utf-8")
@@ -38,13 +39,13 @@ for implementation in (
         raise SystemExit(f"shared HTTP security implementation leaked into main.cpp: {implementation}")
     if implementation in auth_routes:
         raise SystemExit(f"shared HTTP security implementation leaked into auth_routes.cpp: {implementation}")
+    if implementation in operations_routes:
+        raise SystemExit(f"shared HTTP security implementation leaked into operations_routes.cpp: {implementation}")
 
 required_main_delegation = (
     "cff::http::applyCorsHeaders(req, resp, allowedOrigins)",
     "cff::http::buildPreflightResponse(req, allowedOrigins)",
-    "cff::http::isAuthorized(req, jwtSecret)",
     "cff::http::requireAccount(req, callback, jwtSecret, accountEmail)",
-    "cff::http::requireAdmin(req, callback, jwtSecret, adminIdentity)",
 )
 for delegation in required_main_delegation:
     if delegation not in main:
@@ -58,6 +59,15 @@ required_auth_route_delegation = (
 for delegation in required_auth_route_delegation:
     if delegation not in auth_routes:
         raise SystemExit(f"auth_routes.cpp HTTP security delegation missing: {delegation}")
+
+required_operations_delegation = (
+    "cff::http::isAuthorized(request, jwtSecret)",
+    "cff::http::requireAdmin(",
+    "cff::http::buildPreflightResponse(request, allowedOrigins)",
+)
+for delegation in required_operations_delegation:
+    if delegation not in operations_routes:
+        raise SystemExit(f"operations_routes.cpp HTTP security delegation missing: {delegation}")
 
 required_behavior = (
     'error["error"] = "Unauthorized"',

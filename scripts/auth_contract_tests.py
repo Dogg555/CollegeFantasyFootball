@@ -19,6 +19,7 @@ ORIGIN = os.getenv("CFF_CONTRACT_ORIGIN", "https://frontend.example.test")
 EMAIL = os.getenv("CFF_CONTRACT_EMAIL", f"auth-contract-{time.time_ns()}@example.test").strip().lower()
 PASSWORD = os.getenv("CFF_CONTRACT_PASSWORD", "Contract-Test-Password-2026!")
 NEW_PASSWORD = os.getenv("CFF_CONTRACT_NEW_PASSWORD", "Contract-Test-New-Password-2026!")
+ADMIN_TOKEN = os.getenv("CFF_TEST_ADMIN_TOKEN", "")
 MAIL_LOG = Path(os.getenv("CFF_CONTRACT_MAIL_LOG", "/tmp/cff-test-mail.jsonl"))
 VALID_MODES = {"verification-disabled", "verification-required", "database-unavailable"}
 TOKEN_RE = re.compile(r"token-[0-9a-f]{64}")
@@ -222,6 +223,83 @@ def healthy_contracts() -> dict[str, Any]:
     validated = expect(call("GET", "/api/auth/validate", token=session), 200, "validate")
     require(validated.get("valid") is True and validated.get("email") == EMAIL, f"validation wrong: {validated!r}")
 
+    ping_without_token = call("GET", "/api/secure/ping")
+    require(
+        ping_without_token.status == 401 and ping_without_token.body == b"unauthorized",
+        f"secure ping unauthorized contract changed: {ping_without_token.status} {ping_without_token.body!r}",
+    )
+    ping = expect(call("GET", "/api/secure/ping", token=session), 200, "secure ping")
+    require(
+        ping == {"status": "ok", "scope": "secure"},
+        f"secure ping payload changed: {ping!r}",
+    )
+
+    require(ADMIN_TOKEN, "operations contract token was not provided")
+    admin_missing = expect(call("GET", "/api/admin/ingest/cfbd/status"), 401, "admin status without token")
+    require(admin_missing.get("error") == "Unauthorized", f"admin missing-token response changed: {admin_missing!r}")
+    admin_forbidden = expect(
+        call("GET", "/api/admin/ingest/cfbd/status", token=session),
+        403,
+        "admin status with account token",
+    )
+    require(
+        admin_forbidden.get("error") == "Admin access required",
+        f"admin account guard changed: {admin_forbidden!r}",
+    )
+    expect(
+        call("POST", "/api/admin/ingest/cfbd", token=session),
+        403,
+        "manual roster ingest guard",
+    )
+    expect(
+        call("POST", "/api/admin/ingest/cfbd/live", token=session),
+        403,
+        "manual live ingest guard",
+    )
+
+    ingestion_status = expect(
+        call("GET", "/api/admin/ingest/cfbd/status", token=ADMIN_TOKEN),
+        200,
+        "administrator ingestion status",
+    )
+    require(ingestion_status.get("configured") is True, f"ingestion database state wrong: {ingestion_status!r}")
+    require(ingestion_status.get("status") == "ok", f"ingestion status wrong: {ingestion_status!r}")
+    require(ingestion_status.get("fullRosterSchedule") == "weekly", f"roster schedule changed: {ingestion_status!r}")
+    require(ingestion_status.get("manualTriggerAvailable") is True, f"manual trigger flag changed: {ingestion_status!r}")
+    require(isinstance(ingestion_status.get("counts"), dict), f"ingestion counts missing: {ingestion_status!r}")
+    require(isinstance(ingestion_status.get("runs"), list), f"ingestion runs missing: {ingestion_status!r}")
+
+    live_status = expect(
+        call("GET", "/api/admin/ingest/cfbd/live/status", token=ADMIN_TOKEN),
+        200,
+        "administrator live-ingest status",
+    )
+    require(isinstance(live_status, dict), f"live-ingest status is not an object: {live_status!r}")
+
+    for operations_path in (
+        "/api/secure/ping",
+        "/api/admin/ingest/cfbd",
+        "/api/admin/ingest/cfbd/status",
+        "/api/admin/ingest/cfbd/live",
+        "/api/admin/ingest/cfbd/live/status",
+    ):
+        operations_preflight = call(
+            "OPTIONS",
+            operations_path,
+            headers={
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type, authorization",
+            },
+        )
+        require(
+            operations_preflight.status == 204,
+            f"operations preflight failed for {operations_path}: {operations_preflight.status}",
+        )
+        require(
+            operations_preflight.headers.get("access-control-allow-origin") == ORIGIN,
+            f"operations CORS origin wrong for {operations_path}: {operations_preflight.headers!r}",
+        )
+
     duplicate = expect(call("POST", "/api/auth/signup", payload={"email": EMAIL.upper(), "password": PASSWORD}), 202, "duplicate signup")
     require(duplicate.get("valid") is False, f"duplicate created session: {duplicate!r}")
     no_keys(duplicate, ("token", "email"), "duplicate")
@@ -270,6 +348,9 @@ def healthy_contracts() -> dict[str, Any]:
         "sessionRevocation": True,
         "cors": True,
         "requestLimits": True,
+        "operationsRoutes": True,
+        "operationsAuthorization": True,
+        "operationsCors": True,
     }
 
 

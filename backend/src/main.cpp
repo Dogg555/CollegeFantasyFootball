@@ -29,6 +29,7 @@
 #include "auth_routes.h"
 #include "http_security.h"
 #include "health_routes.h"
+#include "operations_routes.h"
 #include "auth_account_store.h"
 #include "auth_session_store.h"
 #include "app_config.h"
@@ -77,137 +78,6 @@ std::string jsonToString(const Json::Value &value) {
     builder["indentation"] = "";
     return Json::writeString(builder, value);
 }
-
-#ifdef CFF_HAS_POSTGRES
-struct PgConnDeleter {
-    void operator()(PGconn *conn) const {
-        if (conn) {
-            PQfinish(conn);
-        }
-    }
-};
-
-struct PgResultDeleter {
-    void operator()(PGresult *result) const {
-        if (result) {
-            PQclear(result);
-        }
-    }
-};
-
-using PgConnPtr = std::unique_ptr<PGconn, PgConnDeleter>;
-using PgResultPtr = std::unique_ptr<PGresult, PgResultDeleter>;
-
-bool dbConfigured() {
-    const auto url = readEnv("DB_URL");
-    return url && !url->empty();
-}
-
-PgConnPtr connectToDb() {
-    const auto url = readEnv("DB_URL");
-    if (!url || url->empty()) {
-        return nullptr;
-    }
-    auto conn = PgConnPtr{PQconnectdb(url->c_str())};
-    if (PQstatus(conn.get()) != CONNECTION_OK) {
-        std::cerr << "[auth] Failed to connect to Postgres: " << PQerrorMessage(conn.get()) << std::endl;
-        return nullptr;
-    }
-    return conn;
-}
-
-PgResultPtr execParams(PGconn *conn,
-                       const std::string &sql,
-                       const std::vector<std::string> &params) {
-    std::vector<const char *> values;
-    values.reserve(params.size());
-    for (const auto &param : params) {
-        values.push_back(param.c_str());
-    }
-    return PgResultPtr{PQexecParams(conn,
-                                    sql.c_str(),
-                                    static_cast<int>(values.size()),
-                                    nullptr,
-                                    values.data(),
-                                    nullptr,
-                                    nullptr,
-                                    0)};
-}
-
-bool resultOk(PGresult *result, ExecStatusType expected) {
-    return result && PQresultStatus(result) == expected;
-}
-
-Json::Value dbIngestionStatus() {
-    Json::Value payload;
-    payload["configured"] = dbConfigured();
-    payload["cfbdApiConfigured"] = readEnv("CFBD_API_KEY").has_value();
-    payload["season"] = readEnv("CFBD_SEASON").value_or("");
-    payload["fullRosterSchedule"] = "weekly";
-    payload["manualTriggerAvailable"] = true;
-    payload["ready"] = false;
-    payload["runs"] = Json::Value{Json::arrayValue};
-    payload["counts"] = Json::Value{Json::objectValue};
-    auto conn = connectToDb();
-    if (!conn) {
-        payload["status"] = "unavailable";
-        payload["error"] = "Postgres is unavailable.";
-        return payload;
-    }
-
-    auto counts = execParams(conn.get(),
-                             "SELECT "
-                             "(SELECT COUNT(*) FROM teams), "
-                             "(SELECT COUNT(*) FROM players), "
-                             "(SELECT COUNT(*) FROM games), "
-                             "(SELECT COUNT(*) FROM player_stats)",
-                             {});
-    if (resultOk(counts.get(), PGRES_TUPLES_OK) && PQntuples(counts.get()) > 0) {
-        payload["counts"]["teams"] = static_cast<Json::Int64>(std::stoll(PQgetvalue(counts.get(), 0, 0)));
-        payload["counts"]["players"] = static_cast<Json::Int64>(std::stoll(PQgetvalue(counts.get(), 0, 1)));
-        payload["counts"]["games"] = static_cast<Json::Int64>(std::stoll(PQgetvalue(counts.get(), 0, 2)));
-        payload["counts"]["playerStats"] = static_cast<Json::Int64>(std::stoll(PQgetvalue(counts.get(), 0, 3)));
-        payload["ready"] = payload["counts"]["players"].asInt64() > 0;
-    }
-
-    auto latest = execParams(conn.get(),
-                             "SELECT resource, COALESCE(status, ''), COALESCE(to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), COALESCE(error_message, '') "
-                             "FROM ingestion_runs WHERE resource IN ('players', 'scoreboard') ORDER BY started_at DESC LIMIT 1",
-                             {});
-    if (resultOk(latest.get(), PGRES_TUPLES_OK) && PQntuples(latest.get()) > 0) {
-        payload["latestRun"]["resource"] = PQgetvalue(latest.get(), 0, 0);
-        payload["latestRun"]["status"] = PQgetvalue(latest.get(), 0, 1);
-        payload["latestRun"]["finishedAt"] = PQgetvalue(latest.get(), 0, 2);
-        payload["latestRun"]["error"] = PQgetvalue(latest.get(), 0, 3);
-    }
-
-    auto runs = execParams(conn.get(),
-                           "SELECT id, resource, COALESCE(season, 0), COALESCE(week, 0), "
-                           "COALESCE(to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
-                           "COALESCE(to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
-                           "COALESCE(status, ''), call_count, row_count, COALESCE(error_message, '') "
-                           "FROM ingestion_runs ORDER BY started_at DESC LIMIT 10",
-                           {});
-    if (resultOk(runs.get(), PGRES_TUPLES_OK)) {
-        for (int row = 0; row < PQntuples(runs.get()); ++row) {
-            Json::Value run;
-            run["id"] = static_cast<Json::Int64>(std::stoll(PQgetvalue(runs.get(), row, 0)));
-            run["resource"] = PQgetvalue(runs.get(), row, 1);
-            run["season"] = std::stoi(PQgetvalue(runs.get(), row, 2));
-            run["week"] = std::stoi(PQgetvalue(runs.get(), row, 3));
-            run["startedAt"] = PQgetvalue(runs.get(), row, 4);
-            run["finishedAt"] = PQgetvalue(runs.get(), row, 5);
-            run["status"] = PQgetvalue(runs.get(), row, 6);
-            run["apiCalls"] = std::stoi(PQgetvalue(runs.get(), row, 7));
-            run["rowCount"] = std::stoi(PQgetvalue(runs.get(), row, 8));
-            run["error"] = PQgetvalue(runs.get(), row, 9);
-            payload["runs"].append(run);
-        }
-    }
-    payload["status"] = "ok";
-    return payload;
-}
-#endif
 
 std::string firstHeaderValue(std::string value) {
     const auto comma = value.find(',');
@@ -303,106 +173,11 @@ int main(int argc, char* argv[]) {
 
     cff::health::registerHealthRoutes(app, jwtSecret, allowedOrigins);
 
-    app.registerHandler("/api/secure/ping",
-                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             auto resp = drogon::HttpResponse::newHttpResponse();
-                             if (!cff::http::isAuthorized(req, jwtSecret)) {
-                                 resp->setStatusCode(drogon::k401Unauthorized);
-                                 resp->setBody("unauthorized");
-                                 callback(resp);
-                                 return;
-                             }
-                             resp->setStatusCode(drogon::k200OK);
-                             resp->setBody(R"({"status":"ok","scope":"secure"})");
-                             resp->addHeader("Content-Type", "application/json");
-                             callback(resp);
-                        },
-                         {drogon::Post, drogon::Get})
-        ;
-
     cff::auth::registerAuthRoutes(app, jwtSecret, allowedOrigins);
 
-    app.registerHandler("/api/admin/ingest/cfbd",
-                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             std::string adminIdentity;
-                             if (!cff::http::requireAdmin(req, callback, jwtSecret, adminIdentity)) {
-                                 return;
-                             }
+    cff::operations::registerOperationsRoutes(app, jwtSecret, allowedOrigins);
 
-                             const auto ingestResult = cff::runCfbdIngestOnce();
-                             Json::Value payload;
-                             payload["status"] = ingestResult.errors.empty() ? "ok" : "partial";
-                             payload["ingested"] = static_cast<Json::UInt64>(ingestResult.ingested);
-                             payload["updated"] = static_cast<Json::UInt64>(ingestResult.updated);
-                             payload["apiCalls"] = static_cast<Json::UInt64>(ingestResult.apiCalls);
-                             if (!ingestResult.errors.empty()) {
-                                 Json::Value errs(Json::arrayValue);
-                                 for (const auto &err : ingestResult.errors) {
-                                     errs.append(err);
-                                 }
-                                 payload["errors"] = errs;
-                             }
-
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
-                         },
-                         {drogon::Post})
-        .registerHandler("/api/admin/ingest/cfbd/status",
-                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             std::string adminIdentity;
-                             if (!cff::http::requireAdmin(req, callback, jwtSecret, adminIdentity)) {
-                                 return;
-                             }
-#ifndef CFF_HAS_POSTGRES
-                             Json::Value payload;
-                             payload["configured"] = false;
-                             payload["status"] = "unavailable";
-                             payload["error"] = "Backend was not built with PostgreSQL support.";
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
-                             resp->setStatusCode(drogon::k503ServiceUnavailable);
-                             callback(resp);
-#else
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(dbIngestionStatus());
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
-#endif
-                         },
-                         {drogon::Get})
-        .registerHandler("/api/admin/ingest/cfbd/live",
-                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             std::string adminIdentity;
-                             if (!cff::http::requireAdmin(req, callback, jwtSecret, adminIdentity)) {
-                                 return;
-                             }
-                             const auto ingestResult = cff::runLiveScoreIngestOnce();
-                             Json::Value payload;
-                             payload["status"] = ingestResult.errors.empty() ? "ok" : "partial";
-                             payload["games"] = static_cast<Json::UInt64>(ingestResult.games);
-                             payload["liveGames"] = static_cast<Json::UInt64>(ingestResult.liveGames);
-                             payload["apiCalls"] = static_cast<Json::UInt64>(ingestResult.apiCalls);
-                             if (!ingestResult.errors.empty()) {
-                                 Json::Value errors(Json::arrayValue);
-                                 for (const auto &error : ingestResult.errors) errors.append(error);
-                                 payload["errors"] = errors;
-                             }
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
-                         },
-                         {drogon::Post})
-        .registerHandler("/api/admin/ingest/cfbd/live/status",
-                         [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-                             std::string adminIdentity;
-                             if (!cff::http::requireAdmin(req, callback, jwtSecret, adminIdentity)) {
-                                 return;
-                             }
-                             auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::liveScoreIngestStatus());
-                             resp->setStatusCode(drogon::k200OK);
-                             callback(resp);
-                         },
-                         {drogon::Get})
-        .registerHandler("/api/leagues",
+    app.registerHandler("/api/leagues",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              std::string accountEmail;
                              if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
@@ -914,7 +689,6 @@ int main(int argc, char* argv[]) {
  #endif
                          },
                          {drogon::Get})
-        .registerHandler("/api/secure/ping", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues", preflightHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/members", preflightOneParamHandler, {drogon::Options})
@@ -950,10 +724,6 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/leagues/{1}/feed/posts", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/scores/live", preflightHandler, {drogon::Options})
         .registerHandler("/api/scores/live/meta", preflightHandler, {drogon::Options})
-        .registerHandler("/api/admin/ingest/cfbd", preflightHandler, {drogon::Options})
-        .registerHandler("/api/admin/ingest/cfbd/status", preflightHandler, {drogon::Options})
-        .registerHandler("/api/admin/ingest/cfbd/live", preflightHandler, {drogon::Options})
-        .registerHandler("/api/admin/ingest/cfbd/live/status", preflightHandler, {drogon::Options})
         .registerHandler("/api/players", preflightHandler, {drogon::Options})
         .registerHandler("/api/players/meta", preflightHandler, {drogon::Options})
         .run();
