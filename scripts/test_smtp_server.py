@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import socketserver
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,13 @@ class SmtpServer(socketserver.ThreadingTCPServer):
         self.output.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Lock()
 
+    def trace(self, direction: str, line: str) -> None:
+        safe_line = line
+        upper = line.upper()
+        if upper.startswith("AUTH ") or line_stage_value(line):
+            safe_line = "<authentication exchange redacted>"
+        print(f"[smtp] {direction} {safe_line}", file=sys.stderr, flush=True)
+
     def record(self, envelope: dict[str, object]) -> None:
         payload = {
             "receivedAt": datetime.now(timezone.utc).isoformat(),
@@ -29,25 +37,39 @@ class SmtpServer(socketserver.ThreadingTCPServer):
         with self.lock:
             with self.output.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(payload, sort_keys=True) + "\n")
+                handle.flush()
+
+
+def line_stage_value(line: str) -> bool:
+    """Avoid logging base64 credential challenge responses."""
+    if not line or " " in line or ":" in line or "@" in line:
+        return False
+    alphabet = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
+    return len(line) >= 8 and all(char in alphabet for char in line)
 
 
 class SmtpHandler(socketserver.StreamRequestHandler):
     server: SmtpServer
 
     def send(self, line: str) -> None:
+        self.server.trace("S:", line)
         self.wfile.write(line.encode("ascii") + b"\r\n")
         self.wfile.flush()
 
     def handle(self) -> None:
         envelope: dict[str, object] = {"mailFrom": "", "recipients": [], "data": ""}
         login_stage = ""
+        peer = f"{self.client_address[0]}:{self.client_address[1]}"
+        print(f"[smtp] connection from {peer}", file=sys.stderr, flush=True)
         self.send("220 cff-test-smtp ESMTP ready")
 
         while True:
             raw = self.rfile.readline()
             if not raw:
+                print(f"[smtp] connection closed by {peer}", file=sys.stderr, flush=True)
                 return
             line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            self.server.trace("C:", line)
             upper = line.upper()
 
             if login_stage == "username":
@@ -66,6 +88,7 @@ class SmtpHandler(socketserver.StreamRequestHandler):
                     b"250 SIZE 10485760\r\n"
                 )
                 self.wfile.flush()
+                print("[smtp] S: 250 capabilities", file=sys.stderr, flush=True)
             elif upper.startswith("HELO"):
                 self.send("250 cff-test-smtp")
             elif upper.startswith("AUTH PLAIN"):
@@ -103,7 +126,7 @@ class SmtpHandler(socketserver.StreamRequestHandler):
                 self.send("221 2.0.0 Bye")
                 return
             else:
-                self.send("250 2.0.0 OK")
+                self.send("502 5.5.2 Command not implemented")
 
 
 def parse_args() -> argparse.Namespace:
