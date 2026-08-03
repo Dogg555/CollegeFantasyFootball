@@ -587,17 +587,27 @@ void secureResponse(const drogon::HttpRequestPtr &req,
         resp->addHeader("Access-Control-Max-Age", "600");
     }
 
-    if (path == "/api/auth/signup" &&
-        static_cast<int>(resp->getStatusCode()) == 409) {
+    const auto originalStatus = static_cast<int>(resp->getStatusCode());
+    const bool verificationSignupAccepted =
+        path == "/api/auth/signup" &&
+        envFlag("CFF_REQUIRE_EMAIL_VERIFICATION") &&
+        ((originalStatus >= 200 && originalStatus < 300) || originalStatus == 409);
+    if (verificationSignupAccepted) {
         Json::Value accepted;
         accepted["status"] = "accepted";
         accepted["valid"] = false;
-        accepted["accountMayExist"] = true;
-        accepted["emailVerificationRequired"] = envFlag("CFF_REQUIRE_EMAIL_VERIFICATION");
-        accepted["message"] = "Request accepted. Check your email if verification is required, or sign in if you already registered.";
-        Json::StreamWriterBuilder writer;
-        writer["indentation"] = "";
-        resp->setBody(Json::writeString(writer, accepted));
+        accepted["signupAccepted"] = true;
+        accepted["emailVerificationRequired"] = true;
+        accepted["message"] =
+            "Request accepted. Check your email for a verification link, or use Resend verification if it does not arrive.";
+        const auto &jsonObject = resp->getJsonObject();
+        if (jsonObject) {
+            *jsonObject = accepted;
+        } else {
+            Json::StreamWriterBuilder writer;
+            writer["indentation"] = "";
+            resp->setBody(Json::writeString(writer, accepted));
+        }
         resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
         resp->setStatusCode(static_cast<drogon::HttpStatusCode>(202));
     }

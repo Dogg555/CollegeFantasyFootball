@@ -9,6 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AUTH = (ROOT / "frontend" / "auth.js").read_text(encoding="utf-8")
 CONFIG = (ROOT / "frontend" / "config.js").read_text(encoding="utf-8")
+SECURITY = (ROOT / "backend" / "src" / "security_hardening.cpp").read_text(encoding="utf-8")
+CMAKE = (ROOT / "backend" / "CMakeLists.txt").read_text(encoding="utf-8")
 
 
 def require(fragment: str, message: str) -> None:
@@ -25,7 +27,7 @@ def main() -> int:
     require("button.disabled = true", "submit buttons must be disabled while requests are active")
     require("Retry-After", "rate-limit retry metadata is not handled")
     require("X-CFF-Request-Id", "request correlation is not surfaced")
-    require("accountMayExist", "enumeration-safe duplicate signup response is not handled")
+    require("signupAccepted", "generic verification signup response is not handled")
     require("The account may already have been created", "ambiguous signup failures need recovery guidance")
     require("if (!allowLocalDemo)", "production network failures must not create local sessions")
     require("['localhost', '127.0.0.1', '::1']", "demo sessions must remain localhost-only")
@@ -36,6 +38,40 @@ def main() -> int:
         raise AssertionError("local demo mode must fail closed")
     if "window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO === true" not in CONFIG:
         raise AssertionError("local demo mode must require explicit enablement")
+
+    for required in (
+        'path == "/api/auth/signup"',
+        'envFlag("CFF_REQUIRE_EMAIL_VERIFICATION")',
+        '((originalStatus >= 200 && originalStatus < 300) || originalStatus == 409)',
+        'accepted["signupAccepted"] = true',
+        'accepted["valid"] = false',
+        'accepted["emailVerificationRequired"] = true',
+        'const auto &jsonObject = resp->getJsonObject()',
+        '*jsonObject = accepted',
+        'static_cast<drogon::HttpStatusCode>(202)',
+        'Check your email for a verification link',
+        'Json::writeString(writer, accepted)',
+        'registerPreSendingAdvice(secureResponse)',
+    ):
+        if required not in SECURITY:
+            raise AssertionError(f"signup response hardening contract missing: {required}")
+
+    for forbidden in (
+        'accepted["accountMayExist"]',
+        'accepted["emailSent"]',
+        'accepted["email"]',
+        'registerPostHandlingAdvice(hideVerificationSignupState)',
+        'registerPreSendingAdvice(hideVerificationSignupState)',
+    ):
+        if forbidden in SECURITY:
+            raise AssertionError(f"generic verification signup response leaks state or uses an unproven hook: {forbidden}")
+
+    if SECURITY.count('accepted["signupAccepted"]') != 1:
+        raise AssertionError("signup response must have one canonical acceptance marker")
+    if "src/signup_response_hardening.cpp" in CMAKE:
+        raise AssertionError("the ineffective standalone signup advice is still compiled")
+    if (ROOT / "backend" / "src" / "signup_response_hardening.cpp").exists():
+        raise AssertionError("the ineffective standalone signup advice still exists")
 
     print("Frontend authentication contracts passed.")
     return 0
