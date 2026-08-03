@@ -31,7 +31,22 @@ jobs:
           python-version: "3.12"
 
       - name: Apply exact source transformation
-        run: python scripts/refactor_auth_core.py
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/refactor_auth_core.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''    "    src/app_config.cpp\\n",
+              "    src/app_config.cpp\\n    src/auth_core.cpp\\n",
+              "add auth core production source",'''
+          new = '''    "    src/main.cpp\\n    src/app_config.cpp\\n    src/email_delivery.cpp\\n",
+              "    src/main.cpp\\n    src/app_config.cpp\\n    src/auth_core.cpp\\n    src/email_delivery.cpp\\n",
+              "add auth core production source",'''
+          if text.count(old) != 1:
+              raise SystemExit("auth core CMake anchor patch did not match exactly once")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          python scripts/refactor_auth_core.py
 
       - name: Commit generated auth core
         run: |
