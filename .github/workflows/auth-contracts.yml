@@ -142,9 +142,9 @@ jobs:
             -e ESPN_ROSTER_AUTO_ONCE=false \
             -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
             -e CFF_REQUIRE_EMAIL_VERIFICATION="$VERIFICATION_REQUIRED" \
-            -e CFF_EXPOSE_AUTH_TOKENS=true \
+            -e CFF_EXPOSE_AUTH_TOKENS=false \
             -e CFF_LOG_AUTH_TOKENS=false \
-            -e CFF_SECURITY_ENFORCE_PRODUCTION=false \
+            -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
             -e CFF_TRUST_PROXY_HEADERS=false \
             -e CFF_FRONTEND_BASE_URL=https://frontend.example.test \
             -e CFF_EMAIL_PROVIDER=smtp \
@@ -169,6 +169,7 @@ jobs:
           CFF_API_BASE_URL: http://127.0.0.1:8080
           CFF_AUTH_CONTRACT_MODE: ${{ matrix.mode }}
           CFF_CONTRACT_ORIGIN: https://frontend.example.test
+          CFF_CONTRACT_MAIL_LOG: /tmp/cff-test-mail.jsonl
         run: |
           set -o pipefail
           python scripts/auth_contract_tests.py 2>&1 | tee /tmp/auth-contract-result.log
