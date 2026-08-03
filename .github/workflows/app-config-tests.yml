@@ -19,6 +19,8 @@ on:
       - "backend/src/health_status.cpp"
       - "backend/src/operations_routes.h"
       - "backend/src/operations_routes.cpp"
+      - "backend/src/league_routes.h"
+      - "backend/src/league_routes.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -31,6 +33,7 @@ on:
       - "backend/tests/http_security_boundary_tests.py"
       - "backend/tests/health_routes_boundary_tests.py"
       - "backend/tests/operations_routes_boundary_tests.py"
+      - "backend/tests/league_routes_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -53,6 +56,8 @@ on:
       - "backend/src/health_status.cpp"
       - "backend/src/operations_routes.h"
       - "backend/src/operations_routes.cpp"
+      - "backend/src/league_routes.h"
+      - "backend/src/league_routes.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -65,6 +70,7 @@ on:
       - "backend/tests/http_security_boundary_tests.py"
       - "backend/tests/health_routes_boundary_tests.py"
       - "backend/tests/operations_routes_boundary_tests.py"
+      - "backend/tests/league_routes_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -176,6 +182,23 @@ jobs:
             backend/tests/operations_routes_boundary_tests.py
       - name: Verify operations route ownership and behavior
         run: python backend/tests/operations_routes_boundary_tests.py
+
+  league-routes-boundary:
+    name: League route registration contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate league contract sources
+        run: |
+          python -m py_compile \
+            scripts/auth_contract_tests.py \
+            backend/tests/league_routes_boundary_tests.py
+      - name: Verify league route ownership, methods, guards, and preflights
+        run: python backend/tests/league_routes_boundary_tests.py
 
   auth-account-contracts:
     name: Authentication account persistence contracts

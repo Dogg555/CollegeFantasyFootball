@@ -14,6 +14,8 @@ if (NOT ENABLE_DROGON)
     return()
 endif()
 
+# Keep route registration modules in the production target so structural
+# boundaries and Docker contracts exercise the same server composition.
 add_executable(college_ff_server
     src/main.cpp
     src/app_config.cpp
@@ -30,6 +32,7 @@ add_executable(college_ff_server
     src/health_status.cpp
     src/health_routes.cpp
     src/operations_routes.cpp
+    src/league_routes.cpp
     src/league_beta_stability.cpp
     src/team_name_handler.cpp
     src/json_utils.cpp
