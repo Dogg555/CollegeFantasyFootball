@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AUTH = (ROOT / "frontend" / "auth.js").read_text(encoding="utf-8")
 CONFIG = (ROOT / "frontend" / "config.js").read_text(encoding="utf-8")
-SIGNUP_HARDENING = (ROOT / "backend" / "src" / "signup_response_hardening.cpp").read_text(encoding="utf-8")
+SECURITY = (ROOT / "backend" / "src" / "security_hardening.cpp").read_text(encoding="utf-8")
 CMAKE = (ROOT / "backend" / "CMakeLists.txt").read_text(encoding="utf-8")
 
 
@@ -40,34 +40,36 @@ def main() -> int:
         raise AssertionError("local demo mode must require explicit enablement")
 
     for required in (
-        'request->getPath() != "/api/auth/signup"',
-        'CFF_REQUIRE_EMAIL_VERIFICATION',
-        'const bool successful = status >= 200 && status < 300',
-        'if (!successful && status != 409) return',
+        'path == "/api/auth/signup"',
+        'envFlag("CFF_REQUIRE_EMAIL_VERIFICATION")',
+        '((originalStatus >= 200 && originalStatus < 300) || originalStatus == 409)',
         'accepted["signupAccepted"] = true',
         'accepted["valid"] = false',
+        'accepted["emailVerificationRequired"] = true',
         'static_cast<drogon::HttpStatusCode>(202)',
         'Check your email for a verification link',
-        'Json::StreamWriterBuilder writer',
         'Json::writeString(writer, accepted)',
-        'registerPostHandlingAdvice(hideVerificationSignupState)',
+        'registerPreSendingAdvice(secureResponse)',
     ):
-        if required not in SIGNUP_HARDENING:
+        if required not in SECURITY:
             raise AssertionError(f"signup response hardening contract missing: {required}")
+
     for forbidden in (
-        'registerPreSendingAdvice(hideVerificationSignupState)',
-        'status != 201 && status != 202 && status != 409',
-        'accountMayExist',
-        'emailSent',
+        'accepted["accountMayExist"]',
+        'accepted["emailSent"]',
         'accepted["email"]',
-        'replacement->body()',
+        'registerPostHandlingAdvice(hideVerificationSignupState)',
+        'registerPreSendingAdvice(hideVerificationSignupState)',
     ):
-        if forbidden in SIGNUP_HARDENING:
-            raise AssertionError(f"generic verification signup response leaks, uses the wrong hook, misses valid statuses, or serializes unsafely: {forbidden}")
-    if SIGNUP_HARDENING.count('accepted["signupAccepted"]') != 1:
+        if forbidden in SECURITY:
+            raise AssertionError(f"generic verification signup response leaks state or uses an unproven hook: {forbidden}")
+
+    if SECURITY.count('accepted["signupAccepted"]') != 1:
         raise AssertionError("signup response must have one canonical acceptance marker")
-    if "src/signup_response_hardening.cpp" not in CMAKE:
-        raise AssertionError("signup response hardening is not compiled")
+    if "src/signup_response_hardening.cpp" in CMAKE:
+        raise AssertionError("the ineffective standalone signup advice is still compiled")
+    if (ROOT / "backend" / "src" / "signup_response_hardening.cpp").exists():
+        raise AssertionError("the ineffective standalone signup advice still exists")
 
     print("Frontend authentication contracts passed.")
     return 0
