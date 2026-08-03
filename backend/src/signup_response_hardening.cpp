@@ -36,8 +36,9 @@ void hideVerificationSignupState(const drogon::HttpRequestPtr &request,
     accepted["message"] =
         "Request accepted. Check your email for a verification link, or use Resend verification if it does not arrive.";
 
-    auto replacement = drogon::HttpResponse::newHttpJsonResponse(accepted);
-    response->setBody(std::string{replacement->body()});
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    response->setBody(Json::writeString(writer, accepted));
     response->setContentTypeCode(drogon::CT_APPLICATION_JSON);
     response->setStatusCode(static_cast<drogon::HttpStatusCode>(202));
     response->addHeader("Cache-Control", "no-store");
