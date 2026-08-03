@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 
 #ifdef CFF_HAS_POSTGRES
 #include <postgresql/libpq-fe.h>
@@ -153,10 +154,32 @@ bool isAuthorized(const drogon::HttpRequestPtr &req,
     return emailForSessionToken(*token).has_value();
 }
 
+void applyCorsHeaders(const drogon::HttpRequestPtr &req,
+                      const drogon::HttpResponsePtr &resp,
+                      const std::unordered_set<std::string> &allowedOrigins) {
+    const auto origin = req->getHeader("Origin");
+    if (!allowedOrigins.empty() && allowedOrigins.find(origin) != allowedOrigins.end()) {
+        resp->addHeader("Access-Control-Allow-Origin", origin);
+        resp->addHeader("Vary", "Origin");
+    }
+    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+}
+
+drogon::HttpResponsePtr buildPreflightResponse(
+    const drogon::HttpRequestPtr &req,
+    const std::unordered_set<std::string> &allowedOrigins) {
+    auto resp = drogon::HttpResponse::newHttpResponse();
+    applyCorsHeaders(req, resp, allowedOrigins);
+    resp->setStatusCode(drogon::k204NoContent);
+    return resp;
+}
+
 } // namespace
 
 void registerAuthRoutes(drogon::HttpAppFramework &app,
-                        const std::optional<std::string> &jwtSecret) {
+                        const std::optional<std::string> &jwtSecret,
+                        const std::unordered_set<std::string> &allowedOrigins) {
     app.registerHandler("/api/auth/validate",
                         [jwtSecret](const drogon::HttpRequestPtr &req,
                                     std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
@@ -246,6 +269,22 @@ void registerAuthRoutes(drogon::HttpAppFramework &app,
                             handleResetPassword(req, std::move(callback));
                         },
                         {drogon::Post});
+
+    const auto preflightHandler = [allowedOrigins](
+        const drogon::HttpRequestPtr &req,
+        std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+        callback(buildPreflightResponse(req, allowedOrigins));
+    };
+
+    app.registerHandler("/api/auth/validate", preflightHandler, {drogon::Options});
+    app.registerHandler("/api/auth/status", preflightHandler, {drogon::Options});
+    app.registerHandler("/api/auth/login", preflightHandler, {drogon::Options});
+    app.registerHandler("/api/auth/signup", preflightHandler, {drogon::Options});
+    app.registerHandler("/api/auth/logout", preflightHandler, {drogon::Options});
+    app.registerHandler("/api/auth/verify-email", preflightHandler, {drogon::Options});
+    app.registerHandler("/api/auth/resend-verification", preflightHandler, {drogon::Options});
+    app.registerHandler("/api/auth/request-password-reset", preflightHandler, {drogon::Options});
+    app.registerHandler("/api/auth/reset-password", preflightHandler, {drogon::Options});
 }
 
 } // namespace cff::auth
