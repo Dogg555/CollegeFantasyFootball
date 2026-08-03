@@ -143,6 +143,10 @@ bool plausibleClientAddress(std::string_view value) {
     });
 }
 
+bool safeRequestId(std::string_view value) {
+    return !value.empty() && value.size() <= 128 && !containsControlCharacters(value);
+}
+
 std::string firstForwardedValue(std::string value) {
     const auto comma = value.find(',');
     if (comma != std::string::npos) value.resize(comma);
@@ -153,6 +157,14 @@ std::string lastForwardedValue(std::string value) {
     const auto comma = value.rfind(',');
     if (comma != std::string::npos) value = value.substr(comma + 1);
     return trim(std::move(value));
+}
+
+std::string requestId(const drogon::HttpRequestPtr &req) {
+    for (const auto *header : {"rndr-id", "x-request-id"}) {
+        auto candidate = trim(req->getHeader(header));
+        if (safeRequestId(candidate)) return candidate;
+    }
+    return "";
 }
 
 std::string clientAddress(const drogon::HttpRequestPtr &req) {
@@ -347,7 +359,14 @@ struct RatePolicy {
 std::optional<RatePolicy> ratePolicy(const drogon::HttpRequestPtr &req) {
     const auto &path = req->getPath();
     if (path == "/api/auth/login") return RatePolicy{30, 10, std::chrono::minutes(10), true};
-    if (path == "/api/auth/signup") return RatePolicy{20, 3, std::chrono::hours(24), true};
+    if (path == "/api/auth/signup") {
+        return RatePolicy{
+            envSize("CFF_SIGNUP_CLIENT_LIMIT", 120, 5000),
+            envSize("CFF_SIGNUP_ACCOUNT_LIMIT", 5, 100),
+            std::chrono::minutes(envSize("CFF_SIGNUP_RATE_WINDOW_MINUTES", 60, 1440)),
+            true
+        };
+    }
     if (path == "/api/auth/request-password-reset") return RatePolicy{20, 5, std::chrono::minutes(30), true};
     if (path == "/api/auth/reset-password") return RatePolicy{12, 0, std::chrono::minutes(30), false};
     if (path == "/api/auth/resend-verification") return RatePolicy{20, 5, std::chrono::minutes(30), true};
@@ -441,6 +460,20 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
                          "unsupported_content_type");
     }
 
+    if (path.rfind("/api/auth/", 0) == 0 && isMutation(req->getMethod())) {
+        const auto burstLimit = envSize("CFF_AUTH_BURST_CLIENT_LIMIT", 240, 5000);
+        const auto burstWindow = std::chrono::seconds(
+            envSize("CFF_AUTH_BURST_WINDOW_SECONDS", 60, 3600));
+        const auto burstKey = "/api/auth/*:burst:" + fingerprint(clientAddress(req));
+        if (!takeRateLimit(burstKey, burstLimit, burstWindow)) {
+            auto response = jsonError(static_cast<drogon::HttpStatusCode>(429),
+                                      "Too many authentication requests. Try again shortly.",
+                                      "rate_limited");
+            response->addHeader("Retry-After", std::to_string(burstWindow.count()));
+            return response;
+        }
+    }
+
     if (req->bodyLength() > 0 && isJsonContentType(req->getHeader("content-type"))) {
         const auto body = req->getJsonObject();
         if (!body || !body->isObject()) {
@@ -453,6 +486,51 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
         }
     }
 
+    const bool authPayload = path == "/api/auth/signup" ||
+                             path == "/api/auth/login" ||
+                             path == "/api/auth/request-password-reset" ||
+                             path == "/api/auth/resend-verification";
+    if (authPayload && req->bodyLength() > 0) {
+        const auto body = req->getJsonObject();
+        if (!body || !body->isObject()) {
+            return jsonError(drogon::k400BadRequest, "A valid JSON object is required.", "invalid_json");
+        }
+        if (!body->isMember("email") || !(*body)["email"].isString() ||
+            !looksLikeEmail(trim((*body)["email"].asString()))) {
+            return jsonError(drogon::k400BadRequest, "A valid email address is required.", "invalid_email");
+        }
+    }
+
+    if (path == "/api/auth/signup" || path == "/api/auth/login") {
+        const auto body = req->getJsonObject();
+        if (!body || !body->isObject() ||
+            !body->isMember("password") || !(*body)["password"].isString() ||
+            (*body)["password"].asString().empty()) {
+            return jsonError(drogon::k400BadRequest, "A password is required.", "invalid_password");
+        }
+    }
+
+    if (path == "/api/auth/signup" || path == "/api/auth/reset-password") {
+        const auto body = req->getJsonObject();
+        const auto minimum = envSize("CFF_MIN_PASSWORD_LENGTH", 12, 64);
+        if (!body || !body->isObject() ||
+            !body->isMember("password") || !(*body)["password"].isString()) {
+            return jsonError(drogon::k400BadRequest, "A password is required.", "invalid_password");
+        }
+        const auto email = body->isMember("email") && (*body)["email"].isString()
+            ? (*body)["email"].asString()
+            : std::string{};
+        if (!strongPassword((*body)["password"].asString(), email, minimum)) {
+            return jsonError(drogon::k400BadRequest,
+                             "Password must be between " + std::to_string(minimum) +
+                                 " and 72 characters and must not be commonly used.",
+                             "weak_password");
+        }
+    }
+
+    // Count only structurally valid authentication attempts against the strict
+    // route/account policies. Malformed input is covered by the higher burst
+    // ceiling above and cannot exhaust a legitimate user's signup allowance.
     if (const auto policy = ratePolicy(req)) {
         const auto route = safeRoute(req);
         const auto client = fingerprint(clientAddress(req));
@@ -476,39 +554,6 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
         }
     }
 
-    const bool authPayload = path == "/api/auth/signup" ||
-                             path == "/api/auth/login" ||
-                             path == "/api/auth/request-password-reset" ||
-                             path == "/api/auth/resend-verification";
-    if (authPayload && req->bodyLength() > 0) {
-        const auto body = req->getJsonObject();
-        if (!body || !body->isObject()) {
-            return jsonError(drogon::k400BadRequest, "A valid JSON object is required.", "invalid_json");
-        }
-        if (!body->isMember("email") || !(*body)["email"].isString() ||
-            !looksLikeEmail(trim((*body)["email"].asString()))) {
-            return jsonError(drogon::k400BadRequest, "A valid email address is required.", "invalid_email");
-        }
-    }
-
-    if (path == "/api/auth/signup" || path == "/api/auth/reset-password") {
-        const auto body = req->getJsonObject();
-        const auto minimum = envSize("CFF_MIN_PASSWORD_LENGTH", 12, 64);
-        if (!body || !body->isObject() ||
-            !body->isMember("password") || !(*body)["password"].isString()) {
-            return jsonError(drogon::k400BadRequest, "A password is required.", "invalid_password");
-        }
-        const auto email = body->isMember("email") && (*body)["email"].isString()
-            ? (*body)["email"].asString()
-            : std::string{};
-        if (!strongPassword((*body)["password"].asString(), email, minimum)) {
-            return jsonError(drogon::k400BadRequest,
-                             "Password must be between " + std::to_string(minimum) +
-                                 " and 72 characters and must not be commonly used.",
-                             "weak_password");
-        }
-    }
-
     return nullptr;
 }
 
@@ -525,13 +570,36 @@ void secureResponse(const drogon::HttpRequestPtr &req,
     const auto &path = req->getPath();
     if (path.rfind("/api/", 0) == 0 || path == "/health") {
         resp->addHeader("Cache-Control", "no-store");
+        resp->addHeader("Access-Control-Expose-Headers",
+                        "X-CFF-Request-Id, Retry-After, X-CFF-Invite-Email");
     }
+
+    const auto currentRequestId = requestId(req);
+    if (!currentRequestId.empty()) {
+        resp->addHeader("X-CFF-Request-Id", currentRequestId);
+    }
+
     const auto forwardedProto = lower(firstForwardedValue(req->getHeader("x-forwarded-proto")));
     if (req->isOnSecureConnection() || forwardedProto == "https") {
         resp->addHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     }
     if (req->getMethod() == drogon::Options) {
         resp->addHeader("Access-Control-Max-Age", "600");
+    }
+
+    if (path == "/api/auth/signup" &&
+        static_cast<int>(resp->getStatusCode()) == 409) {
+        Json::Value accepted;
+        accepted["status"] = "accepted";
+        accepted["valid"] = false;
+        accepted["accountMayExist"] = true;
+        accepted["emailVerificationRequired"] = envFlag("CFF_REQUIRE_EMAIL_VERIFICATION");
+        accepted["message"] = "Request accepted. Check your email if verification is required, or sign in if you already registered.";
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+        resp->setBody(Json::writeString(writer, accepted));
+        resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+        resp->setStatusCode(static_cast<drogon::HttpStatusCode>(202));
     }
 
     if (path == "/health" || path == "/api/health") {
@@ -561,11 +629,15 @@ void secureResponse(const drogon::HttpRequestPtr &req,
 
     const auto status = static_cast<int>(resp->getStatusCode());
     if (status == 401 || status == 403 || status == 413 ||
-        status == 415 || status == 429 || path.rfind("/api/admin/", 0) == 0) {
+        status == 415 || status == 429 || status >= 500 ||
+        path.rfind("/api/admin/", 0) == 0) {
         std::cerr << "[security] route=" << safeRoute(req)
                   << " status=" << status
-                  << " client=" << fingerprint(clientAddress(req))
-                  << std::endl;
+                  << " client=" << fingerprint(clientAddress(req));
+        if (!currentRequestId.empty()) {
+            std::cerr << " request_id=" << currentRequestId;
+        }
+        std::cerr << std::endl;
     }
 }
 
