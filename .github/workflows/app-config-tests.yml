@@ -8,6 +8,8 @@ on:
       - "backend/src/app_config.cpp"
       - "backend/src/auth_core.h"
       - "backend/src/auth_core.cpp"
+      - "backend/src/auth_controller.h"
+      - "backend/src/auth_controller.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -15,6 +17,7 @@ on:
       - "backend/src/main.cpp"
       - "backend/tests/app_config_tests.cpp"
       - "backend/tests/auth_core_tests.cpp"
+      - "backend/tests/auth_controller_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -26,6 +29,8 @@ on:
       - "backend/src/app_config.cpp"
       - "backend/src/auth_core.h"
       - "backend/src/auth_core.cpp"
+      - "backend/src/auth_controller.h"
+      - "backend/src/auth_controller.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -33,6 +38,7 @@ on:
       - "backend/src/main.cpp"
       - "backend/tests/app_config_tests.cpp"
       - "backend/tests/auth_core_tests.cpp"
+      - "backend/tests/auth_controller_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -49,7 +55,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
       - name: Compile app configuration tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
@@ -57,7 +62,6 @@ jobs:
             backend/src/app_config.cpp \
             backend/tests/app_config_tests.cpp \
             -o /tmp/app_config_tests
-
       - name: Run app configuration tests
         run: /tmp/app_config_tests
 
@@ -67,12 +71,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
       - name: Install crypt development library
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libcrypt-dev
-
       - name: Compile authentication core tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
@@ -81,9 +83,20 @@ jobs:
             backend/tests/auth_core_tests.cpp \
             -lcrypt \
             -o /tmp/auth_core_tests
-
       - name: Run authentication core tests
         run: /tmp/auth_core_tests
+
+  auth-controller-boundary:
+    name: Authentication controller boundary contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify controller ownership and route delegation
+        run: python backend/tests/auth_controller_boundary_tests.py
 
   auth-account-contracts:
     name: Authentication account persistence contracts
@@ -91,7 +104,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
       - name: Compile authentication account tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
@@ -100,7 +112,6 @@ jobs:
             backend/src/auth_account_store.cpp \
             backend/tests/auth_account_store_tests.cpp \
             -o /tmp/auth_account_store_tests
-
       - name: Run authentication account tests
         run: /tmp/auth_account_store_tests
 
@@ -110,12 +121,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
       - name: Install crypt development library
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libcrypt-dev
-
       - name: Compile authentication session tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
@@ -126,6 +135,5 @@ jobs:
             backend/tests/auth_session_store_tests.cpp \
             -lcrypt \
             -o /tmp/auth_session_store_tests
-
       - name: Run authentication session tests
         run: /tmp/auth_session_store_tests
