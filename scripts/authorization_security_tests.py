@@ -40,8 +40,11 @@ def main():
     outsider_email = f"authz-outsider-{suffix}@example.test"
     owner = signup(owner_email)
     outsider = signup(outsider_email)
-    status, _ = request("/api/auth/signup", "POST", {"email": owner_email.upper(), "password": PASSWORD})
-    require(status == 409, "case-variant duplicate account accepted")
+    status, duplicate = request("/api/auth/signup", "POST", {"email": owner_email.upper(), "password": PASSWORD})
+    require(status == 202, f"duplicate signup was not normalized safely: {status} {duplicate}")
+    require(duplicate.get("accountMayExist") is True, f"duplicate marker missing: {duplicate}")
+    require(duplicate.get("valid") is False, f"duplicate signup created a session: {duplicate}")
+    require("token" not in duplicate, f"duplicate signup exposed a token: {duplicate}")
     status, league = request("/api/leagues", "POST", {"name": "Authorization League", "teams": 8, "scoring": "ppr", "draftType": "snake", "invitedEmails": [], "rosterRules": {"qb":0,"rb":0,"wr":0,"te":0,"flex":0,"bench":8}}, owner)
     require(status == 201 and league.get("id"), f"league creation failed: {status} {league}")
     league_id = league["id"]
