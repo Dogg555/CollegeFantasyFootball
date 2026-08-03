@@ -42,7 +42,8 @@ def main() -> int:
     for required in (
         'request->getPath() != "/api/auth/signup"',
         'CFF_REQUIRE_EMAIL_VERIFICATION',
-        'status != 201 && status != 202 && status != 409',
+        'const bool successful = status >= 200 && status < 300',
+        'if (!successful && status != 409) return',
         'accepted["signupAccepted"] = true',
         'accepted["valid"] = false',
         'static_cast<drogon::HttpStatusCode>(202)',
@@ -53,13 +54,14 @@ def main() -> int:
         if required not in SIGNUP_HARDENING:
             raise AssertionError(f"signup response hardening contract missing: {required}")
     for forbidden in (
+        'status != 201 && status != 202 && status != 409',
         'accountMayExist',
         'emailSent',
         'accepted["email"]',
         'replacement->body()',
     ):
         if forbidden in SIGNUP_HARDENING:
-            raise AssertionError(f"generic verification signup response leaks or serializes unsafely: {forbidden}")
+            raise AssertionError(f"generic verification signup response leaks, misses valid statuses, or serializes unsafely: {forbidden}")
     if SIGNUP_HARDENING.count('accepted["signupAccepted"]') != 1:
         raise AssertionError("signup response must have one canonical acceptance marker")
     if "src/signup_response_hardening.cpp" not in CMAKE:
