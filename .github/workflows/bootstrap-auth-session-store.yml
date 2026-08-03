@@ -1,8 +1,8 @@
 name: Bootstrap auth session store refactor
 
 on:
-  push:
-    branches: [refactor/extract-auth-session-store]
+  pull_request:
+    branches: [Test]
     paths:
       - "scripts/refactor_auth_session_store.py"
       - ".github/workflows/bootstrap-auth-session-store.yml"
