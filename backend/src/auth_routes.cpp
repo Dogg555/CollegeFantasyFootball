@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 
 #ifdef CFF_HAS_POSTGRES
 #include <postgresql/libpq-fe.h>
