@@ -101,18 +101,32 @@ def login(email: str, password: str = PASSWORD) -> Response:
 
 
 def assert_generic_signup_response(response: Response) -> dict[str, Any]:
-    require(response.status == 202, f"verification signup must return 202, got {response.status}")
     payload = response.json()
-    require(payload.get("status") == "accepted", "generic signup status missing")
-    require(payload.get("signupAccepted") is True, "generic signup marker missing")
-    require(payload.get("emailVerificationRequired") is True, "verification requirement missing")
-    require(payload.get("valid") is False, "verification signup must not create a session")
+    require(
+        response.status == 202,
+        f"verification signup must return 202, got {response.status}: {payload!r}",
+    )
+    require(payload.get("status") == "accepted", f"generic signup status missing: {payload!r}")
+    require(payload.get("signupAccepted") is True, f"generic signup marker missing: {payload!r}")
+    require(payload.get("emailVerificationRequired") is True, f"verification requirement missing: {payload!r}")
+    require(payload.get("valid") is False, f"verification signup must not create a session: {payload!r}")
     for forbidden in ("token", "email", "emailSent", "accountMayExist"):
-        require(forbidden not in payload, f"generic signup response leaked {forbidden}")
+        require(forbidden not in payload, f"generic signup response leaked {forbidden}: {payload!r}")
     serialized = json.dumps(payload).lower()
-    require("already exists" not in serialized, "signup response disclosed account existence")
-    require("account created" not in serialized, "signup response disclosed account creation")
+    require("already exists" not in serialized, f"signup response disclosed account existence: {payload!r}")
+    require("account created" not in serialized, f"signup response disclosed account creation: {payload!r}")
     return payload
+
+
+def assert_indistinguishable(first: Response, second: Response, label: str) -> None:
+    require(
+        first.status == second.status,
+        f"{label} status differs for known and unknown accounts: {first.status} != {second.status}",
+    )
+    require(
+        first.json() == second.json(),
+        f"{label} body differs for known and unknown accounts: {first.json()!r} != {second.json()!r}",
+    )
 
 
 def main() -> int:
@@ -178,23 +192,33 @@ def main() -> int:
     require(throttled.json().get("code") == "rate_limited", "rate-limit code missing")
     require(int(throttled.headers.get("retry-after", "0")) > 0, "Retry-After header missing")
 
-    # Recovery endpoints must remain enumeration-safe for unknown accounts.
+    # Recovery copy may safely say "if the account exists". The security
+    # invariant is that known and unknown addresses receive the same status and
+    # body, including when transactional email delivery is unavailable.
     unknown = f"unknown-{time.time_ns()}@example.test"
-    resend = request(
+    known_resend = request(
+        "/api/auth/resend-verification",
+        method="POST",
+        payload={"email": email},
+    )
+    unknown_resend = request(
         "/api/auth/resend-verification",
         method="POST",
         payload={"email": unknown},
     )
-    require(resend.status == 200, "unknown-account resend must return a generic success")
-    require("exists" not in json.dumps(resend.json()).lower(), "resend response disclosed account existence")
+    assert_indistinguishable(known_resend, unknown_resend, "resend-verification response")
 
-    reset = request(
+    known_reset = request(
+        "/api/auth/request-password-reset",
+        method="POST",
+        payload={"email": email},
+    )
+    unknown_reset = request(
         "/api/auth/request-password-reset",
         method="POST",
         payload={"email": unknown},
     )
-    require(reset.status == 200, "unknown-account reset request must return a generic success")
-    require("exists" not in json.dumps(reset.json()).lower(), "reset response disclosed account existence")
+    assert_indistinguishable(known_reset, unknown_reset, "password-reset request response")
 
     blocked_origin = request(
         "/api/auth/signup",
