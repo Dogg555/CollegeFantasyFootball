@@ -6,6 +6,11 @@ on:
     paths:
       - "scripts/refactor_auth_core.py"
       - ".github/workflows/bootstrap-auth-core-refactor.yml"
+  pull_request:
+    branches: [Test]
+    paths:
+      - "scripts/refactor_auth_core.py"
+      - ".github/workflows/bootstrap-auth-core-refactor.yml"
 
 permissions:
   contents: write
