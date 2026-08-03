@@ -14,6 +14,9 @@ on:
       - "backend/src/auth_routes.cpp"
       - "backend/src/http_security.h"
       - "backend/src/http_security.cpp"
+      - "backend/src/health_routes.h"
+      - "backend/src/health_routes.cpp"
+      - "backend/src/health_status.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -24,6 +27,7 @@ on:
       - "backend/tests/auth_controller_boundary_tests.py"
       - "backend/tests/auth_routes_boundary_tests.py"
       - "backend/tests/http_security_boundary_tests.py"
+      - "backend/tests/health_routes_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -41,6 +45,9 @@ on:
       - "backend/src/auth_routes.cpp"
       - "backend/src/http_security.h"
       - "backend/src/http_security.cpp"
+      - "backend/src/health_routes.h"
+      - "backend/src/health_routes.cpp"
+      - "backend/src/health_status.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -51,6 +58,7 @@ on:
       - "backend/tests/auth_controller_boundary_tests.py"
       - "backend/tests/auth_routes_boundary_tests.py"
       - "backend/tests/http_security_boundary_tests.py"
+      - "backend/tests/health_routes_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -133,6 +141,18 @@ jobs:
           python-version: "3.12"
       - name: Verify authorization and CORS ownership
         run: python backend/tests/http_security_boundary_tests.py
+
+  health-routes-boundary:
+    name: Health and readiness route contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify health ownership and behavior
+        run: python backend/tests/health_routes_boundary_tests.py
 
   auth-account-contracts:
     name: Authentication account persistence contracts
