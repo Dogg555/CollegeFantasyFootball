@@ -203,6 +203,13 @@
     window.renderLeague = wrapped;
   }
 
+  // The build loads this module before league.js. Inject the team panel now so
+  // league.js includes it in the static panel NodeList used by tab switching.
+  // The DOMContentLoaded calls remain as an idempotent fallback for other load
+  // orders and for the join-code form created by league-beta-stability.js.
+  injectInviteTeamName();
+  injectSelfTeamNameCard();
+
   document.addEventListener('DOMContentLoaded', () => {
     injectManualJoinTeamName();
     injectInviteTeamName();
