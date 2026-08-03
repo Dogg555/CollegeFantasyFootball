@@ -33,7 +33,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/src/main.cpp backend/CMakeLists.txt
+          git add backend/src/main.cpp backend/src/auth_routes.cpp backend/CMakeLists.txt
           git diff --cached --check
           git commit -m "Extract authentication route registration"
           git push origin HEAD:refactor/extract-auth-routes
