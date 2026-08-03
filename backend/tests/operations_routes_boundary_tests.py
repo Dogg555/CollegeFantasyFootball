@@ -43,7 +43,7 @@ for declaration in (
 required_contracts = (
     "cff::http::isAuthorized(request, jwtSecret)",
     'response->setBody("unauthorized")',
-    'response->setBody(R"({\\"status\\":\\"ok\\",\\"scope\\":\\"secure\\"})")',
+    'response->setBody(R"({"status":"ok","scope":"secure"})")',
     "cff::http::requireAdmin(",
     "cff::runCfbdIngestOnce()",
     "cff::runLiveScoreIngestOnce()",
