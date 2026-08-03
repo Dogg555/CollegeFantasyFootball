@@ -1,0 +1,43 @@
+name: Bootstrap HTTP security refactor
+
+on:
+  pull_request:
+    branches: [Test]
+    paths:
+      - "scripts/refactor_http_security.py"
+      - ".github/workflows/bootstrap-http-security.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/extract-http-security
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply exact HTTP security transformation
+        run: python scripts/refactor_http_security.py
+
+      - name: Commit generated integration
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            backend/src/main.cpp \
+            backend/src/auth_routes.cpp \
+            backend/CMakeLists.txt \
+            .github/workflows/app-config-tests.yml
+          git diff --cached --check
+          git commit -m "Extract shared HTTP security middleware"
+          git push origin HEAD:refactor/extract-http-security
