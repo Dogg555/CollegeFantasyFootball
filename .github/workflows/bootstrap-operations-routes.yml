@@ -47,3 +47,5 @@ jobs:
           git diff --cached --check
           git commit -m "Extract operations and ingestion routes"
           git push origin HEAD:refactor/extract-operations-routes
+
+      # Retry marker: boundary expectation aligned with the checked-in C++ literal.
