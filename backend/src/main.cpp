@@ -25,6 +25,7 @@
 #include <postgresql/libpq-fe.h>
 #endif
 #include "auth_core.h"
+#include "auth_account_store.h"
 #include "auth_session_store.h"
 #include "app_config.h"
 #include "cfbd_ingest.h"
@@ -51,9 +52,6 @@ using cff::config::minPasswordLength;
 using cff::config::persistentDbRequired;
 using cff::config::readEnv;
 using cff::config::sharedSecretAuthAllowed;
-
-std::mutex userMutex;
-std::unordered_map<std::string, std::string> userPasswordHashes;
 
 void logIngestResult(const std::string &label, const cff::IngestResult &ingestResult) {
     std::cout << "[cfbd] " << label << " complete. inserted=" << ingestResult.ingested
@@ -170,81 +168,6 @@ PgResultPtr execParams(PGconn *conn,
 
 bool resultOk(PGresult *result, ExecStatusType expected) {
     return result && PQresultStatus(result) == expected;
-}
-
-bool dbCreateUser(const std::string &email, const std::string &passwordHash) {
-    auto conn = connectToDb();
-    if (!conn) return false;
-    auto result = execParams(conn.get(),
-                             "INSERT INTO users (email, password_hash) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                             {email, passwordHash});
-    return resultOk(result.get(), PGRES_COMMAND_OK) && std::string{PQcmdTuples(result.get())} == "1";
-}
-
-std::optional<std::string> dbPasswordHashForEmail(const std::string &email) {
-    auto conn = connectToDb();
-    if (!conn) return std::nullopt;
-    auto result = execParams(conn.get(),
-                             "SELECT password_hash FROM users WHERE email = $1",
-                             {email});
-    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) {
-        return std::nullopt;
-    }
-    return std::string{PQgetvalue(result.get(), 0, 0)};
-}
-
-std::optional<bool> dbEmailVerified(const std::string &email) {
-    auto conn = connectToDb();
-    if (!conn) return std::nullopt;
-    auto result = execParams(conn.get(), "SELECT email_verified FROM users WHERE email = $1", {email});
-    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
-    return std::string{PQgetvalue(result.get(), 0, 0)} == "t";
-}
-
-bool dbStoreEmailVerificationToken(const std::string &email, const std::string &token) {
-    auto conn = connectToDb();
-    if (!conn) return false;
-    auto result = execParams(conn.get(),
-                             "UPDATE users SET email_verification_token = encode(digest($2, 'sha256'), 'hex'), email_verification_expires_at = NOW() + INTERVAL '48 hours', updated_at = NOW() "
-                             "WHERE email = $1 AND email_verified = false",
-                             {email, token});
-    return resultOk(result.get(), PGRES_COMMAND_OK) && std::string{PQcmdTuples(result.get())} == "1";
-}
-
-std::optional<std::string> dbVerifyEmailToken(const std::string &token) {
-    auto conn = connectToDb();
-    if (!conn) return std::nullopt;
-    auto result = execParams(conn.get(),
-                             "UPDATE users SET email_verified = true, email_verification_token = NULL, email_verification_expires_at = NULL, updated_at = NOW() "
-                             "WHERE email_verification_token = encode(digest($1, 'sha256'), 'hex') AND email_verification_expires_at > NOW() RETURNING email",
-                             {token});
-    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
-    return std::string{PQgetvalue(result.get(), 0, 0)};
-}
-
-std::optional<std::string> dbStorePasswordResetToken(const std::string &email, const std::string &token) {
-    auto conn = connectToDb();
-    if (!conn) return std::nullopt;
-    auto result = execParams(conn.get(),
-                             "UPDATE users SET password_reset_token = encode(digest($2, 'sha256'), 'hex'), password_reset_expires_at = NOW() + INTERVAL '1 hour', updated_at = NOW() "
-                             "WHERE email = $1 RETURNING email",
-                             {email, token});
-    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
-    return std::string{PQgetvalue(result.get(), 0, 0)};
-}
-
-std::optional<std::string> dbResetPassword(const std::string &token, const std::string &passwordHash) {
-    auto conn = connectToDb();
-    if (!conn) return std::nullopt;
-    auto result = execParams(conn.get(),
-                             "UPDATE users SET password_hash = $2, password_reset_token = NULL, password_reset_expires_at = NULL, updated_at = NOW() "
-                             "WHERE password_reset_token = encode(digest($1, 'sha256'), 'hex') AND password_reset_expires_at > NOW() RETURNING email",
-                             {token, passwordHash});
-    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) return std::nullopt;
-    const auto email = std::string{PQgetvalue(result.get(), 0, 0)};
-    auto revoke = execParams(conn.get(), "DELETE FROM auth_tokens WHERE email = $1", {email});
-    (void)revoke;
-    return email;
 }
 
 Json::Value dbIngestionStatus() {
@@ -540,7 +463,7 @@ void handleSignup(const drogon::HttpRequestPtr &req,
 
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
-        if (!dbCreateUser(email, *passwordHash)) {
+        if (!cff::auth::createPersistentAccount(email, *passwordHash)) {
             if (authStorageUnavailable()) {
                 Json::Value error;
                 error["error"] = "Authentication service is temporarily unavailable";
@@ -558,7 +481,7 @@ void handleSignup(const drogon::HttpRequestPtr &req,
         }
 
         const auto verificationToken = randomToken();
-        const bool storedVerification = dbStoreEmailVerificationToken(email, verificationToken);
+        const bool storedVerification = cff::auth::storeEmailVerificationToken(email, verificationToken);
         const bool sentVerification = storedVerification && sendVerificationEmail(email, verificationToken);
         if (storedVerification && logAuthTokens()) {
             std::cout << "[auth] email verification token for " << email << ": " << verificationToken << std::endl;
@@ -603,17 +526,13 @@ void handleSignup(const drogon::HttpRequestPtr &req,
         return;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(userMutex);
-        if (userPasswordHashes.find(email) != userPasswordHashes.end()) {
-            Json::Value error;
-            error["error"] = "Account already exists";
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(drogon::k409Conflict);
-            callback(resp);
-            return;
-        }
-        userPasswordHashes[email] = *passwordHash;
+    if (!cff::auth::createInMemoryAccount(email, *passwordHash)) {
+        Json::Value error;
+        error["error"] = "Account already exists";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k409Conflict);
+        callback(resp);
+        return;
     }
 
     const auto token = issueTokenForUser(email);
@@ -654,7 +573,7 @@ void handleLogin(const drogon::HttpRequestPtr &req,
     bool passwordMatches = false;
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
-        const auto passwordHash = dbPasswordHashForEmail(email);
+        const auto passwordHash = cff::auth::persistentPasswordHashForEmail(email);
         if (!passwordHash && authStorageUnavailable()) {
             Json::Value error;
             error["error"] = "Authentication service is temporarily unavailable";
@@ -665,7 +584,7 @@ void handleLogin(const drogon::HttpRequestPtr &req,
         }
         passwordMatches = passwordHash && verifyPassword(password, *passwordHash);
         if (passwordMatches && emailVerificationRequired()) {
-            const auto verified = dbEmailVerified(email);
+            const auto verified = cff::auth::persistentEmailVerified(email);
             if (!verified.value_or(false)) {
                 Json::Value error;
                 error["error"] = "Email verification required";
@@ -686,9 +605,8 @@ void handleLogin(const drogon::HttpRequestPtr &req,
         return;
     } else
     {
-        std::lock_guard<std::mutex> lock(userMutex);
-        auto it = userPasswordHashes.find(email);
-        passwordMatches = (it != userPasswordHashes.end() && verifyPassword(password, it->second));
+        const auto passwordHash = cff::auth::inMemoryPasswordHashForEmail(email);
+        passwordMatches = passwordHash && verifyPassword(password, *passwordHash);
     }
 
     if (!passwordMatches) {
@@ -752,7 +670,7 @@ void handleVerifyEmail(const drogon::HttpRequestPtr &req,
     }
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
-        const auto email = dbVerifyEmailToken(token);
+        const auto email = cff::auth::verifyEmailToken(token);
         if (!email) {
             Json::Value error;
             error["error"] = "Invalid or expired verification token";
@@ -786,7 +704,7 @@ void handleResendVerification(const drogon::HttpRequestPtr &req,
     std::optional<std::string> verificationToken;
     if (dbConfigured() && !email.empty()) {
         verificationToken = randomToken();
-        if (dbStoreEmailVerificationToken(email, *verificationToken)) {
+        if (cff::auth::storeEmailVerificationToken(email, *verificationToken)) {
             sendVerificationEmail(email, *verificationToken);
             if (logAuthTokens()) {
                 std::cout << "[auth] email verification token for " << email << ": " << *verificationToken << std::endl;
@@ -817,7 +735,7 @@ void handleRequestPasswordReset(const drogon::HttpRequestPtr &req,
     std::optional<std::string> resetToken;
     if (dbConfigured() && !email.empty()) {
         const auto candidate = randomToken();
-        if (dbStorePasswordResetToken(email, candidate)) {
+        if (cff::auth::storePasswordResetToken(email, candidate)) {
             resetToken = candidate;
             sendPasswordResetEmail(email, candidate);
             if (logAuthTokens()) {
@@ -866,7 +784,7 @@ void handleResetPassword(const drogon::HttpRequestPtr &req,
     }
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
-        const auto email = dbResetPassword(token, *passwordHash);
+        const auto email = cff::auth::resetPassword(token, *passwordHash);
         if (!email) {
             Json::Value error;
             error["error"] = "Invalid or expired reset token";
