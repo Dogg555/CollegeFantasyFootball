@@ -80,9 +80,9 @@ jobs:
           docker run -d --name college-ff-api-signup --network host \
             -e PORT=8080 \
             -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
-            -e JWT_SECRET=ci-signup-jwt-secret-2026-at-least-32-characters \
+            -e JWT_SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
             -e ALLOWED_ORIGINS=https://frontend.example.test \
-            -e CFF_ADMIN_API_TOKEN=ci-signup-admin-token-2026-at-least-32-characters \
+            -e CFF_ADMIN_API_TOKEN=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
             -e CFF_REQUIRE_DB=true \
             -e CFF_RUN_MIGRATIONS_ON_STARTUP=false \
             -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
