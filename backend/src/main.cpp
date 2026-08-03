@@ -25,6 +25,7 @@
 #include <postgresql/libpq-fe.h>
 #endif
 #include "auth_core.h"
+#include "auth_session_store.h"
 #include "app_config.h"
 #include "cfbd_ingest.h"
 #include "email_delivery.h"
@@ -53,14 +54,6 @@ using cff::config::sharedSecretAuthAllowed;
 
 std::mutex userMutex;
 std::unordered_map<std::string, std::string> userPasswordHashes;
-
-struct TokenRecord {
-    std::string email;
-    std::chrono::steady_clock::time_point expiresAt;
-};
-
-std::unordered_map<std::string, TokenRecord> activeTokens; // token -> record
-constexpr std::chrono::hours kTokenTtl{24};
 
 void logIngestResult(const std::string &label, const cff::IngestResult &ingestResult) {
     std::cout << "[cfbd] " << label << " complete. inserted=" << ingestResult.ingested
@@ -188,20 +181,6 @@ bool dbCreateUser(const std::string &email, const std::string &passwordHash) {
     return resultOk(result.get(), PGRES_COMMAND_OK) && std::string{PQcmdTuples(result.get())} == "1";
 }
 
-void dbCleanupExpiredTokens(PGconn *conn) {
-    auto cleanupAuth = execParams(conn, "DELETE FROM auth_tokens WHERE expires_at <= NOW()", {});
-    (void)cleanupAuth;
-    auto cleanupUsers = execParams(conn,
-                                   "UPDATE users SET "
-                                   "email_verification_token = CASE WHEN email_verification_expires_at <= NOW() THEN NULL ELSE email_verification_token END, "
-                                   "email_verification_expires_at = CASE WHEN email_verification_expires_at <= NOW() THEN NULL ELSE email_verification_expires_at END, "
-                                   "password_reset_token = CASE WHEN password_reset_expires_at <= NOW() THEN NULL ELSE password_reset_token END, "
-                                   "password_reset_expires_at = CASE WHEN password_reset_expires_at <= NOW() THEN NULL ELSE password_reset_expires_at END "
-                                   "WHERE email_verification_expires_at <= NOW() OR password_reset_expires_at <= NOW()",
-                                   {});
-    (void)cleanupUsers;
-}
-
 std::optional<std::string> dbPasswordHashForEmail(const std::string &email) {
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
@@ -212,49 +191,6 @@ std::optional<std::string> dbPasswordHashForEmail(const std::string &email) {
         return std::nullopt;
     }
     return std::string{PQgetvalue(result.get(), 0, 0)};
-}
-
-bool dbPersistToken(const std::string &token, const std::string &email) {
-    auto conn = connectToDb();
-    if (!conn) return false;
-    dbCleanupExpiredTokens(conn.get());
-    auto result = execParams(conn.get(),
-                             "INSERT INTO auth_tokens (token, email, expires_at) "
-                             "VALUES (encode(digest($1, 'sha256'), 'hex'), $2, NOW() + INTERVAL '24 hours') "
-                             "ON CONFLICT (token) DO UPDATE SET email = EXCLUDED.email, expires_at = EXCLUDED.expires_at",
-                             {token, email});
-    if (!resultOk(result.get(), PGRES_COMMAND_OK)) {
-        std::cerr << "[auth] token insert failed: " << PQerrorMessage(conn.get()) << std::endl;
-        return false;
-    }
-    return true;
-}
-
-std::optional<std::string> dbEmailForToken(const std::string &token) {
-    auto conn = connectToDb();
-    if (!conn) return std::nullopt;
-    dbCleanupExpiredTokens(conn.get());
-    auto result = execParams(conn.get(),
-                             "SELECT email FROM auth_tokens WHERE token = encode(digest($1, 'sha256'), 'hex') AND expires_at > NOW()",
-                             {token});
-    if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) {
-        return std::nullopt;
-    }
-    return std::string{PQgetvalue(result.get(), 0, 0)};
-}
-
-void dbRevokeToken(const std::string &token) {
-    auto conn = connectToDb();
-    if (!conn) return;
-    auto result = execParams(conn.get(), "DELETE FROM auth_tokens WHERE token = encode(digest($1, 'sha256'), 'hex')", {token});
-    (void)result;
-}
-
-void dbRevokeTokensForEmail(const std::string &email) {
-    auto conn = connectToDb();
-    if (!conn) return;
-    auto result = execParams(conn.get(), "DELETE FROM auth_tokens WHERE email = $1", {email});
-    (void)result;
 }
 
 std::optional<bool> dbEmailVerified(const std::string &email) {
@@ -501,32 +437,7 @@ bool hasBearerToken(const drogon::HttpRequestPtr &req, std::string &outToken) {
 }
 
 std::optional<std::string> issueTokenForUser(const std::string &email) {
-    const auto token = randomToken();
-    const auto expiresAt = std::chrono::steady_clock::now() + kTokenTtl;
-#ifdef CFF_HAS_POSTGRES
-    if (dbConfigured()) {
-        if (!dbPersistToken(token, email)) {
-            return std::nullopt;
-        }
-    } else if (persistentDbRequired()) {
-        return std::nullopt;
-    }
-#else
-    if (persistentDbRequired()) {
-        return std::nullopt;
-    }
-#endif
-    std::lock_guard<std::mutex> lock(userMutex);
-    const auto now = std::chrono::steady_clock::now();
-    for (auto it = activeTokens.begin(); it != activeTokens.end();) {
-        if (it->second.expiresAt <= now) {
-            it = activeTokens.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    activeTokens[token] = TokenRecord{email, expiresAt};
-    return token;
+    return cff::auth::issueSessionToken(email);
 }
 
 bool isAuthorized(const drogon::HttpRequestPtr &req, const std::optional<std::string> &secret) {
@@ -546,50 +457,11 @@ bool isAuthorized(const drogon::HttpRequestPtr &req, const std::optional<std::st
     if (sharedSecretAuthAllowed() && secret && token == secret.value()) {
         return true; // compatibility for pre-shared secret
     }
-#ifdef CFF_HAS_POSTGRES
-    if (dbConfigured()) {
-        return dbEmailForToken(token).has_value();
-    }
-#endif
-    std::lock_guard<std::mutex> lock(userMutex);
-    const auto now = std::chrono::steady_clock::now();
-    auto it = activeTokens.find(token);
-    if (it == activeTokens.end()) {
-        return false;
-    }
-    if (it->second.expiresAt <= now) {
-        activeTokens.erase(it);
-        return false;
-    }
-    return true;
+    return cff::auth::emailForSessionToken(token).has_value();
 }
 
 std::optional<std::string> emailForToken(const std::string &token) {
-#ifdef CFF_HAS_POSTGRES
-    if (persistentDbRequired() && !dbConfigured()) {
-        return std::nullopt;
-    }
-#else
-    if (persistentDbRequired()) {
-        return std::nullopt;
-    }
-#endif
-#ifdef CFF_HAS_POSTGRES
-    if (dbConfigured()) {
-        return dbEmailForToken(token);
-    }
-#endif
-    std::lock_guard<std::mutex> lock(userMutex);
-    auto it = activeTokens.find(token);
-    const auto now = std::chrono::steady_clock::now();
-    if (it == activeTokens.end()) {
-        return std::nullopt;
-    }
-    if (it->second.expiresAt <= now) {
-        activeTokens.erase(it);
-        return std::nullopt;
-    }
-    return it->second.email;
+    return cff::auth::emailForSessionToken(token);
 }
 
 void applyCorsHeaders(const drogon::HttpRequestPtr &req,
@@ -858,15 +730,7 @@ void handleLogout(const drogon::HttpRequestPtr &req,
         callback(resp);
         return;
     }
-#ifdef CFF_HAS_POSTGRES
-    if (dbConfigured()) {
-        dbRevokeToken(token);
-    }
-#endif
-    {
-        std::lock_guard<std::mutex> lock(userMutex);
-        activeTokens.erase(token);
-    }
+    cff::auth::revokeSessionToken(token);
     Json::Value payload;
     payload["status"] = "ok";
     auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
