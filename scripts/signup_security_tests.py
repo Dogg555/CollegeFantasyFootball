@@ -92,6 +92,29 @@ def signup(email: str, password: str = PASSWORD, request_id: str = "") -> Respon
     )
 
 
+def login(email: str, password: str = PASSWORD) -> Response:
+    return request(
+        "/api/auth/login",
+        method="POST",
+        payload={"email": email, "password": password},
+    )
+
+
+def assert_generic_signup_response(response: Response) -> dict[str, Any]:
+    require(response.status == 202, f"verification signup must return 202, got {response.status}")
+    payload = response.json()
+    require(payload.get("status") == "accepted", "generic signup status missing")
+    require(payload.get("signupAccepted") is True, "generic signup marker missing")
+    require(payload.get("emailVerificationRequired") is True, "verification requirement missing")
+    require(payload.get("valid") is False, "verification signup must not create a session")
+    for forbidden in ("token", "email", "emailSent", "accountMayExist"):
+        require(forbidden not in payload, f"generic signup response leaked {forbidden}")
+    serialized = json.dumps(payload).lower()
+    require("already exists" not in serialized, "signup response disclosed account existence")
+    require("account created" not in serialized, "signup response disclosed account creation")
+    return payload
+
+
 def main() -> int:
     wait_for_health()
 
@@ -115,16 +138,9 @@ def main() -> int:
     require(missing_password.status == 400, "missing password should be rejected")
     require(missing_password.json().get("code") == "invalid_password", "missing password code missing")
 
-    timestamp = time.time_ns()
-    email = f"signup-hardening-{timestamp}@example.test"
+    email = "signup-hardening@example.test"
     created = signup(email, request_id="signup-security-created")
-    require(created.status == 201, f"new account signup returned {created.status}: {created.body!r}")
-    created_json = created.json()
-    require(created_json.get("email") == email, "signup did not canonicalize or return the account email")
-    require(created_json.get("emailVerificationRequired") is True, "verification must be required in this test")
-    require(created_json.get("valid") is False, "unverified signup must not create a valid session")
-    require("token" not in created_json, "unverified signup exposed a session token")
-    require(created_json.get("emailSent") is False, "test environment should report unavailable email delivery")
+    created_json = assert_generic_signup_response(created)
     require(
         created.headers.get("x-cff-request-id") == "signup-security-created",
         "trusted request ID was not returned",
@@ -134,15 +150,19 @@ def main() -> int:
         "request reference header is not CORS-exposed",
     )
 
+    # The generic response must still correspond to a persisted, unverified
+    # account. Login proves the account exists without exposing that fact from
+    # the signup endpoint itself.
+    unverified_login = login(email)
+    require(unverified_login.status == 403, "new unverified account did not persist")
+    require(
+        "verification" in json.dumps(unverified_login.json()).lower(),
+        "unverified login did not require verification",
+    )
+
     duplicate = signup(email, request_id="signup-security-duplicate")
-    require(duplicate.status == 202, f"duplicate signup should be accepted generically, got {duplicate.status}")
-    duplicate_json = duplicate.json()
-    require(duplicate_json.get("accountMayExist") is True, "generic duplicate marker missing")
-    require(duplicate_json.get("valid") is False, "generic duplicate response must not create a session")
-    require("token" not in duplicate_json, "generic duplicate response exposed a token")
-    serialized_duplicate = json.dumps(duplicate_json).lower()
-    require("already exists" not in serialized_duplicate, "duplicate signup disclosed account existence")
-    require(email not in serialized_duplicate, "duplicate signup reflected the registered email")
+    duplicate_json = assert_generic_signup_response(duplicate)
+    require(duplicate_json == created_json, "new and duplicate signup bodies are distinguishable")
     require(
         duplicate.headers.get("x-cff-request-id") == "signup-security-duplicate",
         "duplicate response lost request correlation",
@@ -152,14 +172,14 @@ def main() -> int:
     # next valid-shaped request for the same address must be throttled.
     for attempt in range(3):
         repeated = signup(email)
-        require(repeated.status == 202, f"duplicate attempt {attempt} returned {repeated.status}")
+        assert_generic_signup_response(repeated)
     throttled = signup(email)
     require(throttled.status == 429, f"per-email signup throttle did not activate: {throttled.status}")
     require(throttled.json().get("code") == "rate_limited", "rate-limit code missing")
     require(int(throttled.headers.get("retry-after", "0")) > 0, "Retry-After header missing")
 
     # Recovery endpoints must remain enumeration-safe for unknown accounts.
-    unknown = f"unknown-{timestamp}@example.test"
+    unknown = f"unknown-{time.time_ns()}@example.test"
     resend = request(
         "/api/auth/resend-verification",
         method="POST",
@@ -179,7 +199,7 @@ def main() -> int:
     blocked_origin = request(
         "/api/auth/signup",
         method="POST",
-        payload={"email": f"blocked-{timestamp}@example.test", "password": PASSWORD},
+        payload={"email": f"blocked-{time.time_ns()}@example.test", "password": PASSWORD},
         headers={"Origin": "https://attacker.invalid"},
     )
     require(blocked_origin.status == 403, "disallowed signup origin was not rejected")
