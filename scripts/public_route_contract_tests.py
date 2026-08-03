@@ -28,14 +28,10 @@ def require(condition: bool, message: str) -> None:
 
 def registrations(source: str) -> list[tuple[str, str]]:
     pattern = re.compile(
-        r"\.registerHandler\s*\(\s*\"([^\"]+)\".*?\{\s*drogon::(Get|Options)\s*\}\s*\)",
+        r"(?:app)?\.registerHandler\s*\(\s*\"([^\"]+)\".*?\{\s*drogon::(Get|Options)\s*\}\s*\)",
         re.DOTALL,
     )
-    first = re.compile(
-        r"app\.registerHandler\s*\(\s*\"([^\"]+)\".*?\{\s*drogon::(Get|Options)\s*\}\s*\)",
-        re.DOTALL,
-    )
-    return first.findall(source) + pattern.findall(source)
+    return pattern.findall(source)
 
 
 def main() -> int:
