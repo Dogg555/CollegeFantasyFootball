@@ -108,12 +108,16 @@ jobs:
       - name: Generate ephemeral test values
         shell: bash
         run: |
+          set -euo pipefail
           jwt_secret="$(openssl rand -hex 32)"
           admin_token="$(openssl rand -hex 32)"
+          account_password="$(openssl rand -base64 32 | tr -d '\n' | tr '/+' 'Aa')-A1!"
           echo "::add-mask::$jwt_secret"
           echo "::add-mask::$admin_token"
+          echo "::add-mask::$account_password"
           echo "CFF_TEST_JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
           echo "CFF_TEST_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
+          echo "CFF_ACCOUNT_RESET_PASSWORD=$account_password" >> "$GITHUB_ENV"
           echo "CFF_ACCOUNT_RESET_EMAIL=account-reset-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.test" >> "$GITHUB_ENV"
 
       - name: Start verification-required API without email delivery
@@ -158,7 +162,7 @@ jobs:
               -H 'Accept: application/json' \
               -H 'Content-Type: application/json' \
               -H 'Origin: https://frontend.example.test' \
-              --data "$(python -c 'import json, os; print(json.dumps({"email": os.environ["CFF_ACCOUNT_RESET_EMAIL"], "password": "Reset-Test-Password-2026!"}))')" \
+              --data "$(python -c 'import json, os; print(json.dumps({"email": os.environ["CFF_ACCOUNT_RESET_EMAIL"], "password": os.environ["CFF_ACCOUNT_RESET_PASSWORD"]}))')" \
               http://127.0.0.1:8080/api/auth/signup
           }
 
