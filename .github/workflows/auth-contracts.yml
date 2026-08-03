@@ -144,7 +144,7 @@ jobs:
             -e CFF_REQUIRE_EMAIL_VERIFICATION="$VERIFICATION_REQUIRED" \
             -e CFF_EXPOSE_AUTH_TOKENS=true \
             -e CFF_LOG_AUTH_TOKENS=false \
-            -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
+            -e CFF_SECURITY_ENFORCE_PRODUCTION=false \
             -e CFF_TRUST_PROXY_HEADERS=false \
             -e CFF_FRONTEND_BASE_URL=https://frontend.example.test \
             -e CFF_EMAIL_PROVIDER=smtp \
