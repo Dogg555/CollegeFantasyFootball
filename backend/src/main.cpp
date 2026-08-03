@@ -24,6 +24,7 @@
 #ifdef CFF_HAS_POSTGRES
 #include <postgresql/libpq-fe.h>
 #endif
+#include "app_config.h"
 #include "cfbd_ingest.h"
 #include "email_delivery.h"
 #include "live_scores.h"
@@ -34,13 +35,16 @@
 
 #ifdef DROGON_FOUND
 namespace {
-std::optional<std::string> readEnv(const std::string &key) {
-    const char *val = std::getenv(key.c_str());
-    if (val == nullptr) {
-        return std::nullopt;
-    }
-    return std::string{val};
-}
+using cff::config::csvEmailSetFromEnv;
+using cff::config::emailVerificationRequired;
+using cff::config::exposeAuthTokens;
+using cff::config::frontendBaseUrl;
+using cff::config::logAuthTokens;
+using cff::config::maxPasswordLength;
+using cff::config::minPasswordLength;
+using cff::config::persistentDbRequired;
+using cff::config::readEnv;
+using cff::config::sharedSecretAuthAllowed;
 
 std::mutex userMutex;
 std::unordered_map<std::string, std::string> userPasswordHashes;
@@ -52,49 +56,6 @@ struct TokenRecord {
 
 std::unordered_map<std::string, TokenRecord> activeTokens; // token -> record
 constexpr std::chrono::hours kTokenTtl{24};
-
-bool envFlagEnabled(const std::string &key) {
-    const auto value = readEnv(key);
-    return value && (*value == "1" || *value == "true" || *value == "TRUE" || *value == "yes" || *value == "YES");
-}
-
-std::optional<int> readPositiveIntEnv(const std::string &key) {
-    const auto value = readEnv(key);
-    if (!value || value->empty()) {
-        return std::nullopt;
-    }
-    char *end = nullptr;
-    const long parsed = std::strtol(value->c_str(), &end, 10);
-    if (end == value->c_str() || parsed <= 0 || parsed > 24 * 30) {
-        return std::nullopt;
-    }
-    return static_cast<int>(parsed);
-}
-
-std::size_t readSizeEnv(const std::string &key, std::size_t fallback, std::size_t maximum) {
-    const auto value = readEnv(key);
-    if (!value || value->empty()) {
-        return fallback;
-    }
-    char *end = nullptr;
-    const unsigned long parsed = std::strtoul(value->c_str(), &end, 10);
-    if (end == value->c_str() || parsed == 0 || parsed > maximum) {
-        return fallback;
-    }
-    return static_cast<std::size_t>(parsed);
-}
-
-bool persistentDbRequired() {
-    return envFlagEnabled("CFF_REQUIRE_DB");
-}
-
-std::size_t minPasswordLength() {
-    return readSizeEnv("CFF_MIN_PASSWORD_LENGTH", 12, 72);
-}
-
-std::size_t maxPasswordLength() {
-    return readSizeEnv("CFF_MAX_PASSWORD_LENGTH", 72, 72);
-}
 
 void logIngestResult(const std::string &label, const cff::IngestResult &ingestResult) {
     std::cout << "[cfbd] " << label << " complete. inserted=" << ingestResult.ingested
@@ -116,10 +77,6 @@ void startBackgroundCfbdIngest(int intervalHours) {
     }).detach();
 }
 
-bool sharedSecretAuthAllowed() {
-    return envFlagEnabled("CFF_ALLOW_SHARED_SECRET_AUTH");
-}
-
 std::string lowerAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -137,58 +94,10 @@ std::string canonicalEmail(std::string value) {
     return lowerAscii(std::move(value));
 }
 
-std::unordered_set<std::string> csvEmailSetFromEnv(const std::string &key) {
-    std::unordered_set<std::string> values;
-    const auto raw = readEnv(key);
-    if (!raw) return values;
-    std::size_t start = 0;
-    while (start <= raw->size()) {
-        const auto pos = raw->find(',', start);
-        auto item = raw->substr(start, pos == std::string::npos ? std::string::npos : pos - start);
-        item.erase(item.begin(), std::find_if(item.begin(), item.end(), [](unsigned char ch) {
-            return !std::isspace(ch);
-        }));
-        item.erase(std::find_if(item.rbegin(), item.rend(), [](unsigned char ch) {
-            return !std::isspace(ch);
-        }).base(), item.end());
-        if (!item.empty()) {
-            values.insert(lowerAscii(item));
-        }
-        if (pos == std::string::npos) break;
-        start = pos + 1;
-    }
-    return values;
-}
-
-bool emailVerificationRequired() {
-    return envFlagEnabled("CFF_REQUIRE_EMAIL_VERIFICATION");
-}
-
-bool exposeAuthTokens() {
-    return envFlagEnabled("CFF_EXPOSE_AUTH_TOKENS");
-}
-
-bool logAuthTokens() {
-    return envFlagEnabled("CFF_LOG_AUTH_TOKENS");
-}
-
 std::string jsonToString(const Json::Value &value) {
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";
     return Json::writeString(builder, value);
-}
-
-std::optional<std::string> frontendBaseUrl() {
-    if (auto url = readEnv("CFF_FRONTEND_BASE_URL")) {
-        if (!url->empty()) return url;
-    }
-    if (auto origins = readEnv("ALLOWED_ORIGINS")) {
-        const auto comma = origins->find(',');
-        auto first = origins->substr(0, comma == std::string::npos ? std::string::npos : comma);
-        while (!first.empty() && first.back() == '/') first.pop_back();
-        if (!first.empty()) return first;
-    }
-    return std::nullopt;
 }
 
 bool emailDeliveryConfigured() {
@@ -243,16 +152,16 @@ using PgConnPtr = std::unique_ptr<PGconn, PgConnDeleter>;
 using PgResultPtr = std::unique_ptr<PGresult, PgResultDeleter>;
 
 bool dbConfigured() {
-    const auto *url = std::getenv("DB_URL");
-    return url && std::string{url}.size() > 0;
+    const auto url = readEnv("DB_URL");
+    return url && !url->empty();
 }
 
 PgConnPtr connectToDb() {
-    const auto *url = std::getenv("DB_URL");
-    if (!url) {
+    const auto url = readEnv("DB_URL");
+    if (!url || url->empty()) {
         return nullptr;
     }
-    auto conn = PgConnPtr{PQconnectdb(url)};
+    auto conn = PgConnPtr{PQconnectdb(url->c_str())};
     if (PQstatus(conn.get()) != CONNECTION_OK) {
         std::cerr << "[auth] Failed to connect to Postgres: " << PQerrorMessage(conn.get()) << std::endl;
         return nullptr;
@@ -1305,21 +1214,21 @@ int main(int argc, char* argv[]) {
 #ifdef DROGON_FOUND
     auto &app = drogon::app();
 
-    // Environment configuration
-    const auto port = readEnv("PORT").value_or("8080");
-    const auto jwtSecret = readEnv("JWT_SECRET");
-    const auto sslCert = readEnv("SSL_CERT_FILE");
-    const auto sslKey = readEnv("SSL_KEY_FILE");
-    const auto allowedOriginEnv = readEnv("ALLOWED_ORIGINS");
-    const auto ingestOnStartupEnv = readEnv("CFBD_INGEST_ON_STARTUP");
-    const auto ingestIntervalHours = readPositiveIntEnv("CFBD_INGEST_INTERVAL_HOURS");
+    // Load environment configuration once at startup. Policy helpers used by
+    // request handlers remain centralized in app_config.cpp.
+    const auto runtimeConfig = cff::config::loadRuntimeConfig();
+    const auto &port = runtimeConfig.port;
+    const auto &jwtSecret = runtimeConfig.jwtSecret;
+    const auto &sslCert = runtimeConfig.sslCert;
+    const auto &sslKey = runtimeConfig.sslKey;
+    const auto &ingestIntervalHours = runtimeConfig.ingestIntervalHours;
 
     if (!jwtSecret.has_value()) {
         std::cerr << "[security] JWT_SECRET is not set; secure endpoints will reject all requests." << std::endl;
     }
 
     // SSL enablement when certs are available
-    const bool useSsl = static_cast<bool>(sslCert && sslKey);
+    const bool useSsl = runtimeConfig.sslEnabled();
     if (sslCert && sslKey) {
         app.setSSLFiles(sslCert.value(), sslKey.value());
         std::cout << "[security] SSL enabled with provided certificate and key." << std::endl;
@@ -1328,23 +1237,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Minimal CORS handling via post-routing advice
-    std::unordered_set<std::string> allowedOrigins;
-    if (allowedOriginEnv) {
-        // Comma-separated list of origins
-        std::string list = allowedOriginEnv.value();
-        std::size_t start = 0;
-        while (true) {
-            auto pos = list.find(',', start);
-            auto origin = list.substr(start, pos == std::string::npos ? std::string::npos : pos - start);
-            if (!origin.empty()) {
-                allowedOrigins.insert(origin);
-            }
-            if (pos == std::string::npos) {
-                break;
-            }
-            start = pos + 1;
-        }
-    } else {
+    const auto &allowedOrigins = runtimeConfig.allowedOrigins;
+    if (!runtimeConfig.allowedOriginsConfigured) {
         std::cout << "[security] ALLOWED_ORIGINS not set; cross-origin requests will be blocked." << std::endl;
     }
 
@@ -1369,9 +1263,7 @@ int main(int argc, char* argv[]) {
         callback(buildPreflightResponse(req, allowedOrigins));
     };
 
-    const bool ingestOnStartup = ingestOnStartupEnv &&
-                                 (*ingestOnStartupEnv == "1" || *ingestOnStartupEnv == "true" ||
-                                  *ingestOnStartupEnv == "TRUE" || *ingestOnStartupEnv == "yes");
+    const bool ingestOnStartup = runtimeConfig.ingestOnStartup;
     const auto healthHandler = [jwtSecret, allowedOrigins](const drogon::HttpRequestPtr&,
                                                            std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
         const auto payload = healthPayload(jwtSecret, allowedOrigins);
