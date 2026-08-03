@@ -58,7 +58,7 @@ class SmtpHandler(socketserver.StreamRequestHandler):
 
     def handle(self) -> None:
         envelope: dict[str, object] = {"mailFrom": "", "recipients": [], "data": ""}
-        login_stage = ""
+        auth_stage = ""
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
         print(f"[smtp] connection from {peer}", file=sys.stderr, flush=True)
         self.send("220 cff-test-smtp ESMTP ready")
@@ -72,12 +72,16 @@ class SmtpHandler(socketserver.StreamRequestHandler):
             self.server.trace("C:", line)
             upper = line.upper()
 
-            if login_stage == "username":
-                login_stage = "password"
+            if auth_stage == "plain":
+                auth_stage = ""
+                self.send("235 2.7.0 Authentication successful")
+                continue
+            if auth_stage == "login-username":
+                auth_stage = "login-password"
                 self.send("334 UGFzc3dvcmQ6")
                 continue
-            if login_stage == "password":
-                login_stage = ""
+            if auth_stage == "login-password":
+                auth_stage = ""
                 self.send("235 2.7.0 Authentication successful")
                 continue
 
@@ -91,11 +95,19 @@ class SmtpHandler(socketserver.StreamRequestHandler):
                 print("[smtp] S: 250 capabilities", file=sys.stderr, flush=True)
             elif upper.startswith("HELO"):
                 self.send("250 cff-test-smtp")
-            elif upper.startswith("AUTH PLAIN"):
+            elif upper == "AUTH PLAIN":
+                # libcurl commonly sends AUTH PLAIN first, waits for an empty
+                # challenge, and then sends the base64 credential payload.
+                auth_stage = "plain"
+                self.send("334")
+            elif upper.startswith("AUTH PLAIN "):
                 self.send("235 2.7.0 Authentication successful")
             elif upper == "AUTH LOGIN":
-                login_stage = "username"
+                auth_stage = "login-username"
                 self.send("334 VXNlcm5hbWU6")
+            elif upper.startswith("AUTH LOGIN "):
+                auth_stage = "login-password"
+                self.send("334 UGFzc3dvcmQ6")
             elif upper.startswith("MAIL FROM:"):
                 envelope = {"mailFrom": line[10:].strip(), "recipients": [], "data": ""}
                 self.send("250 2.1.0 Sender accepted")
