@@ -1084,7 +1084,7 @@ bool isAdminRequest(const drogon::HttpRequestPtr &req,
         return false;
     }
     const auto admins = csvEmailSetFromEnv("CFF_ADMIN_EMAILS");
-    if (!admins.empty() && admins.find(lowerAscii(*email)) != admins.end()) {
+    if (!admins.empty() && admins.find(canonicalEmail(*email)) != admins.end()) {
         adminIdentity = *email;
         return true;
     }
