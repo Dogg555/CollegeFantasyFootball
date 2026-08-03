@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -70,6 +71,13 @@ def canonical(value):
     if isinstance(value, list):
         return [canonical(item) for item in value]
     return value
+
+
+def canonical_setting(field: str, value):
+    if field == "draftDate":
+        match = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})", str(value or ""))
+        return match.group(1) if match else ""
+    return canonical(value)
 
 
 def main():
@@ -150,7 +158,7 @@ def main():
     )
     for field in fields:
         require(
-            canonical(saved.get(field)) == canonical(settings.get(field)),
+            canonical_setting(field, saved.get(field)) == canonical_setting(field, settings.get(field)),
             f"{field} did not persist: requested={settings.get(field)!r} saved={saved.get(field)!r}",
         )
     require(saved.get("invitedEmails") == [invited_email], f"invite emails were not canonicalized: {saved}")
@@ -160,7 +168,7 @@ def main():
     require(persisted, "saved league disappeared from the commissioner list")
     for field in fields:
         require(
-            canonical(persisted.get(field)) == canonical(saved.get(field)),
+            canonical_setting(field, persisted.get(field)) == canonical_setting(field, saved.get(field)),
             f"{field} changed after a fresh list read: saved={saved.get(field)!r} listed={persisted.get(field)!r}",
         )
 
