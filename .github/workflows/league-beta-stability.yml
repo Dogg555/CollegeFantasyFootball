@@ -1,0 +1,99 @@
+name: League beta stability
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: league-beta-stability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stability:
+    name: Settings, join codes, and player state
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate frontend stability runtime
+        env:
+          CFF_API_BASE: https://example.invalid/api
+          CFF_ALLOW_LOCAL_DEMO: "false"
+          RENDER_GIT_COMMIT: beta-stability-ci
+          RENDER_GIT_BRANCH: ci
+        run: |
+          node --check frontend/league-beta-stability.js
+          python -m py_compile scripts/league_beta_stability_tests.py
+          sh scripts/render-build-frontend.sh
+          grep -F 'league-beta-stability.js?v=beta-stability-ci' frontend-dist/league.html
+          grep -F 'league-beta-stability.js?v=beta-stability-ci' frontend-dist/players.html
+          grep -F 'runtime-compat.js?v=beta-stability-ci' frontend-dist/league.html
+
+      - name: Build production API image
+        run: docker build -f backend/Dockerfile -t college-ff-api ./backend
+
+      - name: Run database migrations
+        run: |
+          docker run --rm --network host \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            college-ff-api sh /srv/db/migrate.sh
+
+      - name: Start API
+        run: |
+          docker run -d --name college-ff-api --network host \
+            -e PORT=8080 \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            -e JWT_SECRET=league-beta-ci-secret \
+            -e CFF_REQUIRE_DB=true \
+            -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION=false \
+            -e ALLOWED_ORIGINS=https://college-fantasy-football.com \
+            college-ff-api
+
+      - name: Wait for healthy API
+        run: |
+          set -euo pipefail
+          for attempt in {1..45}; do
+            if curl -fsS http://127.0.0.1:8080/health | grep -q '"status" : "ok"'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs college-ff-api
+          exit 1
+
+      - name: Run league beta stability integration test
+        env:
+          CFF_API_BASE_URL: http://127.0.0.1:8080
+        run: python scripts/league_beta_stability_tests.py
+
+      - name: Backend logs
+        if: always()
+        run: docker logs college-ff-api || true

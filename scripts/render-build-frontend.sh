@@ -33,6 +33,23 @@ window.CFF_BUILD_COMMIT = '${BUILD_COMMIT}';
 EOF_CONFIG
 cat frontend/config.js >> frontend-dist/config.js
 
+# Load the account/league-scoped state and verified settings/join behavior on
+# every page that uses state.js. It must execute after state.js and before each
+# page controller so existing global helpers resolve to the hardened versions.
+find frontend-dist -type f -name '*.html' -print | while IFS= read -r html_file; do
+  if grep -q '<script src="state.js"></script>' "${html_file}" \
+      && ! grep -q 'league-beta-stability.js' "${html_file}"; then
+    html_tmp="${html_file}.stability.tmp"
+    awk '
+      { print }
+      /<script src="state\.js"><\/script>/ {
+        print "  <script src=\"league-beta-stability.js\"></script>"
+      }
+    ' "${html_file}" > "${html_tmp}"
+    mv "${html_tmp}" "${html_file}"
+  fi
+done
+
 # Load compatibility helpers before the league page controller. Use awk and a
 # temporary file instead of an in-place multiline sed expression so the build
 # works consistently across GNU, BusyBox, and BSD-style tooling.
