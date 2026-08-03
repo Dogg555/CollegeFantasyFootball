@@ -1,0 +1,44 @@
+name: Bootstrap auth core refactor
+
+on:
+  push:
+    branches: [refactor/extract-auth-core]
+    paths:
+      - "scripts/refactor_auth_core.py"
+      - ".github/workflows/bootstrap-auth-core-refactor.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/extract-auth-core
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply exact source transformation
+        run: python scripts/refactor_auth_core.py
+
+      - name: Commit generated auth core
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            backend/src/main.cpp \
+            backend/src/auth_core.h \
+            backend/src/auth_core.cpp \
+            backend/tests/auth_core_tests.cpp \
+            backend/CMakeLists.txt
+          git diff --cached --check
+          git commit -m "Extract stateless authentication core"
+          git push origin HEAD:refactor/extract-auth-core
