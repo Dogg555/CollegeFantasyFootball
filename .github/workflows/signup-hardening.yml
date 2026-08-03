@@ -6,7 +6,6 @@ on:
     paths:
       - "backend/CMakeLists.txt"
       - "backend/src/security_hardening.cpp"
-      - "backend/src/signup_response_hardening.cpp"
       - "frontend/auth.js"
       - "frontend/config.js"
       - "render.yaml"
@@ -19,7 +18,6 @@ on:
     paths:
       - "backend/CMakeLists.txt"
       - "backend/src/security_hardening.cpp"
-      - "backend/src/signup_response_hardening.cpp"
       - "frontend/auth.js"
       - "frontend/config.js"
       - "render.yaml"
