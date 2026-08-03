@@ -79,8 +79,6 @@ std::string jsonToString(const Json::Value &value) {
     return Json::writeString(builder, value);
 }
 
-#endif
-
 std::string firstHeaderValue(std::string value) {
     const auto comma = value.find(',');
     if (comma != std::string::npos) {
