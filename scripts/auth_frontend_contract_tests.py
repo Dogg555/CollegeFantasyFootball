@@ -47,12 +47,19 @@ def main() -> int:
         'accepted["valid"] = false',
         'static_cast<drogon::HttpStatusCode>(202)',
         'Check your email for a verification link',
+        'Json::StreamWriterBuilder writer',
+        'Json::writeString(writer, accepted)',
     ):
         if required not in SIGNUP_HARDENING:
             raise AssertionError(f"signup response hardening contract missing: {required}")
-    for forbidden in ('accountMayExist', 'emailSent', 'accepted["email"]'):
+    for forbidden in (
+        'accountMayExist',
+        'emailSent',
+        'accepted["email"]',
+        'replacement->body()',
+    ):
         if forbidden in SIGNUP_HARDENING:
-            raise AssertionError(f"generic verification signup response leaks: {forbidden}")
+            raise AssertionError(f"generic verification signup response leaks or serializes unsafely: {forbidden}")
     if SIGNUP_HARDENING.count('accepted["signupAccepted"]') != 1:
         raise AssertionError("signup response must have one canonical acceptance marker")
     if "src/signup_response_hardening.cpp" not in CMAKE:
