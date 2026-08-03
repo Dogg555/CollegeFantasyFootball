@@ -9,7 +9,26 @@ This repository contains a college fantasy football web app with a static fronte
 ## Directory layout
 - `backend/` - Drogon API, CMake build, Dockerfile, and Postgres schema.
 - `frontend/` - static HTML/CSS/JS app for leagues, players, draft room, waivers, trades, and settings.
+- `scripts/` - smoke tests, release gates, ingestion helpers, and the local league simulator.
 - `render.yaml` - Render blueprint for the API, static frontend, and managed Postgres.
+
+## Local league simulation
+
+Start an isolated PostgreSQL database, API, and frontend, seed deterministic test players, and run a complete four-team lifecycle:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-local-sim.ps1
+```
+
+Run a six-team lifecycle ten times:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-local-sim.ps1 -Teams 6 -Iterations 10
+```
+
+The simulator covers account creation, join codes, team names, permissions, concurrent duplicate-pick protection, a complete draft, trades, waivers, free agency, scoring, finalization, audit history, persistence, and cleanup. The database uses an in-memory Docker volume and is destroyed after the run unless `-KeepEnvironment` is supplied.
+
+See [`docs/local-league-simulation.md`](docs/local-league-simulation.md) for Windows, macOS, Linux, troubleshooting, and manual UI-testing instructions.
 
 ## Render deployment
 Use `render.yaml` from the repo root to create three Render resources:
