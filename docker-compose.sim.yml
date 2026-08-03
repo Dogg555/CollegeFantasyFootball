@@ -56,7 +56,3 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-
-networks:
-  default:
-    name: cff-sim-network
