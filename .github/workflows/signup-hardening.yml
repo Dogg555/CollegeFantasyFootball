@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
     paths:
+      - "backend/CMakeLists.txt"
       - "backend/src/security_hardening.cpp"
+      - "backend/src/signup_response_hardening.cpp"
       - "frontend/auth.js"
       - "frontend/config.js"
       - "render.yaml"
@@ -15,7 +17,9 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "backend/CMakeLists.txt"
       - "backend/src/security_hardening.cpp"
+      - "backend/src/signup_response_hardening.cpp"
       - "frontend/auth.js"
       - "frontend/config.js"
       - "render.yaml"
