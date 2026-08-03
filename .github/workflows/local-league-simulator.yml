@@ -1,0 +1,107 @@
+name: Local league simulator
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "docker-compose.sim.yml"
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/simulate_league.py"
+      - "scripts/sim_seed.sql"
+      - "scripts/run-local-sim.*"
+      - ".github/workflows/local-league-simulator.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-league-simulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulate:
+    name: Four and six team lifecycles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CFF_SIM_API_PORT: "18080"
+      CFF_SIM_FRONTEND_PORT: "13000"
+      CFF_SIM_DB_PORT: "55432"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate simulator scripts and Compose config
+        run: |
+          python -m py_compile scripts/simulate_league.py
+          bash -n scripts/run-local-sim.sh
+          pwsh -NoProfile -Command "[void][scriptblock]::Create((Get-Content scripts/run-local-sim.ps1 -Raw))"
+          docker compose -p cff-sim-ci -f docker-compose.sim.yml config >/dev/null
+
+      - name: Build and start disposable environment
+        run: docker compose -p cff-sim-ci -f docker-compose.sim.yml up -d --build
+
+      - name: Wait for healthy API
+        run: |
+          set -euo pipefail
+          for attempt in {1..60}; do
+            if curl -fsS http://127.0.0.1:18080/health \
+              | python -c 'import json,sys; p=json.load(sys.stdin); raise SystemExit(0 if p.get("status")=="ok" and p.get("database")=="ok" else 1)'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -p cff-sim-ci -f docker-compose.sim.yml logs backend
+          exit 1
+
+      - name: Seed local simulation players
+        run: |
+          docker compose -p cff-sim-ci -f docker-compose.sim.yml cp scripts/sim_seed.sql postgres:/tmp/sim_seed.sql
+          docker compose -p cff-sim-ci -f docker-compose.sim.yml exec -T postgres \
+            psql -U cff_sim -d cff_sim -v ON_ERROR_STOP=1 -f /tmp/sim_seed.sql
+
+      - name: Run four-team lifecycle
+        run: |
+          python scripts/simulate_league.py \
+            --base-url http://127.0.0.1:18080 \
+            --teams 4 \
+            --iterations 1 \
+            --seed 42 \
+            --report-dir simulation-artifacts/four-team
+
+      - name: Run six-team lifecycle
+        run: |
+          python scripts/simulate_league.py \
+            --base-url http://127.0.0.1:18080 \
+            --teams 6 \
+            --iterations 1 \
+            --seed 84 \
+            --report-dir simulation-artifacts/six-team
+
+      - name: Verify local frontend proxy
+        run: |
+          curl -fsS http://127.0.0.1:13000/ >/dev/null
+          curl -fsS http://127.0.0.1:13000/api/health \
+            | python -c 'import json,sys; p=json.load(sys.stdin); raise SystemExit(0 if p.get("status")=="ok" else 1)'
+
+      - name: Upload simulation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-league-simulation-reports
+          path: simulation-artifacts
+          if-no-files-found: warn
+
+      - name: Service logs
+        if: always()
+        run: docker compose -p cff-sim-ci -f docker-compose.sim.yml logs || true
+
+      - name: Stop disposable environment
+        if: always()
+        run: docker compose -p cff-sim-ci -f docker-compose.sim.yml down --volumes --remove-orphans
