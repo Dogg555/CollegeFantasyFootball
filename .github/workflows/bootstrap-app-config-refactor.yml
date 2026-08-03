@@ -33,19 +33,18 @@ jobs:
       - name: Apply exact source transformation
         run: python scripts/refactor_app_config.py
 
-      - name: Commit generated refactor and remove bootstrap
+      - name: Commit generated source refactor
         run: |
           set -euo pipefail
+          rm -f .github/workflows/app-config-tests.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm scripts/refactor_app_config.py .github/workflows/bootstrap-app-config-refactor.yml
           git add \
             backend/src/main.cpp \
             backend/src/app_config.h \
             backend/src/app_config.cpp \
             backend/tests/app_config_tests.cpp \
-            backend/CMakeLists.txt \
-            .github/workflows/app-config-tests.yml
+            backend/CMakeLists.txt
           git diff --cached --check
           git commit -m "Extract backend app configuration"
           git push origin HEAD:refactor/extract-app-config
