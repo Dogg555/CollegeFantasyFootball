@@ -69,6 +69,30 @@ psql_base() {
   psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -v email="$email" "$@"
 }
 
+account_count() {
+  psql_base -tA <<'SQL'
+SELECT COUNT(*) FROM users WHERE email = :'email';
+SQL
+}
+
+related_count() {
+  psql_base -tA <<'SQL'
+SELECT
+  (SELECT COUNT(*) FROM leagues WHERE account_email = :'email') +
+  (SELECT COUNT(*) FROM league_members WHERE email = :'email') +
+  (SELECT COUNT(*) FROM rosters WHERE manager_email = :'email') +
+  (SELECT COUNT(*) FROM draft_queues WHERE manager_email = :'email') +
+  (SELECT COUNT(*) FROM draft_picks WHERE manager_email = :'email') +
+  (SELECT COUNT(*) FROM waiver_claims WHERE manager_email = :'email') +
+  (SELECT COUNT(*) FROM waiver_priorities WHERE manager_email = :'email') +
+  (SELECT COUNT(*) FROM trade_offers WHERE offered_by_email = :'email' OR offered_to_email = :'email') +
+  (SELECT COUNT(*) FROM transactions WHERE manager_email = :'email') +
+  (SELECT COUNT(*) FROM league_feed_posts WHERE manager_email = :'email') +
+  (SELECT COUNT(*) FROM league_matchups WHERE home_manager_email = :'email' OR away_manager_email = :'email') +
+  (SELECT COUNT(*) FROM fantasy_player_scores WHERE manager_email = :'email');
+SQL
+}
+
 inspect_account() {
   psql_base <<'SQL'
 \pset pager off
@@ -112,29 +136,15 @@ case "$command_name" in
       exit 2
     }
 
-    account_count="$(psql_base -tAc "SELECT COUNT(*) FROM users WHERE email = :'email'")"
-    [ "$account_count" = "1" ] || {
+    existing_accounts="$(account_count)"
+    [ "$existing_accounts" = "1" ] || {
       echo "No account exists for $email" >&2
       exit 3
     }
 
-    related_count="$(psql_base -tAc "
-      SELECT
-        (SELECT COUNT(*) FROM leagues WHERE account_email = :'email') +
-        (SELECT COUNT(*) FROM league_members WHERE email = :'email') +
-        (SELECT COUNT(*) FROM rosters WHERE manager_email = :'email') +
-        (SELECT COUNT(*) FROM draft_queues WHERE manager_email = :'email') +
-        (SELECT COUNT(*) FROM draft_picks WHERE manager_email = :'email') +
-        (SELECT COUNT(*) FROM waiver_claims WHERE manager_email = :'email') +
-        (SELECT COUNT(*) FROM waiver_priorities WHERE manager_email = :'email') +
-        (SELECT COUNT(*) FROM trade_offers WHERE offered_by_email = :'email' OR offered_to_email = :'email') +
-        (SELECT COUNT(*) FROM transactions WHERE manager_email = :'email') +
-        (SELECT COUNT(*) FROM league_feed_posts WHERE manager_email = :'email') +
-        (SELECT COUNT(*) FROM league_matchups WHERE home_manager_email = :'email' OR away_manager_email = :'email') +
-        (SELECT COUNT(*) FROM fantasy_player_scores WHERE manager_email = :'email')")"
-
-    if [ "$related_count" != "0" ] && [ "$purge_related" != "true" ]; then
-      echo "Refusing deletion: account has $related_count related league/fantasy rows." >&2
+    related_rows="$(related_count)"
+    if [ "$related_rows" != "0" ] && [ "$purge_related" != "true" ]; then
+      echo "Refusing deletion: account has $related_rows related league/fantasy rows." >&2
       echo "Run inspect first. Use --purge-related only for disposable test data." >&2
       exit 4
     fi
@@ -174,7 +184,7 @@ COMMIT;
 SQL
     fi
 
-    remaining="$(psql_base -tAc "SELECT COUNT(*) FROM users WHERE email = :'email'")"
+    remaining="$(account_count)"
     [ "$remaining" = "0" ] || { echo "Account deletion did not complete" >&2; exit 5; }
     echo "Deleted account: $email"
     ;;
