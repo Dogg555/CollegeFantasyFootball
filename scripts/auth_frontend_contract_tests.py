@@ -45,7 +45,7 @@ def main() -> int:
         'status != 201 && status != 202 && status != 409',
         'accepted["signupAccepted"] = true',
         'accepted["valid"] = false',
-        'k202Accepted',
+        'static_cast<drogon::HttpStatusCode>(202)',
     ):
         if required not in SIGNUP_HARDENING:
             raise AssertionError(f"signup response hardening contract missing: {required}")
