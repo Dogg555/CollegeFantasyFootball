@@ -17,6 +17,7 @@ endif()
 add_executable(college_ff_server
     src/main.cpp
     src/app_config.cpp
+    src/auth_core.cpp
     src/email_delivery.cpp
     src/league_invite_email.cpp
     src/security_hardening.cpp
@@ -105,4 +106,12 @@ if (BUILD_TESTING)
     )
     target_include_directories(app_config_tests PRIVATE src)
     add_test(NAME app_config_tests COMMAND app_config_tests)
+
+    add_executable(auth_core_tests
+        tests/auth_core_tests.cpp
+        src/auth_core.cpp
+    )
+    target_include_directories(auth_core_tests PRIVATE src)
+    target_link_libraries(auth_core_tests PRIVATE ${CRYPT_LIB})
+    add_test(NAME auth_core_tests COMMAND auth_core_tests)
 endif()
