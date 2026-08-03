@@ -47,7 +47,7 @@ void hideVerificationSignupState(const drogon::HttpRequestPtr &request,
 
 struct SignupResponseHardeningInstaller {
     SignupResponseHardeningInstaller() {
-        drogon::app().registerPreSendingAdvice(hideVerificationSignupState);
+        drogon::app().registerPostHandlingAdvice(hideVerificationSignupState);
     }
 };
 
