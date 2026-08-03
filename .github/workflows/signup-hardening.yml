@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
     paths:
+      - "backend/CMakeLists.txt"
       - "backend/src/security_hardening.cpp"
+      - "backend/src/signup_response.cpp"
       - "backend/db/account-admin.sh"
       - "frontend/auth.js"
       - "frontend/config.js"
@@ -16,7 +18,9 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "backend/CMakeLists.txt"
       - "backend/src/security_hardening.cpp"
+      - "backend/src/signup_response.cpp"
       - "backend/db/account-admin.sh"
       - "frontend/auth.js"
       - "frontend/config.js"
@@ -81,8 +85,12 @@ jobs:
       - name: Generate ephemeral test values
         shell: bash
         run: |
-          echo "CFF_TEST_JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "CFF_TEST_ADMIN_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          jwt_secret="$(openssl rand -hex 32)"
+          admin_token="$(openssl rand -hex 32)"
+          echo "::add-mask::$jwt_secret"
+          echo "::add-mask::$admin_token"
+          echo "CFF_TEST_JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          echo "CFF_TEST_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
           echo "CFF_ACCOUNT_RESET_EMAIL=account-reset-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.test" >> "$GITHUB_ENV"
 
       - name: Start verification-required API without email delivery
