@@ -22,8 +22,6 @@ def replace_between(text: str, start: str, end: str, replacement: str, label: st
     end_index = text.find(end, start_index)
     if end_index < 0:
         raise RuntimeError(f"{label}: end marker not found")
-    if text.find(start, start_index + 1) >= 0:
-        raise RuntimeError(f"{label}: start marker is not unique")
     return text[:start_index] + replacement + text[end_index:]
 
 
@@ -43,20 +41,22 @@ main = replace_between(
     "move auth readiness and route availability helpers",
 )
 
+secure_route = '        .registerHandler("/api/secure/ping",'
 route_start = '        .registerHandler("/api/auth/validate",'
 admin_start = '        .registerHandler("/api/admin/ingest/cfbd",'
+secure_index = main.find(secure_route)
+if secure_index < 0:
+    raise RuntimeError("secure route anchor not found")
+route_index = main.find(route_start, secure_index)
+admin_index = main.find(admin_start, route_index)
+if route_index < 0 or admin_index < 0:
+    raise RuntimeError("authentication route block anchors not found after secure route")
 replacement = '''        ;
 
     cff::auth::registerAuthRoutes(app, jwtSecret);
 
     app.registerHandler("/api/admin/ingest/cfbd",'''
-main = replace_between(
-    main,
-    route_start,
-    admin_start,
-    replacement,
-    "move authentication route registrations",
-)
+main = main[:route_index] + replacement + main[admin_index + len(admin_start):]
 
 if "/api/auth/" in main:
     raise RuntimeError("main.cpp still contains an authentication route path")
