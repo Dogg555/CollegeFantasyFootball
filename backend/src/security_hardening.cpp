@@ -600,9 +600,14 @@ void secureResponse(const drogon::HttpRequestPtr &req,
         accepted["emailVerificationRequired"] = true;
         accepted["message"] =
             "Request accepted. Check your email for a verification link, or use Resend verification if it does not arrive.";
-        Json::StreamWriterBuilder writer;
-        writer["indentation"] = "";
-        resp->setBody(Json::writeString(writer, accepted));
+        const auto &jsonObject = resp->getJsonObject();
+        if (jsonObject) {
+            *jsonObject = accepted;
+        } else {
+            Json::StreamWriterBuilder writer;
+            writer["indentation"] = "";
+            resp->setBody(Json::writeString(writer, accepted));
+        }
         resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
         resp->setStatusCode(static_cast<drogon::HttpStatusCode>(202));
     }
