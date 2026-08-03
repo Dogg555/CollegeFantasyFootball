@@ -2,7 +2,7 @@ name: Authentication contracts
 
 on:
   push:
-    branches: [main]
+    branches: [main, Test]
     paths:
       - "backend/CMakeLists.txt"
       - "backend/Dockerfile"
@@ -13,7 +13,7 @@ on:
       - "scripts/test_smtp_server.py"
       - ".github/workflows/auth-contracts.yml"
   pull_request:
-    branches: [main]
+    branches: [main, Test]
     paths:
       - "backend/CMakeLists.txt"
       - "backend/Dockerfile"
@@ -54,7 +54,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d cff"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -183,13 +183,15 @@ jobs:
           account_state="$(docker run --rm --network host \
             -e PGPASSWORD=postgres \
             postgres:16 \
-            psql -h 127.0.0.1 -U postgres -d cff -v ON_ERROR_STOP=1 \
-              -v email="$CFF_CONTRACT_EMAIL" -tA -F '|' \
-              -c "SELECT COUNT(*), COALESCE(bool_and(email_verified), false) FROM users WHERE email = lower(:'email')")"
+            psql -h 127.0.0.1 -U postgres -d cff -v ON_ERROR_STOP=1 -tA -F '|' \
+              -c "SELECT COUNT(*), COALESCE(bool_and(email_verified), false) FROM users WHERE email = lower('$CFF_CONTRACT_EMAIL')")"
           IFS='|' read -r account_count verified <<< "$account_state"
           test "$account_count" = "1"
           test "$verified" = "$EXPECT_VERIFIED"
 
+          canonical_accounts="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -tAc \
+            "SELECT COUNT(*) FROM users WHERE email <> lower(email)")"
           raw_recovery="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
             psql -h 127.0.0.1 -U postgres -d cff -tAc \
             "SELECT COUNT(*) FROM users WHERE email_verification_token LIKE 'token-%' OR password_reset_token LIKE 'token-%'")"
@@ -199,6 +201,7 @@ jobs:
           duplicate_accounts="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
             psql -h 127.0.0.1 -U postgres -d cff -tAc \
             "SELECT COUNT(*) FROM (SELECT lower(email) FROM users GROUP BY lower(email) HAVING COUNT(*) > 1) duplicates")"
+          test "$canonical_accounts" = "0"
           test "$raw_recovery" = "0"
           test "$raw_sessions" = "0"
           test "$duplicate_accounts" = "0"
