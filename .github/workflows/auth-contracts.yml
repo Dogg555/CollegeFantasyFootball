@@ -1,0 +1,300 @@
+name: Authentication contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/Dockerfile"
+      - "backend/docker-entrypoint.sh"
+      - "backend/src/**"
+      - "backend/db/**"
+      - "scripts/auth_contract_tests.py"
+      - "scripts/test_smtp_server.py"
+      - ".github/workflows/auth-contracts.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/Dockerfile"
+      - "backend/docker-entrypoint.sh"
+      - "backend/src/**"
+      - "backend/db/**"
+      - "scripts/auth_contract_tests.py"
+      - "scripts/test_smtp_server.py"
+      - ".github/workflows/auth-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auth-contracts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  persistent-auth:
+    name: ${{ matrix.mode }} with Postgres and SMTP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - verification-disabled
+          - verification-required
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate test sources
+        run: |
+          python -m py_compile \
+            scripts/auth_contract_tests.py \
+            scripts/test_smtp_server.py
+
+      - name: Build production API image
+        run: docker build -f backend/Dockerfile -t college-ff-api-contracts .
+
+      - name: Apply production migrations to isolated Postgres
+        run: |
+          docker run --rm --network host \
+            --entrypoint sh \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            college-ff-api-contracts \
+            /srv/db/migrate.sh
+
+      - name: Generate ephemeral test values
+        shell: bash
+        run: |
+          set -euo pipefail
+          jwt_secret="$(openssl rand -hex 32)"
+          admin_token="$(openssl rand -hex 32)"
+          password="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' 'Aa')-A1!"
+          new_password="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' 'Bb')-B2!"
+          email="auth-contract-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.mode }}@example.test"
+          for value in "$jwt_secret" "$admin_token" "$password" "$new_password"; do
+            echo "::add-mask::$value"
+          done
+          echo "CFF_TEST_JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          echo "CFF_TEST_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_NEW_PASSWORD=$new_password" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_EMAIL=$email" >> "$GITHUB_ENV"
+
+      - name: Start isolated authenticated SMTP catcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > /tmp/cff-test-mail.jsonl
+          python scripts/test_smtp_server.py \
+            --host 127.0.0.1 \
+            --port 1025 \
+            --output /tmp/cff-test-mail.jsonl \
+            > /tmp/cff-test-smtp.log 2>&1 &
+          echo $! > /tmp/cff-test-smtp.pid
+          python - <<'PY'
+          import socket
+          import time
+
+          for _ in range(30):
+              try:
+                  with socket.create_connection(("127.0.0.1", 1025), timeout=1):
+                      raise SystemExit(0)
+              except OSError:
+                  time.sleep(1)
+          raise SystemExit("SMTP test server did not become ready")
+          PY
+
+      - name: Start production API in contract mode
+        shell: bash
+        env:
+          VERIFICATION_REQUIRED: ${{ matrix.mode == 'verification-required' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          docker run -d --name college-ff-api-contracts --network host \
+            -e PORT=8080 \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            -e JWT_SECRET="$CFF_TEST_JWT_SECRET" \
+            -e ALLOWED_ORIGINS=https://frontend.example.test \
+            -e CFF_ADMIN_API_TOKEN="$CFF_TEST_ADMIN_TOKEN" \
+            -e CFF_REQUIRE_DB=true \
+            -e CFF_RUN_MIGRATIONS_ON_STARTUP=false \
+            -e ESPN_ROSTER_AUTO_ONCE=false \
+            -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION="$VERIFICATION_REQUIRED" \
+            -e CFF_EXPOSE_AUTH_TOKENS=false \
+            -e CFF_LOG_AUTH_TOKENS=false \
+            -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
+            -e CFF_TRUST_PROXY_HEADERS=false \
+            -e CFF_FRONTEND_BASE_URL=https://frontend.example.test \
+            -e CFF_EMAIL_PROVIDER=smtp \
+            -e CFF_EMAIL_FROM='College Fantasy Test <noreply@example.test>' \
+            -e CFF_SMTP_HOST=127.0.0.1 \
+            -e CFF_SMTP_PORT=1025 \
+            -e CFF_SMTP_SECURITY=none \
+            -e CFF_SMTP_USERNAME=test-user \
+            -e CFF_SMTP_PASSWORD=test-password \
+            -e CFF_MIN_PASSWORD_LENGTH=12 \
+            -e CFF_MAX_REQUEST_BODY_BYTES=262144 \
+            -e CFF_AUTH_REQUEST_BODY_BYTES=8192 \
+            -e CFF_AUTH_BURST_CLIENT_LIMIT=500 \
+            -e CFF_SIGNUP_CLIENT_LIMIT=500 \
+            -e CFF_SIGNUP_ACCOUNT_LIMIT=100 \
+            -e CFF_SIGNUP_RATE_WINDOW_MINUTES=60 \
+            college-ff-api-contracts
+
+      - name: Run authentication contract suite
+        shell: bash
+        env:
+          CFF_API_BASE_URL: http://127.0.0.1:8080
+          CFF_AUTH_CONTRACT_MODE: ${{ matrix.mode }}
+          CFF_CONTRACT_ORIGIN: https://frontend.example.test
+          CFF_CONTRACT_MAIL_LOG: /tmp/cff-test-mail.jsonl
+        run: |
+          set -o pipefail
+          python scripts/auth_contract_tests.py 2>&1 | tee /tmp/auth-contract-result.log
+
+      - name: Verify database security invariants
+        shell: bash
+        env:
+          EXPECT_VERIFIED: ${{ matrix.mode == 'verification-required' && 't' || 'f' }}
+        run: |
+          set -euo pipefail
+          account_state="$(docker run --rm --network host \
+            -e PGPASSWORD=postgres \
+            postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -v ON_ERROR_STOP=1 \
+              -v email="$CFF_CONTRACT_EMAIL" -tA -F '|' \
+              -c "SELECT COUNT(*), COALESCE(bool_and(email_verified), false) FROM users WHERE email = lower(:'email')")"
+          IFS='|' read -r account_count verified <<< "$account_state"
+          test "$account_count" = "1"
+          test "$verified" = "$EXPECT_VERIFIED"
+
+          raw_recovery="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -tAc \
+            "SELECT COUNT(*) FROM users WHERE email_verification_token LIKE 'token-%' OR password_reset_token LIKE 'token-%'")"
+          raw_sessions="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -tAc \
+            "SELECT COUNT(*) FROM auth_tokens WHERE token LIKE 'token-%'")"
+          duplicate_accounts="$(docker run --rm --network host -e PGPASSWORD=postgres postgres:16 \
+            psql -h 127.0.0.1 -U postgres -d cff -tAc \
+            "SELECT COUNT(*) FROM (SELECT lower(email) FROM users GROUP BY lower(email) HAVING COUNT(*) > 1) duplicates")"
+          test "$raw_recovery" = "0"
+          test "$raw_sessions" = "0"
+          test "$duplicate_accounts" = "0"
+
+      - name: Verify transactional email reached the test SMTP environment
+        run: |
+          set -euo pipefail
+          test -s /tmp/cff-test-mail.jsonl
+          grep -F "Verify your College Fantasy account" /tmp/cff-test-mail.jsonl
+          grep -F "Reset your College Fantasy password" /tmp/cff-test-mail.jsonl
+
+      - name: Retain contract diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth-contract-${{ matrix.mode }}-diagnostics
+          path: |
+            /tmp/auth-contract-result.log
+            /tmp/cff-test-mail.jsonl
+            /tmp/cff-test-smtp.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Backend logs
+        if: always()
+        run: docker logs college-ff-api-contracts || true
+
+  unavailable-database:
+    name: Required database unavailable
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate contract source
+        run: python -m py_compile scripts/auth_contract_tests.py
+
+      - name: Build production API image
+        run: docker build -f backend/Dockerfile -t college-ff-api-contracts .
+
+      - name: Generate ephemeral test values
+        shell: bash
+        run: |
+          set -euo pipefail
+          jwt_secret="$(openssl rand -hex 32)"
+          password="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' 'Cc')-C3!"
+          echo "::add-mask::$jwt_secret"
+          echo "::add-mask::$password"
+          echo "CFF_TEST_JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_NEW_PASSWORD=${password}New-D4!" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_EMAIL=auth-contract-unavailable-${GITHUB_RUN_ID}@example.test" >> "$GITHUB_ENV"
+
+      - name: Start API with an unreachable required database
+        run: |
+          docker run -d --name college-ff-api-contracts --network host \
+            -e PORT=8080 \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:6543/cff \
+            -e JWT_SECRET="$CFF_TEST_JWT_SECRET" \
+            -e ALLOWED_ORIGINS=https://frontend.example.test \
+            -e CFF_REQUIRE_DB=true \
+            -e CFF_RUN_MIGRATIONS_ON_STARTUP=false \
+            -e ESPN_ROSTER_AUTO_ONCE=false \
+            -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION=false \
+            -e CFF_EXPOSE_AUTH_TOKENS=false \
+            -e CFF_LOG_AUTH_TOKENS=false \
+            -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
+            -e CFF_TRUST_PROXY_HEADERS=false \
+            -e CFF_MIN_PASSWORD_LENGTH=12 \
+            college-ff-api-contracts
+
+      - name: Run unavailable-database contracts
+        shell: bash
+        env:
+          CFF_API_BASE_URL: http://127.0.0.1:8080
+          CFF_AUTH_CONTRACT_MODE: database-unavailable
+          CFF_CONTRACT_ORIGIN: https://frontend.example.test
+        run: |
+          set -o pipefail
+          python scripts/auth_contract_tests.py 2>&1 | tee /tmp/auth-contract-unavailable.log
+
+      - name: Retain unavailable-database diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth-contract-database-unavailable-diagnostics
+          path: /tmp/auth-contract-unavailable.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Backend logs
+        if: always()
+        run: docker logs college-ff-api-contracts || true
