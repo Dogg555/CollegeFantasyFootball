@@ -27,6 +27,7 @@
 #include "auth_core.h"
 #include "auth_controller.h"
 #include "auth_routes.h"
+#include "http_security.h"
 #include "auth_account_store.h"
 #include "auth_session_store.h"
 #include "app_config.h"
@@ -262,63 +263,6 @@ drogon::HttpStatusCode healthStatusCode(const Json::Value &payload) {
     return drogon::k200OK;
 }
 
-bool hasBearerToken(const drogon::HttpRequestPtr &req, std::string &outToken) {
-    const auto token = cff::auth::bearerTokenFromHeader(req->getHeader("authorization"));
-    if (!token) {
-        return false;
-    }
-    outToken = *token;
-    return true;
-}
-
-std::optional<std::string> issueTokenForUser(const std::string &email) {
-    return cff::auth::issueSessionToken(email);
-}
-
-bool isAuthorized(const drogon::HttpRequestPtr &req, const std::optional<std::string> &secret) {
-    std::string token;
-    if (!hasBearerToken(req, token)) {
-        return false;
-    }
-#ifdef CFF_HAS_POSTGRES
-    if (persistentDbRequired() && !dbConfigured()) {
-        return false;
-    }
-#else
-    if (persistentDbRequired()) {
-        return false;
-    }
-#endif
-    if (sharedSecretAuthAllowed() && secret && token == secret.value()) {
-        return true; // compatibility for pre-shared secret
-    }
-    return cff::auth::emailForSessionToken(token).has_value();
-}
-
-std::optional<std::string> emailForToken(const std::string &token) {
-    return cff::auth::emailForSessionToken(token);
-}
-
-void applyCorsHeaders(const drogon::HttpRequestPtr &req,
-                      const drogon::HttpResponsePtr &resp,
-                      const std::unordered_set<std::string> &allowedOrigins) {
-    const auto origin = req->getHeader("Origin");
-    if (!allowedOrigins.empty() && allowedOrigins.find(origin) != allowedOrigins.end()) {
-        resp->addHeader("Access-Control-Allow-Origin", origin);
-        resp->addHeader("Vary", "Origin");
-    }
-    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-}
-
-drogon::HttpResponsePtr buildPreflightResponse(const drogon::HttpRequestPtr &req,
-                                               const std::unordered_set<std::string> &allowedOrigins) {
-    auto resp = drogon::HttpResponse::newHttpResponse();
-    applyCorsHeaders(req, resp, allowedOrigins);
-    resp->setStatusCode(drogon::k204NoContent);
-    return resp;
-}
-
 std::string firstHeaderValue(std::string value) {
     const auto comma = value.find(',');
     if (comma != std::string::npos) {
@@ -341,85 +285,6 @@ std::optional<std::string> getOptionalParam(const drogon::HttpRequestPtr &req, c
     return value;
 }
 
-std::optional<std::string> accountEmailForRequest(const drogon::HttpRequestPtr &req,
-                                                  const std::optional<std::string> &secret) {
-    std::string token;
-    if (!hasBearerToken(req, token)) {
-        return std::nullopt;
-    }
-    if (sharedSecretAuthAllowed() && secret && token == secret.value()) {
-        return std::string{"admin@example.com"};
-    }
-    return emailForToken(token);
-}
-
-bool requireAccount(const drogon::HttpRequestPtr &req,
-                    std::function<void (const drogon::HttpResponsePtr &)> &callback,
-                    const std::optional<std::string> &secret,
-                    std::string &accountEmail) {
-    const auto email = accountEmailForRequest(req, secret);
-    if (!email) {
-        Json::Value error;
-        error["error"] = "Unauthorized";
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(drogon::k401Unauthorized);
-        callback(resp);
-        return false;
-    }
-    accountEmail = *email;
-    return true;
-}
-
-bool isAdminRequest(const drogon::HttpRequestPtr &req,
-                    const std::optional<std::string> &secret,
-                    std::string &adminIdentity) {
-    std::string token;
-    if (!hasBearerToken(req, token)) {
-        return false;
-    }
-
-    const auto opsToken = readEnv("CFF_ADMIN_API_TOKEN");
-    if (opsToken && !opsToken->empty() && token == *opsToken) {
-        adminIdentity = "ops-token";
-        return true;
-    }
-
-    const auto email = accountEmailForRequest(req, secret);
-    if (!email) {
-        return false;
-    }
-    const auto admins = csvEmailSetFromEnv("CFF_ADMIN_EMAILS");
-    if (!admins.empty() && admins.find(canonicalEmail(*email)) != admins.end()) {
-        adminIdentity = *email;
-        return true;
-    }
-    adminIdentity = *email;
-    return false;
-}
-
-bool requireAdmin(const drogon::HttpRequestPtr &req,
-                  std::function<void (const drogon::HttpResponsePtr &)> &callback,
-                  const std::optional<std::string> &secret,
-                  std::string &adminIdentity) {
-    std::string token;
-    if (!hasBearerToken(req, token)) {
-        Json::Value error;
-        error["error"] = "Unauthorized";
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(drogon::k401Unauthorized);
-        callback(resp);
-        return false;
-    }
-    if (!isAdminRequest(req, secret, adminIdentity)) {
-        Json::Value error;
-        error["error"] = "Admin access required";
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(drogon::k403Forbidden);
-        callback(resp);
-        return false;
-    }
-    return true;
-}
 
 } // namespace
 #endif
@@ -458,23 +323,23 @@ int main(int argc, char* argv[]) {
 
     app.registerPostHandlingAdvice([allowedOrigins](const drogon::HttpRequestPtr &req,
                                                     const drogon::HttpResponsePtr &resp) {
-        applyCorsHeaders(req, resp, allowedOrigins);
+        cff::http::applyCorsHeaders(req, resp, allowedOrigins);
     });
 
     auto preflightHandler = [allowedOrigins](const drogon::HttpRequestPtr &req,
                                              std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
-        callback(buildPreflightResponse(req, allowedOrigins));
+        callback(cff::http::buildPreflightResponse(req, allowedOrigins));
     };
     auto preflightOneParamHandler = [allowedOrigins](const drogon::HttpRequestPtr &req,
                                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                                      const std::string&) {
-        callback(buildPreflightResponse(req, allowedOrigins));
+        callback(cff::http::buildPreflightResponse(req, allowedOrigins));
     };
     auto preflightTwoParamHandler = [allowedOrigins](const drogon::HttpRequestPtr &req,
                                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                                      const std::string&,
                                                      const std::string&) {
-        callback(buildPreflightResponse(req, allowedOrigins));
+        callback(cff::http::buildPreflightResponse(req, allowedOrigins));
     };
 
     const bool ingestOnStartup = runtimeConfig.ingestOnStartup;
@@ -502,7 +367,7 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/secure/ping",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              auto resp = drogon::HttpResponse::newHttpResponse();
-                             if (!isAuthorized(req, jwtSecret)) {
+                             if (!cff::http::isAuthorized(req, jwtSecret)) {
                                  resp->setStatusCode(drogon::k401Unauthorized);
                                  resp->setBody("unauthorized");
                                  callback(resp);
@@ -521,7 +386,7 @@ int main(int argc, char* argv[]) {
     app.registerHandler("/api/admin/ingest/cfbd",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              std::string adminIdentity;
-                             if (!requireAdmin(req, callback, jwtSecret, adminIdentity)) {
+                             if (!cff::http::requireAdmin(req, callback, jwtSecret, adminIdentity)) {
                                  return;
                              }
 
@@ -547,7 +412,7 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/admin/ingest/cfbd/status",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              std::string adminIdentity;
-                             if (!requireAdmin(req, callback, jwtSecret, adminIdentity)) {
+                             if (!cff::http::requireAdmin(req, callback, jwtSecret, adminIdentity)) {
                                  return;
                              }
 #ifndef CFF_HAS_POSTGRES
@@ -568,7 +433,7 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/admin/ingest/cfbd/live",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              std::string adminIdentity;
-                             if (!requireAdmin(req, callback, jwtSecret, adminIdentity)) {
+                             if (!cff::http::requireAdmin(req, callback, jwtSecret, adminIdentity)) {
                                  return;
                              }
                              const auto ingestResult = cff::runLiveScoreIngestOnce();
@@ -590,7 +455,7 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/admin/ingest/cfbd/live/status",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              std::string adminIdentity;
-                             if (!requireAdmin(req, callback, jwtSecret, adminIdentity)) {
+                             if (!cff::http::requireAdmin(req, callback, jwtSecret, adminIdentity)) {
                                  return;
                              }
                              auto resp = drogon::HttpResponse::newHttpJsonResponse(cff::liveScoreIngestStatus());
@@ -601,7 +466,7 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/leagues",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleListLeagues(req, std::move(callback), accountEmail);
@@ -610,7 +475,7 @@ int main(int argc, char* argv[]) {
         .registerHandler("/api/leagues",
                          [jwtSecret](const drogon::HttpRequestPtr& req, std::function<void (const drogon::HttpResponsePtr &)> &&callback) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleCreateLeague(req, std::move(callback), accountEmail);
@@ -621,7 +486,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleGetLeague(req, std::move(callback), accountEmail, leagueId);
@@ -632,7 +497,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleUpdateLeague(req, std::move(callback), accountEmail, leagueId);
@@ -643,7 +508,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleDeleteLeague(req, std::move(callback), accountEmail, leagueId);
@@ -654,7 +519,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleListMembers(req, std::move(callback), accountEmail, leagueId);
@@ -665,7 +530,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleInviteMember(req, std::move(callback), accountEmail, leagueId);
@@ -677,7 +542,7 @@ int main(int argc, char* argv[]) {
                                      const std::string &leagueId,
                                      const std::string &memberEmail) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleUpdateMember(req, std::move(callback), accountEmail, leagueId, memberEmail);
@@ -688,7 +553,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleJoinLeague(req, std::move(callback), accountEmail, leagueId);
@@ -699,7 +564,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleGetRoster(req, std::move(callback), accountEmail, leagueId);
@@ -711,7 +576,7 @@ int main(int argc, char* argv[]) {
                                      const std::string &leagueId,
                                      const std::string &managerEmail) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleGetManagerRoster(req, std::move(callback), accountEmail, leagueId, managerEmail);
@@ -722,7 +587,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleAddRosterPlayer(req, std::move(callback), accountEmail, leagueId);
@@ -733,7 +598,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleDropRosterPlayer(req, std::move(callback), accountEmail, leagueId);
@@ -745,7 +610,7 @@ int main(int argc, char* argv[]) {
                                      const std::string &leagueId,
                                      const std::string &playerId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleUpdateRosterSlot(req, std::move(callback), accountEmail, leagueId, playerId);
@@ -756,7 +621,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleFreeAgents(req, std::move(callback), accountEmail, leagueId);
@@ -767,7 +632,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleGetDraftState(req, std::move(callback), accountEmail, leagueId);
@@ -778,7 +643,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleSaveDraftQueue(req, std::move(callback), accountEmail, leagueId);
@@ -789,7 +654,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleSaveDraftOrder(req, std::move(callback), accountEmail, leagueId);
@@ -800,7 +665,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleMakeDraftPick(req, std::move(callback), accountEmail, leagueId);
@@ -811,7 +676,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleResetDraft(req, std::move(callback), accountEmail, leagueId);
@@ -822,7 +687,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleUndoDraftPick(req, std::move(callback), accountEmail, leagueId);
@@ -833,7 +698,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleListWaivers(req, std::move(callback), accountEmail, leagueId);
@@ -844,7 +709,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleCreateWaiver(req, std::move(callback), accountEmail, leagueId);
@@ -855,7 +720,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleProcessWaivers(req, std::move(callback), accountEmail, leagueId);
@@ -867,7 +732,7 @@ int main(int argc, char* argv[]) {
                                      const std::string &leagueId,
                                      const std::string &claimId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleProcessWaiver(req, std::move(callback), accountEmail, leagueId, claimId);
@@ -879,7 +744,7 @@ int main(int argc, char* argv[]) {
                                      const std::string &leagueId,
                                      const std::string &claimId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleUpdateWaiverStatus(req, std::move(callback), accountEmail, leagueId, claimId);
@@ -890,7 +755,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleReorderWaivers(req, std::move(callback), accountEmail, leagueId);
@@ -901,7 +766,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleListWaiverPriority(req, std::move(callback), accountEmail, leagueId);
@@ -912,7 +777,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleResetWaiverPriority(req, std::move(callback), accountEmail, leagueId);
@@ -923,7 +788,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleListTrades(req, std::move(callback), accountEmail, leagueId);
@@ -934,7 +799,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleCreateTrade(req, std::move(callback), accountEmail, leagueId);
@@ -946,7 +811,7 @@ int main(int argc, char* argv[]) {
                                      const std::string &leagueId,
                                      const std::string &tradeId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleUpdateTradeStatus(req, std::move(callback), accountEmail, leagueId, tradeId);
@@ -957,7 +822,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleListMatchups(req, std::move(callback), accountEmail, leagueId);
@@ -968,7 +833,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleGenerateMatchups(req, std::move(callback), accountEmail, leagueId);
@@ -979,7 +844,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleGenerateSeasonSchedule(req, std::move(callback), accountEmail, leagueId);
@@ -991,7 +856,7 @@ int main(int argc, char* argv[]) {
                                      const std::string &leagueId,
                                      const std::string &week) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleScoreWeek(req, std::move(callback), accountEmail, leagueId, week);
@@ -1003,7 +868,7 @@ int main(int argc, char* argv[]) {
                                      const std::string &leagueId,
                                      const std::string &week) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleFinalizeWeek(req, std::move(callback), accountEmail, leagueId, week);
@@ -1014,7 +879,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleListTransactions(req, std::move(callback), accountEmail, leagueId);
@@ -1025,7 +890,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleListLeagueFeed(req, std::move(callback), accountEmail, leagueId);
@@ -1036,7 +901,7 @@ int main(int argc, char* argv[]) {
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                                      const std::string &leagueId) {
                              std::string accountEmail;
-                             if (!requireAccount(req, callback, jwtSecret, accountEmail)) {
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
                                  return;
                              }
                              cff::handlers::handleCreateLeagueFeedPost(req, std::move(callback), accountEmail, leagueId);

@@ -5,6 +5,7 @@
 #include "auth_core.h"
 #include "auth_session_store.h"
 #include "email_delivery.h"
+#include "http_security.h"
 
 #include <algorithm>
 #include <iostream>
@@ -27,7 +28,6 @@ using cff::config::maxPasswordLength;
 using cff::config::minPasswordLength;
 using cff::config::persistentDbRequired;
 using cff::config::readEnv;
-using cff::config::sharedSecretAuthAllowed;
 
 bool emailDeliveryReady() {
     return frontendBaseUrl().has_value() && cff::emailDeliveryConfigured();
@@ -130,51 +130,6 @@ bool storageUnavailable() {
 #endif
 }
 
-std::optional<std::string> bearerToken(const drogon::HttpRequestPtr &req) {
-    return bearerTokenFromHeader(req->getHeader("authorization"));
-}
-
-bool isAuthorized(const drogon::HttpRequestPtr &req,
-                  const std::optional<std::string> &secret) {
-    const auto token = bearerToken(req);
-    if (!token) {
-        return false;
-    }
-#ifdef CFF_HAS_POSTGRES
-    if (persistentDbRequired() && !databaseConfigured()) {
-        return false;
-    }
-#else
-    if (persistentDbRequired()) {
-        return false;
-    }
-#endif
-    if (sharedSecretAuthAllowed() && secret && *token == *secret) {
-        return true;
-    }
-    return emailForSessionToken(*token).has_value();
-}
-
-void applyCorsHeaders(const drogon::HttpRequestPtr &req,
-                      const drogon::HttpResponsePtr &resp,
-                      const std::unordered_set<std::string> &allowedOrigins) {
-    const auto origin = req->getHeader("Origin");
-    if (!allowedOrigins.empty() && allowedOrigins.find(origin) != allowedOrigins.end()) {
-        resp->addHeader("Access-Control-Allow-Origin", origin);
-        resp->addHeader("Vary", "Origin");
-    }
-    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-}
-
-drogon::HttpResponsePtr buildPreflightResponse(
-    const drogon::HttpRequestPtr &req,
-    const std::unordered_set<std::string> &allowedOrigins) {
-    auto resp = drogon::HttpResponse::newHttpResponse();
-    applyCorsHeaders(req, resp, allowedOrigins);
-    resp->setStatusCode(drogon::k204NoContent);
-    return resp;
-}
 
 } // namespace
 
@@ -197,8 +152,8 @@ void registerAuthRoutes(drogon::HttpAppFramework &app,
                                 return;
                             }
 
-                            const auto token = bearerToken(req);
-                            const bool authorized = isAuthorized(req, jwtSecret);
+                            const auto token = cff::http::bearerToken(req);
+                            const bool authorized = cff::http::isAuthorized(req, jwtSecret);
                             Json::Value payload;
                             payload["valid"] = authorized;
                             if (authorized && token) {
@@ -274,7 +229,7 @@ void registerAuthRoutes(drogon::HttpAppFramework &app,
     const auto preflightHandler = [allowedOrigins](
         const drogon::HttpRequestPtr &req,
         std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
-        callback(buildPreflightResponse(req, allowedOrigins));
+        callback(cff::http::buildPreflightResponse(req, allowedOrigins));
     };
 
     app.registerHandler("/api/auth/validate", preflightHandler, {drogon::Options});
