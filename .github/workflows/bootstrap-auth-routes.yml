@@ -1,0 +1,39 @@
+name: Bootstrap auth route refactor
+
+on:
+  pull_request:
+    branches: [Test]
+    paths:
+      - "scripts/refactor_auth_routes.py"
+      - ".github/workflows/bootstrap-auth-routes.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/extract-auth-routes
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply exact route transformation
+        run: python scripts/refactor_auth_routes.py
+
+      - name: Commit generated route integration
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/main.cpp backend/CMakeLists.txt
+          git diff --cached --check
+          git commit -m "Extract authentication route registration"
+          git push origin HEAD:refactor/extract-auth-routes
