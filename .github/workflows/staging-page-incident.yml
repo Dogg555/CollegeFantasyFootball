@@ -1,13 +1,16 @@
 name: Staging page incident smoke
 
 on:
-  pull_request:
+  push:
     branches:
       - Test
     paths:
+      - backend/src/**
+      - frontend/**
+      - scripts/render-build-frontend.sh
       - scripts/staging_private_page_smoke.py
+      - render.staging.yaml
       - .github/workflows/staging-page-incident.yml
-      - frontend/config.js
   workflow_dispatch:
 
 permissions:
@@ -21,7 +24,9 @@ jobs:
   authenticated-pages:
     name: Players, league, and draft staging smoke
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
+    env:
+      CFF_INCIDENT_EXPECTED_COMMIT: ${{ github.event_name == 'push' && github.sha || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,7 +36,7 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check playwright==1.54.0
           python -m playwright install --with-deps chromium
-      - name: Exercise deployed staging pages
+      - name: Wait for matching deploys and exercise staging pages
         run: python scripts/staging_private_page_smoke.py
       - name: Upload incident evidence
         if: always()
