@@ -111,14 +111,13 @@ def create_session() -> tuple[str, str, dict[str, Any]]:
 
 
 def install_session(page: Page, email: str, token: str) -> None:
+    auth = json.dumps({"email": email, "token": token})
     page.add_init_script(
-        """
-        ({ email, token }) => {
-          sessionStorage.setItem('cff_auth', JSON.stringify({ email, token }));
-          localStorage.removeItem('cff_auth');
-        }
-        """,
-        {"email": email, "token": token},
+        script=(
+            f"const auth = {auth};"
+            "sessionStorage.setItem('cff_auth', JSON.stringify(auth));"
+            "localStorage.removeItem('cff_auth');"
+        )
     )
 
 
@@ -219,7 +218,7 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except SmokeFailure as exc:
+    except Exception as exc:
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
         failure = {"status": "failed", "error": str(exc), "frontend": FRONTEND_BASE, "api": API_ORIGIN}
         (ARTIFACT_DIR / "report.json").write_text(json.dumps(failure, indent=2) + "\n", encoding="utf-8")
