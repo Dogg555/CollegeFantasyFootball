@@ -1,0 +1,44 @@
+name: Application composition contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/main.cpp"
+      - "backend/src/app_composition.h"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/*_routes.h"
+      - "backend/src/*_routes.cpp"
+      - "backend/tests/app_composition_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/app-composition-tests.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/main.cpp"
+      - "backend/src/app_composition.h"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/*_routes.h"
+      - "backend/src/*_routes.cpp"
+      - "backend/tests/app_composition_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/app-composition-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  app-composition-boundary:
+    name: Ordered route composition contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate composition contract source
+        run: python -m py_compile backend/tests/app_composition_boundary_tests.py
+      - name: Verify route ownership and order
+        run: python backend/tests/app_composition_boundary_tests.py
