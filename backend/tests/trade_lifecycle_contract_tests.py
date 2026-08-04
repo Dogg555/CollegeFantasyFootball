@@ -13,6 +13,12 @@ def require(path: str, *needles: str) -> None:
 
 def main() -> None:
     require(
+        "backend/src/trade_lifecycle_hardening.cpp",
+        'getHeader("Idempotency-Key")',
+        "accountEmailForRequest",
+        "trade_lifecycle_hardening_mutations.inc",
+    )
+    require(
         "backend/src/trade_lifecycle_hardening_advice.inc",
         'pathLeagueId(path, "/trades/state")',
         'pathLeagueId(path, "/trades/transactions")',
@@ -32,7 +38,6 @@ def main() -> None:
     require(
         "backend/src/trade_lifecycle_hardening_mutations.inc",
         "expectedVersionMatches",
-        "Idempotency-Key",
         "acquireTradePlayerLocks",
         "releaseTradePlayerLocks",
         "executeTradeSwap",
