@@ -110,4 +110,7 @@ struct ScheduleLineupInstaller {
     }
 };
 
+#if defined(__GNUC__)
+__attribute__((init_priority(101)))
+#endif
 ScheduleLineupInstaller scheduleLineupInstaller;
