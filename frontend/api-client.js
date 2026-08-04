@@ -80,6 +80,31 @@
     return value ? ` Reference: ${value}.` : '';
   }
 
+  function compactDiagnosticValue(value, maximum = 120) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    return text.length > maximum ? `${text.slice(0, maximum - 1)}…` : text;
+  }
+
+  function apiErrorDiagnostics(error = {}) {
+    const fields = [];
+    const code = compactDiagnosticValue(error.code || error.data?.code);
+    const status = Number(error.status || 0);
+    const method = compactDiagnosticValue(error.method);
+    const path = compactDiagnosticValue(error.path);
+    const requestId = compactDiagnosticValue(error.requestId || error.correlationId);
+    const attempts = Number(error.attempts || 0);
+    const retryAfter = compactDiagnosticValue(error.retryAfter);
+    if (code) fields.push(`code=${code}`);
+    if (status) fields.push(`status=${status}`);
+    if (method) fields.push(`method=${method}`);
+    if (path) fields.push(`path=${path}`);
+    if (attempts > 1) fields.push(`attempts=${attempts}`);
+    if (retryAfter) fields.push(`retryAfter=${retryAfter}`);
+    if (requestId) fields.push(`requestId=${requestId}`);
+    return fields.length ? `Diagnostics: ${fields.join(' ')}` : '';
+  }
+
   function normalizedUserMessage(error, fallback = 'The request could not be completed.') {
     const reference = requestReference(error?.requestId);
     if (error?.timedOut) {
@@ -143,7 +168,11 @@
         path: String(context.path || error?.path || '')
       }
     );
+    normalized.diagnostics = apiErrorDiagnostics(normalized);
     normalized.userMessage = normalizedUserMessage(normalized, context.fallback);
+    normalized.diagnosticMessage = normalized.diagnostics
+      ? `${normalized.userMessage} ${normalized.diagnostics}`
+      : normalized.userMessage;
     if (error?.stack) normalized.stack = error.stack;
     return normalized;
   }
@@ -291,6 +320,7 @@
     shouldRetry,
     normalizeApiError,
     normalizedUserMessage,
+    apiErrorDiagnostics,
     apiUrl,
     createApiFetch
   };

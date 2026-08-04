@@ -13,6 +13,7 @@ const {
   retryDelayMs,
   shouldRetry,
   normalizeApiError,
+  apiErrorDiagnostics,
   apiUrl,
   createApiFetch
 } = require(path.join('..', 'api-client.js'));
@@ -42,6 +43,15 @@ assert.equal(normalized.requestId, 'req-123');
 assert.equal(normalized.correlationId, 'req-123');
 assert.equal(normalized.unavailable, true);
 assert.match(normalized.userMessage, /Reference: req-123/);
+assert.equal(
+  normalized.diagnostics,
+  'Diagnostics: code=database_unavailable status=503 method=GET path=/leagues requestId=req-123'
+);
+assert.match(normalized.diagnosticMessage, /Diagnostics: code=database_unavailable status=503/);
+assert.equal(
+  apiErrorDiagnostics({ code: 'rate_limited', status: 429, method: 'POST', path: '/api/leagues', attempts: 3, retryAfter: '30', requestId: 'req-456' }),
+  'Diagnostics: code=rate_limited status=429 method=POST path=/api/leagues attempts=3 retryAfter=30 requestId=req-456'
+);
 
 (async () => {
   const attempts = [];
