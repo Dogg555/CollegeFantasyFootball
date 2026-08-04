@@ -17,12 +17,13 @@ services:
     dockerContext: .
     healthCheckPath: /health
 
-    # Run migrations, load the staging-only draft pool, and seed ESPN roster data.
-    preDeployCommand: >-
-      sh /srv/db/migrate.sh &&
+    # Free Render web services do not run pre-deploy commands. Run migrations and
+    # the idempotent staging draft-player seed when the container starts instead.
+    dockerCommand: >-
+      /bin/sh -c 'sh /srv/db/migrate.sh &&
       psql "$DB_URL" -v ON_ERROR_STOP=1
       -f /srv/db/seeds/seed_staging_draft_players.sql &&
-      python3 /srv/scripts/run_espn_roster_once.py
+      exec /srv/docker-entrypoint.sh'
 
     envVars:
       - key: DB_URL
@@ -46,7 +47,7 @@ services:
       - key: CFF_RUN_MIGRATIONS_ON_STARTUP
         value: "false"
 
-      # The pre-deploy command above performs a one-time staging seed.
+      # Keep automatic ESPN bootstrap disabled for the small staging draft pool.
       - key: ESPN_ROSTER_AUTO_ONCE
         value: "false"
 
