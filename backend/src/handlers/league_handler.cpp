@@ -226,6 +226,10 @@ struct PgResultDeleter {
 using PgConnPtr = std::unique_ptr<PGconn, PgConnDeleter>;
 using PgResultPtr = std::unique_ptr<PGresult, PgResultDeleter>;
 
+bool draftOrderMatchesMembers(PGconn *conn,
+const std::string &leagueId,
+const Json::Value &draftOrder);
+
 bool dbConfigured() {
     const auto *url = std::getenv("DB_URL");
     return url && std::string{url}.size() > 0;
@@ -1391,7 +1395,9 @@ std::optional<Json::Value> dbStartDraft(const std::string &accountEmail,
     if (!draftOrderMatchesMembers(conn.get(), leagueId, order)) {
         order = activeDraftOrderForLeague(conn.get(), leagueId);
     }
-    if (order.size() < 2 || !draftOrderMatchesMembers(conn.get(), leagueId, order)) return std::nullopt;
+    if (activeMemberCountForLeague(conn.get(), leagueId) < 2
+    || order.size() < 2
+    || !draftOrderMatchesMembers(conn.get(), leagueId, order)) return std::nullopt;
     auto picks = execParams(conn.get(),
                             "SELECT COUNT(*) FROM draft_picks WHERE league_id = $1",
                             {leagueId});
