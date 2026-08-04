@@ -46,6 +46,10 @@ add_executable(college_ff_server
     src/roster_transaction_hardening.cpp
     src/waiver_lifecycle.cpp
     src/waiver_lifecycle_hardening.cpp
+    src/trade_lifecycle.cpp
+    src/trade_lifecycle_hardening.cpp
+    src/scoring_lifecycle.cpp
+    src/scoring_lifecycle_hardening.cpp
     src/public_routes.cpp
     src/league_beta_stability.cpp
     src/team_name_handler.cpp
@@ -214,6 +218,24 @@ if (BUILD_TESTING)
     target_include_directories(waiver_lifecycle_tests PRIVATE src)
     target_link_libraries(waiver_lifecycle_tests PRIVATE Drogon::Drogon)
     add_test(NAME waiver_lifecycle_tests COMMAND waiver_lifecycle_tests)
+
+
+    add_executable(trade_lifecycle_tests
+        tests/trade_lifecycle_tests.cpp
+        src/trade_lifecycle.cpp
+    )
+    target_include_directories(trade_lifecycle_tests PRIVATE src)
+    target_link_libraries(trade_lifecycle_tests PRIVATE Drogon::Drogon)
+    add_test(NAME trade_lifecycle_tests COMMAND trade_lifecycle_tests)
+
+
+    add_executable(scoring_lifecycle_tests
+        tests/scoring_lifecycle_tests.cpp
+        src/scoring_lifecycle.cpp
+    )
+    target_include_directories(scoring_lifecycle_tests PRIVATE src)
+    target_link_libraries(scoring_lifecycle_tests PRIVATE Drogon::Drogon)
+    add_test(NAME scoring_lifecycle_tests COMMAND scoring_lifecycle_tests)
 
 
     add_executable(league_roster_tests
