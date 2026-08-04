@@ -49,7 +49,8 @@ drogon::HttpResponsePtr tradeStateResponse(const Json::Value &payload,
                                            const std::string &legacyTradeId = "",
                                            drogon::HttpStatusCode status = drogon::k200OK) {
     if (legacyCollection) return jsonResponse(payload["offers"], status);
-    if (!legacyTradeId.empty()) {
+    const bool replay = payload.get("idempotentReplay", false).asBool();
+    if (!legacyTradeId.empty() && !replay) {
         if (const auto offer = tradeFromState(payload, legacyTradeId)) {
             return jsonResponse(*offer, status);
         }
