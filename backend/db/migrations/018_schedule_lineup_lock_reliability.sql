@@ -159,7 +159,8 @@ BEGIN
     WHERE league_id = NEW.league_id AND season = NEW.season AND week = NEW.week;
 
     UPDATE league_schedule_states
-    SET current_week = GREATEST(current_week, NEW.week + 1),
+    SET version = version + CASE WHEN current_week < NEW.week + 1 THEN 1 ELSE 0 END,
+        current_week = GREATEST(current_week, NEW.week + 1),
         updated_at = NOW()
     WHERE league_id = NEW.league_id AND season = NEW.season;
   END IF;
