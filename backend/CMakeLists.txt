@@ -39,6 +39,7 @@ add_executable(college_ff_server
     src/health_routes.cpp
     src/operations_routes.cpp
     src/league_routes.cpp
+    src/league_onboarding_hardening.cpp
     src/public_routes.cpp
     src/league_beta_stability.cpp
     src/team_name_handler.cpp
