@@ -17,6 +17,32 @@
   const pageName = root.location.pathname.split('/').pop() || 'index.html';
   const privatePages = new Set(['league.html', 'draft.html']);
   const isPrivatePage = privatePages.has(pageName);
+  const originalValidateAuthSession = typeof root.validateAuthSession === 'function'
+    ? root.validateAuthSession
+    : null;
+  let privatePageRecovery = null;
+
+  function recoverPrivatePageSession() {
+    if (!isPrivatePage || typeof root.CFFAuthSessionSync?.recover !== 'function') {
+      return Promise.resolve(null);
+    }
+    if (!privatePageRecovery) {
+      privatePageRecovery = Promise.resolve()
+        .then(() => root.CFFAuthSessionSync.recover())
+        .catch(() => null);
+    }
+    return privatePageRecovery;
+  }
+
+  // Page scripts call validateAuthSession during their own initialization.
+  // Make those initializers wait for the same recovery request as the UI guard
+  // so league and draft state cannot render from an unauthenticated snapshot.
+  if (originalValidateAuthSession) {
+    root.validateAuthSession = async function validateAuthAfterPrivatePageRecovery() {
+      await recoverPrivatePageSession();
+      return originalValidateAuthSession();
+    };
+  }
 
   if (isPrivatePage) {
     document.documentElement.classList.add('cff-private-pending');
@@ -30,11 +56,7 @@
   async function guardPrivatePage() {
     if (!isPrivatePage) return true;
 
-    try {
-      await root.CFFAuthSessionSync?.recover();
-    } catch {
-      // Continue with the current tab's session when cross-tab recovery is unavailable.
-    }
+    await recoverPrivatePageSession();
 
     const auth = typeof root.getAuthState === 'function' ? root.getAuthState() : null;
     if (!auth?.token) {
@@ -60,6 +82,7 @@
   }
 
   const privateGuard = guardPrivatePage();
+  root.CFFPrivatePageGuard = privateGuard;
 
   function setupBranding() {
     if (!document.querySelector('link[rel~="icon"]')) {
