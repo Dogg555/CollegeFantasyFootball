@@ -7,6 +7,9 @@ on:
       - "frontend/alpha-ui.js"
       - "frontend/auth.js"
       - "frontend/auth-session-sync.js"
+      - "frontend/resend-verification.html"
+      - "frontend/resend-verification-cooldown.js"
+      - "frontend/tests/resend-verification-cooldown.test.js"
       - "backend/tests/private_page_auth_recovery_tests.py"
       - "backend/tests/auth_redirect_contract_tests.py"
       - ".github/workflows/frontend-auth-reliability.yml"
@@ -16,6 +19,9 @@ on:
       - "frontend/alpha-ui.js"
       - "frontend/auth.js"
       - "frontend/auth-session-sync.js"
+      - "frontend/resend-verification.html"
+      - "frontend/resend-verification-cooldown.js"
+      - "frontend/tests/resend-verification-cooldown.test.js"
       - "backend/tests/private_page_auth_recovery_tests.py"
       - "backend/tests/auth_redirect_contract_tests.py"
       - ".github/workflows/frontend-auth-reliability.yml"
@@ -49,8 +55,11 @@ jobs:
           node --check frontend/alpha-ui.js
           node --check frontend/auth.js
           node --check frontend/auth-session-sync.js
+          node --check frontend/resend-verification-cooldown.js
+          node --check frontend/tests/resend-verification-cooldown.test.js
 
       - name: Run frontend authentication contracts
         run: |
           python backend/tests/private_page_auth_recovery_tests.py
           python backend/tests/auth_redirect_contract_tests.py
+          node frontend/tests/resend-verification-cooldown.test.js
