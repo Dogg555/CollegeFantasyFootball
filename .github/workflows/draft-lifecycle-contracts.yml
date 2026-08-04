@@ -1,0 +1,83 @@
+name: Draft lifecycle contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/src/draft_lifecycle.h"
+      - "backend/src/draft_lifecycle.cpp"
+      - "backend/src/draft_lifecycle_hardening.cpp"
+      - "backend/src/draft_lifecycle_hardening_*.inc"
+      - "backend/tests/draft_lifecycle_tests.cpp"
+      - "backend/tests/draft_lifecycle_contract_tests.py"
+      - "backend/db/migrations/013_draft_lifecycle_reliability.sql"
+      - "frontend/config.js"
+      - "frontend/draft-lifecycle.js"
+      - "frontend/tests/draft-lifecycle.test.js"
+      - ".github/workflows/draft-lifecycle-contracts.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/src/draft_lifecycle.h"
+      - "backend/src/draft_lifecycle.cpp"
+      - "backend/src/draft_lifecycle_hardening.cpp"
+      - "backend/src/draft_lifecycle_hardening_*.inc"
+      - "backend/tests/draft_lifecycle_tests.cpp"
+      - "backend/tests/draft_lifecycle_contract_tests.py"
+      - "backend/db/migrations/013_draft_lifecycle_reliability.sql"
+      - "frontend/config.js"
+      - "frontend/draft-lifecycle.js"
+      - "frontend/tests/draft-lifecycle.test.js"
+      - ".github/workflows/draft-lifecycle-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: draft-lifecycle-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install focused C++ dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjsoncpp-dev
+
+      - name: Validate lifecycle sources
+        run: |
+          node --check frontend/draft-lifecycle.js
+          node --check frontend/tests/draft-lifecycle.test.js
+          python -m py_compile backend/tests/draft_lifecycle_contract_tests.py
+
+      - name: Run browser and source contracts
+        run: |
+          node frontend/tests/draft-lifecycle.test.js
+          python backend/tests/draft_lifecycle_contract_tests.py
+
+      - name: Compile and run lifecycle rules
+        run: |
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            -I/usr/include/jsoncpp -Ibackend/src \
+            backend/tests/draft_lifecycle_tests.cpp \
+            backend/src/draft_lifecycle.cpp \
+            backend/src/league_schedule.cpp \
+            -ljsoncpp -o /tmp/draft_lifecycle_tests
+          /tmp/draft_lifecycle_tests
