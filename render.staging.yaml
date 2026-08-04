@@ -17,10 +17,11 @@ services:
     dockerContext: .
     healthCheckPath: /health
 
-    # Run migrations and seed the isolated staging database.
-    # Remove the ESPN command if you want staging deploys to migrate only.
+    # Run migrations, load the staging-only draft pool, and seed ESPN roster data.
     preDeployCommand: >-
       sh /srv/db/migrate.sh &&
+      psql "$DB_URL" -v ON_ERROR_STOP=1
+      -f /srv/db/seeds/seed_staging_draft_players.sql &&
       python3 /srv/scripts/run_espn_roster_once.py
 
     envVars:
