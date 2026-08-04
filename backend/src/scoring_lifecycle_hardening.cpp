@@ -201,3 +201,6 @@ bool parseScoreWeekPath(const std::string &path,
 #include "scoring_lifecycle_hardening_advice.inc"
 
 } // namespace
+
+#include "schedule_lineup_lifecycle.cpp"
+#include "schedule_lineup_hardening.cpp"
