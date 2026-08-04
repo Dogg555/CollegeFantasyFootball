@@ -1,0 +1,62 @@
+name: League onboarding contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/src/league_onboarding_hardening.cpp"
+      - "backend/src/league_routes.cpp"
+      - "backend/db/migrations/012_league_onboarding_idempotency.sql"
+      - "backend/tests/league_onboarding_contract_tests.py"
+      - "frontend/config.js"
+      - "frontend/league-onboarding.js"
+      - "frontend/tests/league-onboarding.test.js"
+      - ".github/workflows/league-onboarding-contracts.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/src/league_onboarding_hardening.cpp"
+      - "backend/src/league_routes.cpp"
+      - "backend/db/migrations/012_league_onboarding_idempotency.sql"
+      - "backend/tests/league_onboarding_contract_tests.py"
+      - "frontend/config.js"
+      - "frontend/league-onboarding.js"
+      - "frontend/tests/league-onboarding.test.js"
+      - ".github/workflows/league-onboarding-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: league-onboarding-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate onboarding sources
+        run: |
+          node --check frontend/league-onboarding.js
+          node --check frontend/tests/league-onboarding.test.js
+          python -m py_compile backend/tests/league_onboarding_contract_tests.py
+
+      - name: Run onboarding contracts
+        run: |
+          node frontend/tests/league-onboarding.test.js
+          python backend/tests/league_onboarding_contract_tests.py
