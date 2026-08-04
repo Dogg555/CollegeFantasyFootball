@@ -17,10 +17,9 @@ def remove_function(source: str, signature: str) -> str:
     depth = 0
     end = brace
     while end < len(source):
-        char = source[end]
-        if char == "{":
+        if source[end] == "{":
             depth += 1
-        elif char == "}":
+        elif source[end] == "}":
             depth -= 1
             if depth == 0:
                 end += 1
@@ -67,7 +66,6 @@ handler = re.sub(
     "cff::league_waiver::deadlinePassed(",
     handler,
 )
-
 if handler.count("isoNow(") == 1:
     handler = remove_function(handler, "std::string isoNow()")
 
@@ -145,6 +143,13 @@ for old, new in summary_replacements.items():
     if old in handler:
         handler = handler.replace(old, new)
 
+# The generic processed-summary replacement also matches the local free-agent
+# transaction. Keep that non-waiver path owned by the handler.
+handler = handler.replace(
+    'addTransactionLocked(leagueId, "Free Agent", cff::league_waiver::processedTransactionSummary(player), accountEmail);',
+    'addTransactionLocked(leagueId, "Free Agent", "Added " + jsonString(player, "name"), accountEmail);',
+)
+
 for forbidden in (
     "bool waiverModeActive(const Json::Value &rules)",
     "bool waiverDeadlinePassed(const Json::Value &rules)",
@@ -178,11 +183,7 @@ if "    src/league_waiver.cpp\n" not in cmake:
     source_anchor = "    src/league_roster.cpp\n"
     if source_anchor not in cmake:
         raise RuntimeError("league roster source anchor missing")
-    cmake = cmake.replace(
-        source_anchor,
-        source_anchor + "    src/league_waiver.cpp\n",
-        1,
-    )
+    cmake = cmake.replace(source_anchor, source_anchor + "    src/league_waiver.cpp\n", 1)
 
 if "add_executable(league_waiver_tests" not in cmake:
     test_anchor = "    add_test(NAME league_roster_tests COMMAND league_roster_tests)\n"
