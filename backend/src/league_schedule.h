@@ -4,6 +4,17 @@
 #include <string>
 
 #include <json/json.h>
+#ifdef CFF_HAS_POSTGRES
+#include <postgresql/libpq-fe.h>
+#endif
+
+namespace cff::handlers {
+
+#ifdef CFF_HAS_POSTGRES
+int activeMemberCountForLeague(PGconn *connection, const std::string &leagueId);
+#endif
+
+} // namespace cff::handlers
 
 namespace cff::league_schedule {
 
