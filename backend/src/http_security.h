@@ -39,12 +39,6 @@ void applyCorsHeaders(
     const drogon::HttpResponsePtr &resp,
     const std::unordered_set<std::string> &allowedOrigins);
 
-// Sync advice can return before Drogon's normal post-handling advice executes.
-// Apply the configured CORS policy explicitly to those early responses.
-drogon::HttpResponsePtr withConfiguredCorsHeaders(
-    const drogon::HttpRequestPtr &req,
-    const drogon::HttpResponsePtr &resp);
-
 drogon::HttpResponsePtr buildPreflightResponse(
     const drogon::HttpRequestPtr &req,
     const std::unordered_set<std::string> &allowedOrigins);
