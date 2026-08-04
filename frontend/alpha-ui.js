@@ -30,6 +30,12 @@
   async function guardPrivatePage() {
     if (!isPrivatePage) return true;
 
+    try {
+      await root.CFFAuthSessionSync?.recover();
+    } catch {
+      // Continue with the current tab's session when cross-tab recovery is unavailable.
+    }
+
     const auth = typeof root.getAuthState === 'function' ? root.getAuthState() : null;
     if (!auth?.token) {
       redirectToSignIn();
