@@ -55,6 +55,9 @@ int main() {
                "second session remains independently addressable");
         revokeSessionToken(*first);
         expect(!emailForSessionToken(*first), "revoked session no longer resolves");
+        revokeSessionToken(*first);
+        expect(!emailForSessionToken(*first),
+               "repeated logout cannot restore or reuse a revoked session");
         expect(emailForSessionToken(*second) == std::optional<std::string>{"second@example.com"},
                "revoking one session does not revoke another account session");
         revokeSessionToken(*second);
@@ -63,12 +66,18 @@ int main() {
 
     expect(!emailForSessionToken("token-does-not-exist"),
            "unknown session token is rejected");
+    revokeSessionToken("token-does-not-exist");
+    expect(!emailForSessionToken("token-does-not-exist"),
+           "explicitly revoked unknown tokens remain denied");
 
     setEnvironment("CFF_REQUIRE_DB", "true");
     expect(!issueSessionToken("required@example.com"),
            "session issuance fails closed when a required database is not compiled or configured");
     expect(!emailForSessionToken("token-anything"),
            "session lookup fails closed when persistent storage is required");
+    revokeSessionToken("token-anything");
+    expect(!emailForSessionToken("token-anything"),
+           "logout denylist remains fail-closed when persistent storage is unavailable");
 
     setEnvironment("CFF_REQUIRE_DB", "false");
     if (failures != 0) {
