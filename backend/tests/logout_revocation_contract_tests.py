@@ -28,7 +28,7 @@ require("persistent token revocation could not be confirmed" in store,
         "persistent revocation failures are not observable")
 require("repeated logout cannot restore or reuse a revoked session" in tests,
         "session tests do not cover repeated logout")
-require("logout revocation" in contracts,
-        "production authentication contracts do not validate the token after logout")
+require('expect(call("GET", "/api/auth/validate", token=new_session), 401, "logout revocation")' in contracts,
+        "production authentication contracts do not reject the exact logged-out token")
 
 print("logout revocation contracts passed")
