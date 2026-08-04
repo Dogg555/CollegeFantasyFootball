@@ -45,4 +45,4 @@ assert.match(
   'draft page state and retry controls should render outside the mutation-disable region'
 );
 
-console.log('authenticated page state helper tests passed');
+console.log('authenticated page state contracts passed');
