@@ -86,7 +86,7 @@ function createHarness(postJson) {
 async function main() {
   const success = createHarness(async (path, body, token) => {
     assert.equal(path, '/auth/logout');
-    assert.deepEqual(body, {});
+    assert.equal(Object.keys(body).length, 0);
     assert.equal(token, 'token-session');
     return { status: 'ok' };
   });
