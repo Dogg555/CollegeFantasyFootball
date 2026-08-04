@@ -1,0 +1,62 @@
+name: League roster policy contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/league_roster.h"
+      - "backend/src/league_roster.cpp"
+      - "backend/src/handlers/league_handler.cpp"
+      - "backend/tests/league_roster_tests.cpp"
+      - "backend/tests/league_roster_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/league-roster-contracts.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/league_roster.h"
+      - "backend/src/league_roster.cpp"
+      - "backend/src/handlers/league_handler.cpp"
+      - "backend/tests/league_roster_tests.cpp"
+      - "backend/tests/league_roster_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/league-roster-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  league-roster-contracts:
+    name: Roster eligibility and lineup validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install JsonCpp development library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjsoncpp-dev pkg-config
+
+      - name: Validate roster contract source
+        run: python -m py_compile backend/tests/league_roster_boundary_tests.py
+
+      - name: Compile deterministic roster policy tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -Ibackend/src \
+            backend/src/json_utils.cpp \
+            backend/src/league_roster.cpp \
+            backend/tests/league_roster_tests.cpp \
+            $(pkg-config --cflags --libs jsoncpp) \
+            -o /tmp/league_roster_tests
+
+      - name: Run slot, FLEX, capacity, lineup, and roster-limit tests
+        run: /tmp/league_roster_tests
+
+      - name: Verify roster policy ownership boundary
+        run: python backend/tests/league_roster_boundary_tests.py

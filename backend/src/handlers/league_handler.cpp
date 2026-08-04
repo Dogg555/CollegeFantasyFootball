@@ -26,6 +26,7 @@
 #include "../json_utils.h"
 #include "../league_models.h"
 #include "../league_schedule.h"
+#include "../league_roster.h"
 
 namespace cff::handlers {
 
@@ -75,78 +76,6 @@ std::string canonicalEmail(std::string value) {
         return !std::isspace(ch);
     }).base(), value.end());
     return lowerString(std::move(value));
-}
-
-std::string upperString(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::toupper(ch));
-    });
-    return value;
-}
-
-bool flexEligible(const std::string &position) {
-    const auto pos = lowerString(position);
-    return pos == "rb" || pos == "wr" || pos == "te";
-}
-
-int slotLimit(const Json::Value &rules, const std::string &slot) {
-    return cff::getIntOrDefault(rules, slot, 0);
-}
-
-bool playerEligibleForSlot(const Json::Value &player, const std::string &slot) {
-    const auto position = lowerString(jsonString(player, "position", "bench"));
-    if (slot == "bench") return true;
-    if (slot == "flex") return flexEligible(position);
-    return slot == position;
-}
-
-bool validateRosterSlotMove(const Json::Value &player,
-                            const Json::Value &roster,
-                            const Json::Value &rules,
-                            const std::string &playerId,
-                            const std::string &slot) {
-    if (slot != "qb" && slot != "rb" && slot != "wr" && slot != "te" && slot != "flex" && slot != "bench") {
-        return false;
-    }
-    if (!playerEligibleForSlot(player, slot)) {
-        return false;
-    }
-    int occupied = 0;
-    for (const auto &item : roster) {
-        if (jsonString(item, "id") == playerId) {
-            continue;
-        }
-        if (lowerString(jsonString(item, "rosterSlot", "bench")) == slot) {
-            ++occupied;
-        }
-    }
-    return occupied < slotLimit(rules, slot);
-}
-
-Json::Value lineupErrorsFromCounts(const std::string &managerEmail,
-                                   const Json::Value &rules,
-                                   const std::unordered_map<std::string, int> &counts) {
-    Json::Value errors(Json::arrayValue);
-    for (const auto &slot : {"qb", "rb", "wr", "te", "flex"}) {
-        const auto required = slotLimit(rules, slot);
-        const auto filledIt = counts.find(slot);
-        const auto filled = filledIt == counts.end() ? 0 : filledIt->second;
-        if (filled < required) {
-            Json::Value error;
-            error["managerEmail"] = managerEmail;
-            error["slot"] = slot;
-            error["message"] = "Missing " + std::to_string(required - filled) + " " + upperString(slot) + " starter(s)";
-            errors.append(error);
-        }
-        if (filled > required) {
-            Json::Value error;
-            error["managerEmail"] = managerEmail;
-            error["slot"] = slot;
-            error["message"] = "Too many " + upperString(slot) + " starter(s)";
-            errors.append(error);
-        }
-    }
-    return errors;
 }
 
 double projectionForPlayer(const Json::Value &player) {
@@ -1117,18 +1046,6 @@ Json::Value snapshotPlayer(const Json::Value &player, const std::string &playerI
     return snapshot;
 }
 
-int rosterLimitFromRules(const Json::Value &rules) {
-    if (!rules.isObject()) {
-        return 14;
-    }
-    return cff::getIntOrDefault(rules, "qb", 1)
-        + cff::getIntOrDefault(rules, "rb", 2)
-        + cff::getIntOrDefault(rules, "wr", 2)
-        + cff::getIntOrDefault(rules, "te", 1)
-        + cff::getIntOrDefault(rules, "flex", 2)
-        + cff::getIntOrDefault(rules, "bench", 6);
-}
-
 std::optional<int> dbRosterLimit(const std::string &leagueId) {
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
@@ -1138,7 +1055,7 @@ std::optional<int> dbRosterLimit(const std::string &leagueId) {
     if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) {
         return std::nullopt;
     }
-    return rosterLimitFromRules(jsonFromString(cell(result.get(), 0, 0)));
+    return cff::league_roster::rosterLimitFromRules(jsonFromString(cell(result.get(), 0, 0)));
 }
 
 bool dbRosterHasRoom(PGconn *conn, const std::string &leagueId, const std::string &managerEmail, int offset = 0) {
@@ -1257,18 +1174,7 @@ std::optional<std::string> dbAssignRosterSlot(PGconn *conn,
             counts[lowerString(cell(countsResult.get(), row, 0))] = cellInt(countsResult.get(), row, 1, 0);
         }
     }
-    const auto position = lowerString(jsonString(player, "position", "flex"));
-    const auto naturalLimit = cff::getIntOrDefault(rules, position, 0);
-    if (naturalLimit > 0 && counts[position] + offset < naturalLimit) {
-        return position;
-    }
-    if (flexEligible(position) && counts["flex"] + offset < cff::getIntOrDefault(rules, "flex", 0)) {
-        return "flex";
-    }
-    if (counts["bench"] + offset < cff::getIntOrDefault(rules, "bench", 0)) {
-        return "bench";
-    }
-    return std::nullopt;
+    return cff::league_roster::preferredRosterSlot(player, rules, counts, offset);
 }
 
 Json::Value draftPicksForLeague(PGconn *conn, const std::string &leagueId) {
@@ -1682,7 +1588,7 @@ std::optional<Json::Value> dbUpdateRosterSlot(const std::string &accountEmail,
     if (!target.isObject()) return std::nullopt;
     const auto rules = dbRosterRules(leagueId).value_or(Json::Value{Json::objectValue});
     const auto slot = lowerString(requestedSlot);
-    if (!validateRosterSlotMove(target, roster, rules, playerId, slot)) {
+    if (!cff::league_roster::validateRosterSlotMove(target, roster, rules, playerId, slot)) {
         Json::Value error;
         error["error"] = "Invalid roster slot";
         return error;
@@ -2490,7 +2396,7 @@ std::optional<Json::Value> dbLineupErrors(PGconn *conn, const std::string &leagu
         for (int row = 0; row < PQntuples(result.get()); ++row) {
             counts[lowerString(cell(result.get(), row, 0))] = cellInt(result.get(), row, 1, 0);
         }
-        const auto managerErrors = lineupErrorsFromCounts(managerEmail, rules, counts);
+        const auto managerErrors = cff::league_roster::lineupErrorsFromCounts(managerEmail, rules, counts);
         for (const auto &error : managerErrors) {
             errors.append(error);
         }
@@ -3210,7 +3116,7 @@ void handleUpdateRosterSlot(const drogon::HttpRequestPtr &req,
     const auto rules = leagueIt != leaguesById.end()
                            ? leagueIt->second.league.rosterRules.toJson()
                            : cff::RosterRules{}.toJson();
-    if (!validateRosterSlotMove(roster[playerIndex], roster, rules, playerId, requestedSlot)) {
+    if (!cff::league_roster::validateRosterSlotMove(roster[playerIndex], roster, rules, playerId, requestedSlot)) {
         sendError(callback, drogon::k400BadRequest, "Invalid roster slot");
         return;
     }
@@ -4347,7 +4253,7 @@ void handleScoreWeek(const drogon::HttpRequestPtr &req,
         const auto slot = lowerString(jsonString(player, "rosterSlot", "bench"));
         if (slot != "bench") counts[slot] += 1;
     }
-    auto errors = lineupErrorsFromCounts(accountEmail, rules, counts);
+    auto errors = cff::league_roster::lineupErrorsFromCounts(accountEmail, rules, counts);
     if (errors.size() > 0) {
         Json::Value payload;
         payload["error"] = "Invalid lineup";
@@ -4427,7 +4333,7 @@ void handleFinalizeWeek(const drogon::HttpRequestPtr&,
         const auto slot = lowerString(jsonString(player, "rosterSlot", "bench"));
         if (slot != "bench") counts[slot] += 1;
     }
-    auto errors = lineupErrorsFromCounts(accountEmail, rules, counts);
+    auto errors = cff::league_roster::lineupErrorsFromCounts(accountEmail, rules, counts);
     if (errors.size() > 0) {
         Json::Value payload;
         payload["error"] = "Invalid lineup";

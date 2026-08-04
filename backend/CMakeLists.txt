@@ -46,6 +46,7 @@ add_executable(college_ff_server
     src/handlers/league_handler.cpp
     src/league_models.cpp
     src/league_schedule.cpp
+    src/league_roster.cpp
     src/player_catalog.cpp
     src/ingest_runtime.cpp
     src/cfbd_ingest.cpp
@@ -173,4 +174,14 @@ if (BUILD_TESTING)
     target_include_directories(league_schedule_tests PRIVATE src)
     target_link_libraries(league_schedule_tests PRIVATE Drogon::Drogon)
     add_test(NAME league_schedule_tests COMMAND league_schedule_tests)
+
+
+    add_executable(league_roster_tests
+        tests/league_roster_tests.cpp
+        src/league_roster.cpp
+        src/json_utils.cpp
+    )
+    target_include_directories(league_roster_tests PRIVATE src)
+    target_link_libraries(league_roster_tests PRIVATE Drogon::Drogon)
+    add_test(NAME league_roster_tests COMMAND league_roster_tests)
 endif()
