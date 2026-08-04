@@ -5,17 +5,31 @@ on:
     branches: [main, Test]
     paths:
       - "backend/src/live_stat_orchestration.*"
+      - "backend/src/live_stat_worker.*"
+      - "backend/src/live_stat_routes.*"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/application_bootstrap.cpp"
+      - "backend/CMakeLists.txt"
       - "backend/tests/live_stat_orchestration_tests.cpp"
       - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
       - "scripts/live_stat_refresh_runtime_contract.py"
+      - "scripts/live_stat_worker_contract.py"
+      - ".env.example"
       - ".github/workflows/live-stat-refresh-contracts.yml"
   pull_request:
     branches: [main, Test]
     paths:
       - "backend/src/live_stat_orchestration.*"
+      - "backend/src/live_stat_worker.*"
+      - "backend/src/live_stat_routes.*"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/application_bootstrap.cpp"
+      - "backend/CMakeLists.txt"
       - "backend/tests/live_stat_orchestration_tests.cpp"
       - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
       - "scripts/live_stat_refresh_runtime_contract.py"
+      - "scripts/live_stat_worker_contract.py"
+      - ".env.example"
       - ".github/workflows/live-stat-refresh-contracts.yml"
   workflow_dispatch:
 
@@ -36,7 +50,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Validate sources
-        run: python -m py_compile scripts/live_stat_refresh_runtime_contract.py
+        run: |
+          python -m py_compile scripts/live_stat_refresh_runtime_contract.py scripts/live_stat_worker_contract.py
+          python scripts/live_stat_worker_contract.py
       - name: Compile and run orchestration rules
         run: |
           g++ -std=c++17 -Wall -Wextra -pedantic \
