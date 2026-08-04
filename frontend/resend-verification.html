@@ -31,7 +31,7 @@
         <h2>Resend verification</h2>
         <span class="pill pill--muted">Account</span>
       </div>
-      <form id="resend-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false">
+      <form id="resend-form" class="form" method="post" action="javascript:void(0)" onsubmit="return false" data-cooldown-seconds="60">
         <label class="field">
           <span>Email</span>
           <input id="resend-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" />
@@ -40,6 +40,7 @@
           <button class="button button--primary" type="submit">Send verification</button>
         </div>
         <div id="resend-status" class="muted small" role="status"></div>
+        <div id="resend-cooldown" class="muted small" role="status" aria-live="polite"></div>
       </form>
     </section>
 
@@ -68,6 +69,7 @@
   </footer>
   <script src="config.js"></script>
   <script src="state.js"></script>
+  <script src="resend-verification-cooldown.js"></script>
   <script src="auth.js"></script>
 </body>
 </html>
