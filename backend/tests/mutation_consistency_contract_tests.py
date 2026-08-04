@@ -24,8 +24,6 @@ for policy in (
     "league-settings",
     "join-league",
     "league-members",
-    "draft-queue",
-    "draft-state",
     "roster",
     "waivers",
     "trades",
@@ -33,6 +31,8 @@ for policy in (
     "league-feed",
 ):
     require(MODULE, f"key: '{policy}'", f"missing mutation policy: {policy}")
+
+require(MODULE, "key: queueOnly ? 'draft-queue' : 'draft-state'", "draft queue and draft-state policies must both be classified")
 
 for scope in ("'leagues'", "'league'", "'draft'"):
     require(MODULE, scope, f"missing cache scope {scope}")
