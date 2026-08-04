@@ -27,6 +27,7 @@
 #include "../league_models.h"
 #include "../league_schedule.h"
 #include "../league_roster.h"
+#include "../league_waiver.h"
 
 namespace cff::handlers {
 
@@ -86,30 +87,6 @@ double projectionForPlayer(const Json::Value &player) {
         return player["projectedPoints"].asDouble();
     }
     return 0.0;
-}
-
-std::string isoNow() {
-    const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::tm timeInfo{};
-#ifdef _WIN32
-    gmtime_s(&timeInfo, &now);
-#else
-    gmtime_r(&now, &timeInfo);
-#endif
-    std::ostringstream out;
-    out << std::put_time(&timeInfo, "%Y-%m-%dT%H:%M");
-    return out.str();
-}
-
-bool waiverModeActive(const Json::Value &rules) {
-    return cff::getStringOrDefault(rules, "mode", "free_agency") == "waivers"
-        || (rules.isMember("freeAgencyLocked") && rules["freeAgencyLocked"].asBool());
-}
-
-bool waiverDeadlinePassed(const Json::Value &rules) {
-    const auto deadline = cff::getStringOrDefault(rules, "claimDeadline");
-    if (deadline.empty()) return true;
-    return deadline <= isoNow();
 }
 
 bool tradeApprovalRequired(const Json::Value &rules) {
@@ -1524,7 +1501,7 @@ std::optional<Json::Value> dbAddRosterPlayer(const std::string &accountEmail,
     const auto playerId = jsonString(normalized, "id");
     if (dbPlayerRosteredInLeague(conn.get(), leagueId, playerId)) return std::nullopt;
     const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-    if (waiverModeActive(waiverRules)) return std::nullopt;
+    if (cff::league_waiver::modeActive(waiverRules)) return std::nullopt;
     if (!dbRosterHasRoom(conn.get(), leagueId, accountEmail)) return std::nullopt;
     const auto slot = dbAssignRosterSlot(conn.get(), leagueId, accountEmail, normalized);
     if (!slot) return std::nullopt;
@@ -1717,7 +1694,7 @@ std::optional<Json::Value> dbResetWaiverPriority(const std::string &accountEmail
                            "FROM league_members WHERE league_id = $1 AND status <> 'removed'",
                            {leagueId});
     if (!resultOk(seed.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Waiver Priority", "Reset waiver priority order", accountEmail, Json::Value{Json::objectValue});
+    dbAddTransaction(conn.get(), leagueId, "Waiver Priority", cff::league_waiver::resetPriorityTransactionSummary(), accountEmail, Json::Value{Json::objectValue});
     return dbListWaiverPriority(conn.get(), leagueId);
 }
 
@@ -1747,7 +1724,7 @@ std::optional<Json::Value> dbCreateWaiver(const std::string &accountEmail,
                              "VALUES ($1, $2, $3, $4, $5::jsonb, NULLIF($6, ''), $7::int, $8::int)",
                              {claimId, leagueId, accountEmail, jsonString(player, "id"), jsonToString(player), dropPlayerId, std::to_string(priority), std::to_string(claimOrder)});
     if (!resultOk(result.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Waiver Claim", "Claimed " + jsonString(player, "name"), accountEmail, player);
+    dbAddTransaction(conn.get(), leagueId, "Waiver Claim", cff::league_waiver::claimTransactionSummary(player), accountEmail, player);
     auto claims = dbListWaivers(accountEmail, leagueId);
     if (claims && claims->size() > 0) {
         return (*claims)[0];
@@ -1763,7 +1740,7 @@ std::optional<Json::Value> dbProcessWaiver(const std::string &accountEmail,
     if (!conn) return std::nullopt;
     if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-    if (!waiverDeadlinePassed(waiverRules)) return std::nullopt;
+    if (!cff::league_waiver::deadlinePassed(waiverRules)) return std::nullopt;
     auto claim = execParams(conn.get(),
                             "SELECT add_player_id, add_player_snapshot::text, COALESCE(drop_player_id, '') "
                             "FROM waiver_claims WHERE league_id = $1 AND manager_email = $2 AND id = $3",
@@ -1798,7 +1775,7 @@ std::optional<Json::Value> dbProcessWaiver(const std::string &accountEmail,
                                   "WHERE league_id = $1 AND manager_email = $2 AND id = $3",
                                   {leagueId, accountEmail, claimId});
     if (!resultOk(rosterInsert.get(), PGRES_COMMAND_OK) || !resultOk(claimUpdate.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Waiver Processed", "Added " + jsonString(player, "name"), accountEmail, player);
+    dbAddTransaction(conn.get(), leagueId, "Waiver Processed", cff::league_waiver::processedTransactionSummary(player), accountEmail, player);
     Json::Value response;
     response["id"] = claimId;
     response["addPlayer"] = player;
@@ -1821,7 +1798,7 @@ std::optional<Json::Value> dbUpdateWaiverStatus(const std::string &accountEmail,
                              "WHERE league_id = $1 AND id = $2 AND status = 'pending' AND ($4 = 'true' OR manager_email = $3)",
                              {leagueId, claimId, accountEmail, commissioner ? "true" : "false"});
     if (!resultOk(update.get(), PGRES_COMMAND_OK) || std::string{PQcmdTuples(update.get())} == "0") return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Waiver Cancelled", "Cancelled waiver claim", accountEmail, Json::Value{Json::objectValue});
+    dbAddTransaction(conn.get(), leagueId, "Waiver Cancelled", cff::league_waiver::cancelledTransactionSummary(), accountEmail, Json::Value{Json::objectValue});
     return dbListWaivers(accountEmail, leagueId);
 }
 
@@ -1849,7 +1826,7 @@ std::optional<Json::Value> dbProcessWaivers(const std::string &accountEmail, con
     if (!conn) return std::nullopt;
     if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-    if (!waiverDeadlinePassed(waiverRules)) return std::nullopt;
+    if (!cff::league_waiver::deadlinePassed(waiverRules)) return std::nullopt;
     auto claims = execParams(conn.get(),
                              "SELECT id, manager_email, add_player_id, add_player_snapshot::text, COALESCE(drop_player_id, '') "
                              "FROM waiver_claims WHERE league_id = $1 AND status = 'pending' "
@@ -1909,7 +1886,7 @@ std::optional<Json::Value> dbProcessWaivers(const std::string &accountEmail, con
             return std::nullopt;
         }
         dbMoveManagerToBackOfWaivers(conn.get(), leagueId, managerEmail);
-        dbAddTransaction(conn.get(), leagueId, "Waiver Processed", "Added " + jsonString(player, "name"), managerEmail, player);
+        dbAddTransaction(conn.get(), leagueId, "Waiver Processed", cff::league_waiver::processedTransactionSummary(player), managerEmail, player);
         processed.append(claimId);
     }
 
@@ -2977,7 +2954,7 @@ void handleAddRosterPlayer(const drogon::HttpRequestPtr &req,
             return;
         }
         const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-        if (waiverModeActive(waiverRules)) {
+        if (cff::league_waiver::modeActive(waiverRules)) {
             sendError(callback, drogon::k409Conflict, "Free agency is locked. Submit a waiver claim.");
             return;
         }
@@ -2999,7 +2976,7 @@ void handleAddRosterPlayer(const drogon::HttpRequestPtr &req,
         sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
         return;
     }
-    if (waiverModeActive(waiverRulesForLeagueLocked(leagueId))) {
+    if (cff::league_waiver::modeActive(waiverRulesForLeagueLocked(leagueId))) {
         sendError(callback, drogon::k409Conflict, "Free agency is locked. Submit a waiver claim.");
         return;
     }
@@ -3102,7 +3079,7 @@ void handleUpdateRosterSlot(const drogon::HttpRequestPtr &req,
         sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
         return;
     }
-    if (waiverModeActive(waiverRulesForLeagueLocked(leagueId))) {
+    if (cff::league_waiver::modeActive(waiverRulesForLeagueLocked(leagueId))) {
         sendError(callback, drogon::k409Conflict, "Free agency is locked. Submit a waiver claim.");
         return;
     }
@@ -3484,16 +3461,11 @@ void handleCreateWaiver(const drogon::HttpRequestPtr &req,
     claim["createdAt"] = timestampId("at");
     claim["managerEmail"] = accountEmail;
     auto &claims = arrayForLeague(waiversByLeague, leagueId);
-    int claimOrder = 1;
-    for (const auto &existing : claims) {
-        if (jsonString(existing, "managerEmail") == accountEmail && jsonString(existing, "status") == "Pending") {
-            claimOrder = std::max(claimOrder, cff::getIntOrDefault(existing, "claimOrder", 1) + 1);
-        }
-    }
+    const auto claimOrder = cff::league_waiver::nextClaimOrder(claims, accountEmail);
     claim["priority"] = 1;
     claim["claimOrder"] = claimOrder;
     claims.insert(0, claim);
-    addTransactionLocked(leagueId, "Waiver Claim", "Claimed " + jsonString(claim["addPlayer"], "name"), accountEmail);
+    addTransactionLocked(leagueId, "Waiver Claim", cff::league_waiver::claimTransactionSummary(claim["addPlayer"]), accountEmail);
     callback(jsonResponse(claim, drogon::k201Created));
 }
 
@@ -3510,7 +3482,7 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
             return;
         }
         const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-        if (!waiverDeadlinePassed(waiverRules)) {
+        if (!cff::league_waiver::deadlinePassed(waiverRules)) {
             sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
             return;
         }
@@ -3532,7 +3504,7 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
         sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
         return;
     }
-    if (!waiverDeadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
+    if (!cff::league_waiver::deadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
         sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
         return;
     }
@@ -3555,7 +3527,7 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
                 roster.append(player);
             }
             claims[i]["status"] = "Processed";
-            addTransactionLocked(leagueId, "Waiver Processed", "Added " + jsonString(player, "name"), accountEmail);
+            addTransactionLocked(leagueId, "Waiver Processed", cff::league_waiver::processedTransactionSummary(player), accountEmail);
             callback(jsonResponse(claims[i], drogon::k200OK));
             return;
         }
@@ -3600,7 +3572,7 @@ void handleUpdateWaiverStatus(const drogon::HttpRequestPtr &req,
             return;
         }
         claim["status"] = "Cancelled";
-        addTransactionLocked(leagueId, "Waiver Cancelled", "Cancelled waiver claim", accountEmail);
+        addTransactionLocked(leagueId, "Waiver Cancelled", cff::league_waiver::cancelledTransactionSummary(), accountEmail);
         callback(jsonResponse(claims, drogon::k200OK));
         return;
     }
@@ -3662,7 +3634,7 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
             return;
         }
         const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-        if (!waiverDeadlinePassed(waiverRules)) {
+        if (!cff::league_waiver::deadlinePassed(waiverRules)) {
             sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
             return;
         }
@@ -3684,7 +3656,7 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
         sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
         return;
     }
-    if (!waiverDeadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
+    if (!cff::league_waiver::deadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
         sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
         return;
     }
@@ -3692,16 +3664,7 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
     auto &roster = arrayForLeague(rostersByLeague, leagueId);
     Json::Value processed(Json::arrayValue);
     Json::Value cancelled(Json::arrayValue);
-    std::vector<Json::ArrayIndex> claimIndexes;
-    for (Json::ArrayIndex i = 0; i < claims.size(); ++i) {
-        claimIndexes.push_back(i);
-    }
-    std::sort(claimIndexes.begin(), claimIndexes.end(), [&claims](Json::ArrayIndex left, Json::ArrayIndex right) {
-        const auto leftPriority = cff::getIntOrDefault(claims[left], "priority", 999);
-        const auto rightPriority = cff::getIntOrDefault(claims[right], "priority", 999);
-        if (leftPriority != rightPriority) return leftPriority < rightPriority;
-        return cff::getIntOrDefault(claims[left], "claimOrder", 999) < cff::getIntOrDefault(claims[right], "claimOrder", 999);
-    });
+    const auto claimIndexes = cff::league_waiver::orderedClaimIndexes(claims);
     for (const auto i : claimIndexes) {
         if (jsonString(claims[i], "status") != "Pending") {
             continue;
@@ -3722,7 +3685,7 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
         }
         claims[i]["status"] = "Processed";
         processed.append(jsonString(claims[i], "id"));
-        addTransactionLocked(leagueId, "Waiver Processed", "Added " + jsonString(player, "name"), accountEmail);
+        addTransactionLocked(leagueId, "Waiver Processed", cff::league_waiver::processedTransactionSummary(player), accountEmail);
     }
     Json::Value payload;
     payload["processed"] = processed;
@@ -3751,17 +3714,8 @@ void handleListWaiverPriority(const drogon::HttpRequestPtr&,
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
         return;
     }
-    Json::Value priorities(Json::arrayValue);
-    int priority = 1;
-    for (const auto &member : arrayForLeague(membersByLeague, leagueId)) {
-        if (lowerString(jsonString(member, "status", "Active")) == "removed") continue;
-        Json::Value item;
-        item["managerEmail"] = jsonString(member, "email");
-        item["role"] = jsonString(member, "role", "member");
-        item["status"] = jsonString(member, "status", "Active");
-        item["priority"] = priority++;
-        priorities.append(item);
-    }
+    auto priorities = cff::league_waiver::buildPriorityBoard(
+        arrayForLeague(membersByLeague, leagueId));
     callback(jsonResponse(priorities, drogon::k200OK));
 }
 
@@ -3785,18 +3739,9 @@ void handleResetWaiverPriority(const drogon::HttpRequestPtr&,
     if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
         return;
     }
-    Json::Value priorities(Json::arrayValue);
-    int priority = 1;
-    for (const auto &member : arrayForLeague(membersByLeague, leagueId)) {
-        if (lowerString(jsonString(member, "status", "Active")) == "removed") continue;
-        Json::Value item;
-        item["managerEmail"] = jsonString(member, "email");
-        item["role"] = jsonString(member, "role", "member");
-        item["status"] = jsonString(member, "status", "Active");
-        item["priority"] = priority++;
-        priorities.append(item);
-    }
-    addTransactionLocked(leagueId, "Waiver Priority", "Reset waiver priority order", accountEmail);
+    auto priorities = cff::league_waiver::buildPriorityBoard(
+        arrayForLeague(membersByLeague, leagueId));
+    addTransactionLocked(leagueId, "Waiver Priority", cff::league_waiver::resetPriorityTransactionSummary(), accountEmail);
     callback(jsonResponse(priorities, drogon::k200OK));
 }
 

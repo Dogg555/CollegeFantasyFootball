@@ -1,0 +1,62 @@
+name: League waiver policy contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/league_waiver.h"
+      - "backend/src/league_waiver.cpp"
+      - "backend/src/handlers/league_handler.cpp"
+      - "backend/tests/league_waiver_tests.cpp"
+      - "backend/tests/league_waiver_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/league-waiver-contracts.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/league_waiver.h"
+      - "backend/src/league_waiver.cpp"
+      - "backend/src/handlers/league_handler.cpp"
+      - "backend/tests/league_waiver_tests.cpp"
+      - "backend/tests/league_waiver_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/league-waiver-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  league-waiver-contracts:
+    name: Waiver mode, deadline, priority, and summary policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install JsonCpp development library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjsoncpp-dev pkg-config
+
+      - name: Validate waiver contract source
+        run: python -m py_compile backend/tests/league_waiver_boundary_tests.py
+
+      - name: Compile deterministic waiver policy tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -Ibackend/src \
+            backend/src/json_utils.cpp \
+            backend/src/league_waiver.cpp \
+            backend/tests/league_waiver_tests.cpp \
+            $(pkg-config --cflags --libs jsoncpp) \
+            -o /tmp/league_waiver_tests
+
+      - name: Run waiver mode, deadline, ordering, priority, and summary tests
+        run: /tmp/league_waiver_tests
+
+      - name: Verify waiver policy ownership boundary
+        run: python backend/tests/league_waiver_boundary_tests.py

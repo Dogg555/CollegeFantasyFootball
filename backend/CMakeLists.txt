@@ -47,6 +47,7 @@ add_executable(college_ff_server
     src/league_models.cpp
     src/league_schedule.cpp
     src/league_roster.cpp
+    src/league_waiver.cpp
     src/player_catalog.cpp
     src/ingest_runtime.cpp
     src/cfbd_ingest.cpp
@@ -184,4 +185,14 @@ if (BUILD_TESTING)
     target_include_directories(league_roster_tests PRIVATE src)
     target_link_libraries(league_roster_tests PRIVATE Drogon::Drogon)
     add_test(NAME league_roster_tests COMMAND league_roster_tests)
+
+
+    add_executable(league_waiver_tests
+        tests/league_waiver_tests.cpp
+        src/league_waiver.cpp
+        src/json_utils.cpp
+    )
+    target_include_directories(league_waiver_tests PRIVATE src)
+    target_link_libraries(league_waiver_tests PRIVATE Drogon::Drogon)
+    add_test(NAME league_waiver_tests COMMAND league_waiver_tests)
 endif()
