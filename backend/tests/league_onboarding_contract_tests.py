@@ -10,6 +10,7 @@ MIGRATION = (ROOT / "backend" / "db" / "migrations" / "012_league_onboarding_ide
 FRONTEND = (ROOT / "frontend" / "league-onboarding.js").read_text(encoding="utf-8")
 CONFIG = (ROOT / "frontend" / "config.js").read_text(encoding="utf-8")
 ROUTES = (ROOT / "backend" / "src" / "league_routes.cpp").read_text(encoding="utf-8")
+CORS = (ROOT / "backend" / "src" / "health_status.cpp").read_text(encoding="utf-8")
 
 
 def require(source: str, fragment: str, message: str) -> None:
@@ -41,6 +42,8 @@ require(BACKEND, "registerSyncAdvice(onboardingAdvice)", "hardening must run bef
 require(ROUTES, '"/api/leagues"', "create route must remain registered")
 require(ROUTES, '"/api/leagues/{1}/join"', "join route must remain registered")
 require(ROUTES, '"/api/leagues/{1}/members/{2}"', "member approval route must remain registered")
+require(CORS, "Authorization, Content-Type, X-Request-ID, Idempotency-Key", "browser preflight must allow onboarding operation keys")
+require(CORS, '"GET, POST, PUT, PATCH, DELETE, OPTIONS"', "onboarding methods must remain available through CORS")
 
 require(CONFIG, "'mutation-consistency.js', 'league-onboarding.js'", "onboarding must load after mutation consistency")
 require(FRONTEND, "const ALLOWED_TEAM_COUNTS = Object.freeze([4, 6, 8, 10, 12, 14, 16])", "frontend must expose supported league sizes")
