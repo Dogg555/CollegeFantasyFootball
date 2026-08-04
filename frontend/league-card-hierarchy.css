@@ -1,0 +1,173 @@
+/* Home and league-card hierarchy improvements for closed-beta readiness. */
+
+.home-workspace > .card {
+  min-width: 0;
+}
+
+#league-summary {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+#league-summary > .row {
+  position: relative;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+}
+
+#league-summary > .row:first-child {
+  border-color: rgba(98, 223, 160, 0.2);
+  background:
+    linear-gradient(145deg, rgba(98, 223, 160, 0.08), rgba(246, 198, 95, 0.035)),
+    rgba(255, 255, 255, 0.015);
+}
+
+#league-summary > .row:first-child::before {
+  content: '';
+  position: absolute;
+  inset: 12px auto 12px 0;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+}
+
+#league-summary .row > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+#league-summary .row strong {
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+
+#league-summary .row .muted {
+  line-height: 1.42;
+}
+
+#league-summary .badge {
+  flex: 0 0 auto;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#league-summary .button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 116px;
+}
+
+.home-workspace > .card:has(#league-summary) .cta-row {
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.home-workspace > .card:has(#league-summary) .cta-row .button--primary {
+  margin-left: auto;
+}
+
+#league-details > .grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+#league-details > .grid > div {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+#league-details > .grid .label {
+  margin-bottom: 5px;
+  color: #8795a1;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+#league-details > .grid .value {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 760;
+}
+
+#league-details > .list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+#league-details > .list > .row {
+  min-height: 78px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+@media (max-width: 760px) {
+  #league-summary > .row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 13px 14px;
+  }
+
+  #league-summary .button {
+    min-width: 0;
+    min-height: 44px;
+    padding-inline: 13px;
+  }
+
+  .home-workspace > .card:has(#league-summary) .cta-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-workspace > .card:has(#league-summary) .cta-row .button--primary {
+    grid-column: 1 / -1;
+    margin-left: 0;
+  }
+
+  #league-details > .grid,
+  #league-details > .list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 430px) {
+  #league-summary > .row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #league-summary .badge,
+  #league-summary .button {
+    width: 100%;
+    max-width: none;
+  }
+
+  #league-details > .grid,
+  #league-details > .list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
