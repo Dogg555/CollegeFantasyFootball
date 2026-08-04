@@ -34,6 +34,33 @@ drogon::HttpResponsePtr statIngestionAdvice(const drogon::HttpRequestPtr &reques
     const auto season = requestSeason(request);
     const auto week = requestWeek(request);
     if (statusRoute) return getStatStatus(season, week, actor);
+
+    const auto body = request->getJsonObject();
+    const auto action = body && body->isObject()
+        ? lower(trim(body->get("action", "").asString()))
+        : std::string{};
+    if (action == "recover") {
+        const auto key = operationKey(request);
+        if (!key.empty()) {
+            auto context = openStatContext(season, week);
+            if (!context) return statStorageUnavailable();
+            if (const auto replay = operationReplay(
+                    context->connection.get(), season, week, actor, key, "recover")) {
+                if (!(*replay)["operationTypeMatches"].asBool()) {
+                    rollback(context->connection.get());
+                    return errorResponse(drogon::k409Conflict,
+                                         "This idempotency key was used for another ingestion action.",
+                                         "idempotency_key_conflict");
+                }
+                auto payload = *replay;
+                payload.removeMember("operationTypeMatches");
+                payload.removeMember("storedOperationType");
+                if (!commit(context->connection.get())) return statStorageUnavailable();
+                return jsonResponse(payload);
+            }
+            rollback(context->connection.get());
+        }
+    }
     return dispatchStatTransaction(request, season, week, actor);
 #else
     (void)request;
