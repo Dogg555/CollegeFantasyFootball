@@ -4,6 +4,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 main = (root / "backend/src/main.cpp").read_text(encoding="utf-8")
+composition = (root / "backend/src/app_composition.cpp").read_text(encoding="utf-8")
 routes = (root / "backend/src/league_routes.cpp").read_text(encoding="utf-8")
 header = (root / "backend/src/league_routes.h").read_text(encoding="utf-8")
 handlers = (root / "backend/src/handlers/league_handler.cpp").read_text(encoding="utf-8")
@@ -17,10 +18,12 @@ if '"/api/leagues' in main:
     raise SystemExit("league route registration leaked into main.cpp")
 if "cff::handlers::handle" in main:
     raise SystemExit("league handler delegation leaked into main.cpp")
-if main.count(
+if "cff::league::registerLeagueRoutes(" in main:
+    raise SystemExit("main.cpp must delegate league registration through app composition")
+if composition.count(
     "cff::league::registerLeagueRoutes(app, jwtSecret, allowedOrigins);"
 ) != 1:
-    raise SystemExit("main.cpp must register league routes exactly once")
+    raise SystemExit("application composition must register league routes exactly once")
 if "void registerLeagueRoutes(" not in header:
     raise SystemExit("league_routes.h declaration missing")
 if "void registerLeagueRoutes(" not in routes:
@@ -71,5 +74,7 @@ if "cff::http::buildPreflightResponse(request, allowedOrigins)" not in routes:
     raise SystemExit("league preflight must delegate to shared HTTP security")
 if "src/league_routes.cpp" not in cmake:
     raise SystemExit("league_routes.cpp is not part of the production target")
+if "src/app_composition.cpp" not in cmake:
+    raise SystemExit("app_composition.cpp is not part of the production target")
 
 print("league route boundary contracts passed")
