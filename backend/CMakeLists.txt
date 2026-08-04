@@ -14,11 +14,12 @@ if (NOT ENABLE_DROGON)
     return()
 endif()
 
-# Keep route registration modules in the production target so structural
-# boundaries and Docker contracts exercise the same server composition.
+# Keep route registration and runtime modules in the production target so
+# structural boundaries and Docker contracts exercise the same composition.
 add_executable(college_ff_server
     src/main.cpp
     src/app_config.cpp
+    src/server_runtime.cpp
     src/auth_core.cpp
     src/auth_controller.cpp
     src/auth_routes.cpp
