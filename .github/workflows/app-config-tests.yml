@@ -21,6 +21,9 @@ on:
       - "backend/src/operations_routes.cpp"
       - "backend/src/league_routes.h"
       - "backend/src/league_routes.cpp"
+      - "backend/src/league_schedule.h"
+      - "backend/src/league_schedule.cpp"
+      - "backend/src/handlers/league_handler.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -34,6 +37,8 @@ on:
       - "backend/tests/health_routes_boundary_tests.py"
       - "backend/tests/operations_routes_boundary_tests.py"
       - "backend/tests/league_routes_boundary_tests.py"
+      - "backend/tests/league_schedule_tests.cpp"
+      - "backend/tests/league_schedule_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -58,6 +63,9 @@ on:
       - "backend/src/operations_routes.cpp"
       - "backend/src/league_routes.h"
       - "backend/src/league_routes.cpp"
+      - "backend/src/league_schedule.h"
+      - "backend/src/league_schedule.cpp"
+      - "backend/src/handlers/league_handler.cpp"
       - "backend/src/auth_account_store.h"
       - "backend/src/auth_account_store.cpp"
       - "backend/src/auth_session_store.h"
@@ -71,6 +79,8 @@ on:
       - "backend/tests/health_routes_boundary_tests.py"
       - "backend/tests/operations_routes_boundary_tests.py"
       - "backend/tests/league_routes_boundary_tests.py"
+      - "backend/tests/league_schedule_tests.cpp"
+      - "backend/tests/league_schedule_boundary_tests.py"
       - "backend/tests/auth_account_store_tests.cpp"
       - "backend/tests/auth_session_store_tests.cpp"
       - "backend/CMakeLists.txt"
@@ -199,6 +209,32 @@ jobs:
             backend/tests/league_routes_boundary_tests.py
       - name: Verify league route ownership, methods, guards, and preflights
         run: python backend/tests/league_routes_boundary_tests.py
+
+  league-schedule-contracts:
+    name: League scheduling and draft-turn contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install JsonCpp development library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjsoncpp-dev pkg-config
+      - name: Compile league scheduling tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -Ibackend/src \
+            backend/src/league_schedule.cpp \
+            backend/tests/league_schedule_tests.cpp \
+            $(pkg-config --cflags --libs jsoncpp) \
+            -o /tmp/league_schedule_tests
+      - name: Run four-team, six-team, bye, and draft-turn tests
+        run: /tmp/league_schedule_tests
+      - name: Verify schedule ownership boundary
+        run: python backend/tests/league_schedule_boundary_tests.py
 
   auth-account-contracts:
     name: Authentication account persistence contracts
