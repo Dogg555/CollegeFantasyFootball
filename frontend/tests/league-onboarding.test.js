@@ -59,6 +59,7 @@ const normalized = normalizeInviteList([
 assert.deepEqual(normalized.invites, ['a@example.com', 'b@example.com']);
 assert.deepEqual(normalized.invalid, ['invalid']);
 
+const fixedNow = () => Date.parse('2026-08-04T16:00:00Z');
 for (const teams of [4, 6]) {
   const result = validateCreatePayload({
     name: `${teams} Team Test`,
@@ -67,7 +68,7 @@ for (const teams of [4, 6]) {
     draftType: 'snake',
     draftDate: '2030-08-22T18:00:00Z',
     invitedEmails: Array.from({ length: teams - 1 }, (_, index) => `manager${index}@example.com`)
-  }, 'owner@example.com', Date.parse('2026-08-04T16:00:00Z'));
+  }, 'owner@example.com', fixedNow);
   assert.equal(result.ok, true, `${teams}-team testing leagues must be accepted`);
   assert.equal(result.payload.invitedEmails.length, teams - 1);
 }
@@ -93,7 +94,7 @@ const invalidDraftDate = validateCreatePayload({
   teams: 4,
   draftDate: '2025-01-01T00:00:00Z',
   invitedEmails: []
-}, 'owner@example.com', Date.parse('2026-08-04T16:00:00Z'));
+}, 'owner@example.com', fixedNow);
 assert.equal(invalidDraftDate.ok, false);
 assert.match(invalidDraftDate.errors.join(' '), /future/);
 
