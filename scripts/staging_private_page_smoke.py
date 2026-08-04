@@ -20,6 +20,7 @@ FRONTEND_BASE = os.environ.get(
 API_ORIGIN = os.environ.get(
     "CFF_INCIDENT_API_ORIGIN", "https://college-ff-staging-api.onrender.com"
 ).rstrip("/")
+EXPECTED_COMMIT = os.environ.get("CFF_INCIDENT_EXPECTED_COMMIT", "").strip()
 ARTIFACT_DIR = pathlib.Path(os.environ.get("CFF_INCIDENT_ARTIFACT_DIR", "staging-incident-artifacts"))
 
 
@@ -27,7 +28,7 @@ class SmokeFailure(RuntimeError):
     pass
 
 
-def request(method: str, path: str, body: Any = None, token: str = "", expected=(200,)) -> Any:
+def json_request(url: str, method: str = "GET", body: Any = None, token: str = "", expected=(200,)) -> Any:
     data = None
     headers = {"Accept": "application/json", "User-Agent": "cff-staging-incident-smoke/1.0"}
     if body is not None:
@@ -35,7 +36,6 @@ def request(method: str, path: str, body: Any = None, token: str = "", expected=
         headers["Content-Type"] = "application/json"
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    url = f"{API_ORIGIN}{path}"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=60) as response:
@@ -56,19 +56,42 @@ def request(method: str, path: str, body: Any = None, token: str = "", expected=
         raise SmokeFailure(f"{method} {url} returned invalid JSON: {text[:1000]}") from exc
 
 
-def wait_for_api(timeout_seconds: int = 420) -> None:
+def request(method: str, path: str, body: Any = None, token: str = "", expected=(200,)) -> Any:
+    return json_request(f"{API_ORIGIN}{path}", method, body, token, expected)
+
+
+def wait_for_deployments(timeout_seconds: int = 900) -> tuple[dict[str, Any], dict[str, Any]]:
     deadline = time.monotonic() + timeout_seconds
-    last_error = ""
+    last_frontend: Any = None
+    last_api: Any = None
     while time.monotonic() < deadline:
         try:
-            health = request("GET", "/health")
-            if health.get("status") == "ok" and health.get("database") == "ok":
-                return
-            last_error = json.dumps(health)
+            last_frontend = json_request(f"{FRONTEND_BASE}/build-info.json")
         except Exception as exc:
-            last_error = str(exc)
-        time.sleep(10)
-    raise SmokeFailure(f"staging API did not become healthy: {last_error}")
+            last_frontend = {"error": str(exc)}
+        try:
+            last_api = request("GET", "/health")
+        except Exception as exc:
+            last_api = {"error": str(exc)}
+
+        frontend_ready = isinstance(last_frontend, dict)
+        api_ready = (
+            isinstance(last_api, dict)
+            and last_api.get("status") == "ok"
+            and last_api.get("database") == "ok"
+        )
+        if EXPECTED_COMMIT:
+            frontend_ready = frontend_ready and last_frontend.get("commit") == EXPECTED_COMMIT
+            api_ready = api_ready and last_api.get("buildCommit") == EXPECTED_COMMIT
+        if frontend_ready and api_ready:
+            return last_frontend, last_api
+        time.sleep(15)
+
+    raise SmokeFailure(
+        "staging deployments did not become ready"
+        f" for commit {EXPECTED_COMMIT or 'current'};"
+        f" frontend={last_frontend}, api={last_api}"
+    )
 
 
 def create_session() -> tuple[str, str, dict[str, Any]]:
@@ -140,17 +163,11 @@ def check_page(page: Page, path: str, expected_selector: str, expected_text: str
     text = locator.inner_text().strip()
     if expected_text and expected_text.lower() not in text.lower():
         raise SmokeFailure(f"{path} expected {expected_selector} to contain {expected_text!r}, got {text!r}")
-    if page_errors:
-        raise SmokeFailure(f"{path} page errors: {page_errors}")
-    if console_errors:
-        raise SmokeFailure(f"{path} console errors: {console_errors}")
-    relevant_failures = [item for item in failed_requests if FRONTEND_BASE in item or API_ORIGIN in item]
-    if relevant_failures:
-        raise SmokeFailure(f"{path} failed requests: {relevant_failures}")
 
     screenshot = ARTIFACT_DIR / f"{path.split('?')[0].replace('.html', '')}.png"
     page.screenshot(path=str(screenshot), full_page=True)
-    return {
+    relevant_failures = [item for item in failed_requests if FRONTEND_BASE in item or API_ORIGIN in item]
+    result = {
         "path": path,
         "url": page.url,
         "status": response.status,
@@ -161,11 +178,16 @@ def check_page(page: Page, path: str, expected_selector: str, expected_text: str
         "failedRequests": failed_requests,
         "screenshot": str(screenshot),
     }
+    if page_errors or console_errors or relevant_failures:
+        raise SmokeFailure(
+            f"{path} browser failures: page={page_errors}, console={console_errors}, requests={relevant_failures}"
+        )
+    return result
 
 
 def main() -> None:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    wait_for_api()
+    frontend_build, api_health = wait_for_deployments()
 
     auth_status = request("GET", "/api/auth/status")
     player_meta = request("GET", "/api/players/meta")
@@ -176,51 +198,67 @@ def main() -> None:
     email, token, league = create_session()
     league_id = str(league["id"])
     results: list[dict[str, Any]] = []
+    failures: list[str] = []
+
+    checks = (
+        ("players.html", "#search-results", ""),
+        ("league.html", "#league-name", str(league["name"])),
+        (f"draft.html?league={league_id}", "#draft-league-name", str(league["name"])),
+    )
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
             context = browser.new_context(viewport={"width": 390, "height": 844})
             try:
-                page = context.new_page()
-                install_session(page, email, token)
-                results.append(check_page(page, "players.html", "#search-results"))
-                page.close()
-
-                page = context.new_page()
-                install_session(page, email, token)
-                results.append(check_page(page, "league.html", "#league-name", league["name"]))
-                page.close()
-
-                page = context.new_page()
-                install_session(page, email, token)
-                results.append(check_page(page, f"draft.html?league={league_id}", "#draft-league-name", league["name"]))
-                page.close()
+                for path, selector, expected_text in checks:
+                    page = context.new_page()
+                    try:
+                        install_session(page, email, token)
+                        results.append(check_page(page, path, selector, expected_text))
+                    except Exception as exc:
+                        failures.append(str(exc))
+                    finally:
+                        page.close()
             finally:
                 context.close()
         finally:
             browser.close()
 
     report = {
-        "status": "passed",
+        "status": "failed" if failures else "passed",
         "frontend": FRONTEND_BASE,
         "api": API_ORIGIN,
+        "expectedCommit": EXPECTED_COMMIT,
+        "frontendBuild": frontend_build,
+        "apiHealth": api_health,
         "authStatus": auth_status,
         "playerMeta": player_meta,
         "testEmail": email,
         "leagueId": league_id,
         "results": results,
+        "failures": failures,
     }
     (ARTIFACT_DIR / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
+    if failures:
+        raise SmokeFailure("; ".join(failures))
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-        failure = {"status": "failed", "error": str(exc), "frontend": FRONTEND_BASE, "api": API_ORIGIN}
-        (ARTIFACT_DIR / "report.json").write_text(json.dumps(failure, indent=2) + "\n", encoding="utf-8")
-        print(json.dumps(failure, indent=2))
+        report_path = ARTIFACT_DIR / "report.json"
+        if not report_path.exists():
+            ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+            failure = {
+                "status": "failed",
+                "error": str(exc),
+                "frontend": FRONTEND_BASE,
+                "api": API_ORIGIN,
+                "expectedCommit": EXPECTED_COMMIT,
+            }
+            report_path.write_text(json.dumps(failure, indent=2) + "\n", encoding="utf-8")
+            print(json.dumps(failure, indent=2))
         raise SystemExit(1)
