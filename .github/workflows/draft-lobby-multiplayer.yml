@@ -11,6 +11,7 @@ on:
       - "backend/tests/draft_lobby_multiplayer_boundary_tests.py"
       - "backend/tests/draft_room_active_member_entry_tests.py"
       - "backend/tests/private_page_auth_recovery_tests.py"
+      - "backend/tests/auth_session_sync_behavior_tests.js"
       - "frontend/state.js"
       - "frontend/draft.js"
       - "frontend/draft.html"
@@ -68,6 +69,8 @@ jobs:
           python backend/tests/draft_lobby_multiplayer_boundary_tests.py
           python backend/tests/draft_room_active_member_entry_tests.py
           python backend/tests/private_page_auth_recovery_tests.py
+          node backend/tests/auth_session_sync_behavior_tests.js
+          node --check backend/tests/auth_session_sync_behavior_tests.js
           node --check frontend/state.js
           node --check frontend/draft.js
           node --check frontend/draft-auth-bridge.js
