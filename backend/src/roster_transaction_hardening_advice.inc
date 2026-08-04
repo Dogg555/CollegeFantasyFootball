@@ -6,21 +6,9 @@ drogon::HttpResponsePtr rosterTransactionAdvice(const drogon::HttpRequestPtr &re
 
     std::string leagueId;
     std::string playerId;
-    enum class Action {
-        None,
-        Preflight,
-        State,
-        Transaction,
-        LegacyAdd,
-        LegacyDrop,
-        LegacySlot
-    } action = Action::None;
+    enum class Action { None, State, Transaction, LegacyAdd, LegacyDrop, LegacySlot } action = Action::None;
 
-    if (method == drogon::Options
-        && path.rfind("/api/leagues/", 0) == 0
-        && path.find("/roster") != std::string::npos) {
-        action = Action::Preflight;
-    } else if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/roster/state")).empty()) {
+    if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/roster/state")).empty()) {
         action = Action::State;
     } else if (method == drogon::Post
                && !(leagueId = pathLeagueId(path, "/roster/transactions")).empty()) {
@@ -37,41 +25,27 @@ drogon::HttpResponsePtr rosterTransactionAdvice(const drogon::HttpRequestPtr &re
     }
 
     if (action == Action::None) return nullptr;
-    if (action == Action::Preflight) {
-        const auto config = cff::config::loadRuntimeConfig();
-        return cff::http::buildPreflightResponse(request, config.allowedOrigins);
-    }
-
     const auto email = accountEmail(request);
     if (!email) {
-        return cff::http::withConfiguredCorsHeaders(
-            request,
-            errorResponse(drogon::k401Unauthorized,
-                          "Authentication is required.",
-                          "authentication_required"));
+        return errorResponse(drogon::k401Unauthorized,
+                             "Authentication is required.",
+                             "authentication_required");
     }
 
-    drogon::HttpResponsePtr response;
     switch (action) {
         case Action::State:
-            response = getRosterState(leagueId, *email);
-            break;
+            return getRosterState(leagueId, *email);
         case Action::Transaction:
-            response = dispatchRosterTransaction(request, leagueId, *email);
-            break;
+            return dispatchRosterTransaction(request, leagueId, *email);
         case Action::LegacyAdd:
-            response = mutateRoster(request, leagueId, *email, RosterAction::Add, "", true);
-            break;
+            return mutateRoster(request, leagueId, *email, RosterAction::Add, "", true);
         case Action::LegacyDrop:
-            response = mutateRoster(request, leagueId, *email, RosterAction::Drop, "", true);
-            break;
+            return mutateRoster(request, leagueId, *email, RosterAction::Drop, "", true);
         case Action::LegacySlot:
-            response = mutateRoster(request, leagueId, *email, RosterAction::Slot, playerId, true);
-            break;
+            return mutateRoster(request, leagueId, *email, RosterAction::Slot, playerId, true);
         default:
             return nullptr;
     }
-    return cff::http::withConfiguredCorsHeaders(request, response);
 #else
     (void)request;
     return nullptr;
