@@ -5,6 +5,8 @@ on:
     branches: [main, Test]
     paths:
       - "backend/db/migrations/020_matchup_identity_compatibility.sql"
+      - "backend/src/schedule_lineup_hardening_advice.inc"
+      - "backend/src/roster_transaction_hardening_db.inc"
       - "backend/tests/matchup_identity_compatibility_contract_tests.py"
       - "scripts/schedule_lineup_runtime_contract.py"
       - "scripts/scoring_lifecycle_runtime_contract.py"
@@ -13,6 +15,8 @@ on:
     branches: [main, Test]
     paths:
       - "backend/db/migrations/020_matchup_identity_compatibility.sql"
+      - "backend/src/schedule_lineup_hardening_advice.inc"
+      - "backend/src/roster_transaction_hardening_db.inc"
       - "backend/tests/matchup_identity_compatibility_contract_tests.py"
       - ".github/workflows/matchup-identity-compatibility.yml"
   workflow_dispatch:
