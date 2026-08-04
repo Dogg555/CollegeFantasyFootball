@@ -53,7 +53,7 @@ for contract in required_route_contracts:
 
 shared_preflight_contracts = (
     'resp->setStatusCode(drogon::k204NoContent)',
-    'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type")',
+    'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID")',
     'resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")',
 )
 for contract in shared_preflight_contracts:

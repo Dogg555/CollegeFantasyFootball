@@ -1,0 +1,86 @@
+name: Live stat refresh contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/live_stat_orchestration.*"
+      - "backend/tests/live_stat_orchestration_tests.cpp"
+      - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
+      - "scripts/live_stat_refresh_runtime_contract.py"
+      - ".github/workflows/live-stat-refresh-contracts.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/live_stat_orchestration.*"
+      - "backend/tests/live_stat_orchestration_tests.cpp"
+      - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
+      - "scripts/live_stat_refresh_runtime_contract.py"
+      - ".github/workflows/live-stat-refresh-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-stat-refresh-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate sources
+        run: python -m py_compile scripts/live_stat_refresh_runtime_contract.py
+      - name: Compile and run orchestration rules
+        run: |
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            -Ibackend/src \
+            backend/tests/live_stat_orchestration_tests.cpp \
+            backend/src/live_stat_orchestration.cpp \
+            -o /tmp/live_stat_orchestration_tests
+          /tmp/live_stat_orchestration_tests
+
+  postgres-contract:
+    name: PostgreSQL ingest and refresh concurrency
+    needs: contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cff"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install contract dependency
+        run: python -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
+      - name: Apply production migrations
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for migration in backend/db/migrations/*.sql; do
+            psql -h 127.0.0.1 -U postgres -d cff -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Run concurrency and partial-failure contract
+        env:
+          DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+          CFF_LIVE_STAT_RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: python scripts/live_stat_refresh_runtime_contract.py

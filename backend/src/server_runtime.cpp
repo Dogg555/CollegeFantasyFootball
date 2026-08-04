@@ -31,8 +31,11 @@ bool configureSecurityAndCors(
                   << std::endl;
     }
 
+    // Authoritative lifecycle modules return some responses from sync advice,
+    // before a route handler runs. Pre-sending advice is the one response
+    // boundary shared by normal handlers and those early lifecycle responses.
     const auto allowedOrigins = runtimeConfig.allowedOrigins;
-    app.registerPostHandlingAdvice(
+    app.registerPreSendingAdvice(
         [allowedOrigins](const drogon::HttpRequestPtr &request,
                          const drogon::HttpResponsePtr &response) {
             cff::http::applyCorsHeaders(request, response, allowedOrigins);

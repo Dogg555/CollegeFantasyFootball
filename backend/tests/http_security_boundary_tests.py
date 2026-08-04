@@ -70,12 +70,14 @@ if "cff::public_api::registerPublicRoutes(app, allowedOrigins)" not in compositi
     raise SystemExit("app_composition.cpp must register the public route group")
 
 required_server_runtime_delegation = (
-    "app.registerPostHandlingAdvice(",
+    "app.registerPreSendingAdvice(",
     "cff::http::applyCorsHeaders(request, response, allowedOrigins)",
 )
 for delegation in required_server_runtime_delegation:
     if delegation not in server_runtime:
         raise SystemExit(f"server_runtime.cpp HTTP security delegation missing: {delegation}")
+if "app.registerPostHandlingAdvice(" in server_runtime:
+    raise SystemExit("CORS must run at the pre-send boundary so sync-advice responses are covered")
 
 required_auth_route_delegation = (
     "cff::http::bearerToken(req)",
@@ -113,7 +115,7 @@ required_behavior = (
     'resp->setStatusCode(drogon::k403Forbidden)',
     'resp->addHeader("Access-Control-Allow-Origin", origin)',
     'resp->addHeader("Vary", "Origin")',
-    'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type")',
+    'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID")',
     'resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")',
     'resp->setStatusCode(drogon::k204NoContent)',
     'return std::string{"admin@example.com"}',
