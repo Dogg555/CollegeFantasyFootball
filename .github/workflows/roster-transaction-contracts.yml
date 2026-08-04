@@ -1,0 +1,250 @@
+name: Roster transaction contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/Dockerfile"
+      - "backend/docker-entrypoint.sh"
+      - "backend/src/roster_transaction.h"
+      - "backend/src/roster_transaction.cpp"
+      - "backend/src/roster_transaction_hardening.cpp"
+      - "backend/src/roster_transaction_hardening_*.inc"
+      - "backend/tests/roster_transaction_tests.cpp"
+      - "backend/tests/roster_transaction_contract_tests.py"
+      - "backend/db/migrations/014_roster_transaction_reliability.sql"
+      - "scripts/roster_transaction_runtime_contract.py"
+      - "scripts/test_smtp_server.py"
+      - "frontend/config.js"
+      - "frontend/roster-transactions.js"
+      - "frontend/tests/roster-transactions.test.js"
+      - ".github/workflows/roster-transaction-contracts.yml"
+  pull_request:
+    branches: [main, Test, agent/draft-lifecycle-reliability]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/Dockerfile"
+      - "backend/docker-entrypoint.sh"
+      - "backend/src/roster_transaction.h"
+      - "backend/src/roster_transaction.cpp"
+      - "backend/src/roster_transaction_hardening.cpp"
+      - "backend/src/roster_transaction_hardening_*.inc"
+      - "backend/tests/roster_transaction_tests.cpp"
+      - "backend/tests/roster_transaction_contract_tests.py"
+      - "backend/db/migrations/014_roster_transaction_reliability.sql"
+      - "scripts/roster_transaction_runtime_contract.py"
+      - "scripts/test_smtp_server.py"
+      - "frontend/config.js"
+      - "frontend/roster-transactions.js"
+      - "frontend/tests/roster-transactions.test.js"
+      - ".github/workflows/roster-transaction-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: roster-transactions-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install focused C++ dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjsoncpp-dev
+
+      - name: Validate transaction sources
+        run: |
+          node --check frontend/roster-transactions.js
+          node --check frontend/tests/roster-transactions.test.js
+          python -m py_compile \
+            backend/tests/roster_transaction_contract_tests.py \
+            scripts/roster_transaction_runtime_contract.py
+
+      - name: Run browser and source contracts
+        run: |
+          node frontend/tests/roster-transactions.test.js
+          python backend/tests/roster_transaction_contract_tests.py
+
+      - name: Compile and run roster transaction rules
+        run: |
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            -I/usr/include/jsoncpp -Ibackend/src \
+            backend/tests/roster_transaction_tests.cpp \
+            backend/src/roster_transaction.cpp \
+            backend/src/league_roster.cpp \
+            backend/src/league_waiver.cpp \
+            backend/src/json_utils.cpp \
+            -ljsoncpp -o /tmp/roster_transaction_tests
+          /tmp/roster_transaction_tests
+
+  postgres-race:
+    name: PostgreSQL ownership and swap race
+    needs: contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cff"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime contract dependency
+        run: python -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
+
+      - name: Validate runtime contract
+        run: python -m py_compile scripts/roster_transaction_runtime_contract.py scripts/test_smtp_server.py
+
+      - name: Build production API image
+        run: docker build -f backend/Dockerfile -t college-ff-api-roster-contracts .
+
+      - name: Apply production migrations
+        run: |
+          docker run --rm --network host \
+            --entrypoint sh \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            college-ff-api-roster-contracts \
+            /srv/db/migrate.sh
+
+      - name: Generate isolated contract values
+        shell: bash
+        run: |
+          set -euo pipefail
+          jwt_secret="$(openssl rand -hex 32)"
+          admin_token="$(openssl rand -hex 32)"
+          password="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' 'Rr')-R4!"
+          run_key="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          for value in "$jwt_secret" "$admin_token" "$password"; do
+            echo "::add-mask::$value"
+          done
+          echo "CFF_ROSTER_JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          echo "CFF_ROSTER_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "CFF_ROSTER_RUN_KEY=$run_key" >> "$GITHUB_ENV"
+
+      - name: Start isolated SMTP catcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > /tmp/cff-roster-mail.jsonl
+          python scripts/test_smtp_server.py \
+            --host 127.0.0.1 \
+            --port 1025 \
+            --output /tmp/cff-roster-mail.jsonl \
+            > /tmp/cff-roster-smtp.log 2>&1 &
+          echo $! > /tmp/cff-roster-smtp.pid
+          python - <<'PY'
+          import socket
+          import time
+
+          for _ in range(30):
+              try:
+                  with socket.create_connection(("127.0.0.1", 1025), timeout=1):
+                      raise SystemExit(0)
+              except OSError:
+                  time.sleep(1)
+          raise SystemExit("SMTP test server did not become ready")
+          PY
+
+      - name: Start production API
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name college-ff-api-roster-contracts --network host \
+            -e PORT=8080 \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            -e JWT_SECRET="$CFF_ROSTER_JWT_SECRET" \
+            -e ALLOWED_ORIGINS=https://frontend.example.test \
+            -e CFF_ADMIN_API_TOKEN="$CFF_ROSTER_ADMIN_TOKEN" \
+            -e CFF_REQUIRE_DB=true \
+            -e CFF_RUN_MIGRATIONS_ON_STARTUP=false \
+            -e ESPN_ROSTER_AUTO_ONCE=false \
+            -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION=false \
+            -e CFF_EXPOSE_AUTH_TOKENS=false \
+            -e CFF_LOG_AUTH_TOKENS=false \
+            -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
+            -e CFF_TRUST_PROXY_HEADERS=false \
+            -e CFF_FRONTEND_BASE_URL=https://frontend.example.test \
+            -e CFF_EMAIL_PROVIDER=smtp \
+            -e CFF_EMAIL_FROM='College Fantasy Roster Test <noreply@example.test>' \
+            -e CFF_SMTP_HOST=127.0.0.1 \
+            -e CFF_SMTP_PORT=1025 \
+            -e CFF_SMTP_SECURITY=none \
+            -e CFF_SMTP_USERNAME=test-user \
+            -e CFF_SMTP_PASSWORD=test-password \
+            -e CFF_MIN_PASSWORD_LENGTH=12 \
+            -e CFF_MAX_REQUEST_BODY_BYTES=262144 \
+            -e CFF_AUTH_REQUEST_BODY_BYTES=8192 \
+            -e CFF_AUTH_BURST_CLIENT_LIMIT=500 \
+            -e CFF_SIGNUP_CLIENT_LIMIT=500 \
+            -e CFF_SIGNUP_ACCOUNT_LIMIT=100 \
+            -e CFF_SIGNUP_RATE_WINDOW_MINUTES=60 \
+            college-ff-api-roster-contracts
+
+      - name: Run ownership, rollback, swap, and waiver contracts
+        shell: bash
+        env:
+          CFF_API_BASE_URL: http://127.0.0.1:8080
+          DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+          CFF_CONTRACT_ORIGIN: https://frontend.example.test
+        run: |
+          set -o pipefail
+          python scripts/roster_transaction_runtime_contract.py 2>&1 | tee /tmp/roster-transaction-runtime.log
+
+      - name: Retain runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roster-transaction-runtime-diagnostics
+          path: |
+            /tmp/roster-transaction-runtime.log
+            /tmp/cff-roster-mail.jsonl
+            /tmp/cff-roster-smtp.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Backend logs
+        if: always()
+        run: docker logs college-ff-api-roster-contracts || true
+
+      - name: Stop containers
+        if: always()
+        run: |
+          docker rm -f college-ff-api-roster-contracts || true
+          if test -f /tmp/cff-roster-smtp.pid; then
+            kill "$(cat /tmp/cff-roster-smtp.pid)" || true
+          fi
