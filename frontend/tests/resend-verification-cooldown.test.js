@@ -111,7 +111,7 @@ async function main() {
   assert.equal(blockedEvent.stopped, true, 'repeat submissions should not reach auth.js');
 
   email.value = 'other@example.com';
-  form.listeners.get('input')[0]();
+  email.listeners.get('input')[0]();
   assert.equal(button.disabled, false, 'cooldown should be scoped to the normalized email address');
   assert.equal(button.textContent, 'Send verification');
 
