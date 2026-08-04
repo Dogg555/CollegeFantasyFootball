@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <set>
@@ -126,17 +127,25 @@ void testOddTeamByes() {
         [](const std::string &) { return 1.0; }
     );
 
-    expect(schedule.size() == 10, "five teams must produce two games per week and one bye");
+    expect(schedule.size() == 15, "five teams must retain three schedule entries per week, including one bye");
     std::map<std::string, int> appearances;
+    int byeEntries = 0;
+    int playedGames = 0;
     for (const auto &matchup : schedule) {
         const auto home = matchup["homeManager"].asString();
         const auto away = matchup["awayManager"].asString();
         expect(!home.empty(), "home manager must not be empty after bye normalization");
-        if (!away.empty()) {
-            ++appearances[home];
-            ++appearances[away];
+        if (away.empty()) {
+            ++byeEntries;
+            expect(matchup["awayScore"].asDouble() == 0.0, "bye opponent score must remain zero");
+            continue;
         }
+        ++playedGames;
+        ++appearances[home];
+        ++appearances[away];
     }
+    expect(byeEntries == 5, "five teams must produce one bye entry per week");
+    expect(playedGames == 10, "five teams must produce two played games per week");
     for (int index = 1; index <= 5; ++index) {
         const auto email = "odd" + std::to_string(index) + "@example.com";
         expect(appearances[email] == 4, "each five-team manager must receive exactly one bye");
