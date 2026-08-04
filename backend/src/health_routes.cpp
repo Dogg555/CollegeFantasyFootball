@@ -65,6 +65,8 @@ Json::Value buildHealthPayload(
 
     payload["status"] = "ok";
     payload["service"] = "college-ff-api";
+    payload["buildCommit"] = cff::config::readEnv("RENDER_GIT_COMMIT").value_or("unknown");
+    payload["buildBranch"] = cff::config::readEnv("RENDER_GIT_BRANCH").value_or("unknown");
     payload["jwtSecretConfigured"] = jwtSecret.has_value();
     payload["allowedOriginsConfigured"] = !allowedOrigins.empty();
     payload["persistentDbRequired"] = cff::config::persistentDbRequired();

@@ -32,6 +32,7 @@ require(
 
 for forbidden in (
     "app.setSSLFiles(",
+    "app.registerPreSendingAdvice(",
     "app.registerPostHandlingAdvice(",
     "cff::http::applyCorsHeaders(",
     "app.addListener(",
@@ -54,7 +55,7 @@ for interface_contract in (
 
 for owned_detail in (
     "app.setSSLFiles(",
-    "app.registerPostHandlingAdvice(",
+    "app.registerPreSendingAdvice(",
     "cff::http::applyCorsHeaders(",
     "app.addListener(\"0.0.0.0\"",
     ".setThreadNum(std::thread::hardware_concurrency())",
@@ -64,6 +65,11 @@ for owned_detail in (
     "ALLOWED_ORIGINS not set; cross-origin requests will be blocked.",
 ):
     require(owned_detail in IMPLEMENTATION, f"server runtime does not own {owned_detail}")
+
+require(
+    "app.registerPostHandlingAdvice(" not in IMPLEMENTATION,
+    "CORS must run at pre-send so sync-advice responses are covered",
+)
 
 security_index = BOOTSTRAP.index("cff::server_runtime::configureSecurityAndCors(")
 ingest_index = BOOTSTRAP.index("cff::ingest_runtime::configureCfbdIngest(")
