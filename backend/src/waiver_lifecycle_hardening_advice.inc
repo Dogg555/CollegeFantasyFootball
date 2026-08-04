@@ -39,6 +39,7 @@ drogon::HttpResponsePtr waiverLifecycleAdvice(const drogon::HttpRequestPtr &requ
 
     enum class Route {
         None,
+        Preflight,
         State,
         Transaction,
         List,
@@ -51,7 +52,11 @@ drogon::HttpResponsePtr waiverLifecycleAdvice(const drogon::HttpRequestPtr &requ
         ResetPriority
     } route = Route::None;
 
-    if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/waivers/state")).empty()) {
+    if (method == drogon::Options
+        && path.rfind("/api/leagues/", 0) == 0
+        && path.find("/waiver") != std::string::npos) {
+        route = Route::Preflight;
+    } else if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/waivers/state")).empty()) {
         route = Route::State;
     } else if (method == drogon::Post
                && !(leagueId = pathLeagueId(path, "/waivers/transactions")).empty()) {
@@ -83,47 +88,68 @@ drogon::HttpResponsePtr waiverLifecycleAdvice(const drogon::HttpRequestPtr &requ
     }
 
     if (route == Route::None) return nullptr;
-    const auto email = accountEmail(request);
-    if (!email) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+    if (route == Route::Preflight) {
+        const auto config = cff::config::loadRuntimeConfig();
+        return cff::http::buildPreflightResponse(request, config.allowedOrigins);
     }
 
+    const auto email = accountEmail(request);
+    if (!email) {
+        return cff::http::withConfiguredCorsHeaders(
+            request,
+            errorResponse(drogon::k401Unauthorized,
+                          "Authentication is required.",
+                          "authentication_required"));
+    }
+
+    drogon::HttpResponsePtr response;
     switch (route) {
         case Route::State:
-            return getWaiverState(leagueId, *email);
+            response = getWaiverState(leagueId, *email);
+            break;
         case Route::Transaction:
-            return dispatchWaiverTransaction(request, leagueId, *email);
+            response = dispatchWaiverTransaction(request, leagueId, *email);
+            break;
         case Route::List:
-            return legacyWaiverCollection(leagueId, *email, false);
+            response = legacyWaiverCollection(leagueId, *email, false);
+            break;
         case Route::Priority:
-            return legacyWaiverCollection(leagueId, *email, true);
+            response = legacyWaiverCollection(leagueId, *email, true);
+            break;
         case Route::Create:
-            return createWaiverClaim(request, leagueId, *email, true);
+            response = createWaiverClaim(request, leagueId, *email, true);
+            break;
         case Route::Cancel: {
             const auto body = request->getJsonObject();
             const auto status = body && body->isObject()
                 ? lower(trim(body->get("status", "").asString()))
                 : "";
             if (status != "cancelled" && status != "canceled") {
-                return errorResponse(drogon::k400BadRequest,
-                                     "Only cancellation is supported for pending waiver claims.",
-                                     "invalid_waiver_status");
+                response = errorResponse(
+                    drogon::k400BadRequest,
+                    "Only cancellation is supported for pending waiver claims.",
+                    "invalid_waiver_status");
+                break;
             }
-            return cancelWaiverClaim(request, leagueId, *email, claimId, true);
+            response = cancelWaiverClaim(request, leagueId, *email, claimId, true);
+            break;
         }
         case Route::Reorder:
-            return reorderWaiverClaims(request, leagueId, *email, true);
+            response = reorderWaiverClaims(request, leagueId, *email, true);
+            break;
         case Route::ProcessOne:
-            return processWaiverClaims(request, leagueId, *email, claimId, false, true);
+            response = processWaiverClaims(request, leagueId, *email, claimId, false, true);
+            break;
         case Route::ProcessAll:
-            return processWaiverClaims(request, leagueId, *email, "", true, true);
+            response = processWaiverClaims(request, leagueId, *email, "", true, true);
+            break;
         case Route::ResetPriority:
-            return resetWaiverPriority(request, leagueId, *email, true);
+            response = resetWaiverPriority(request, leagueId, *email, true);
+            break;
         default:
             return nullptr;
     }
+    return cff::http::withConfiguredCorsHeaders(request, response);
 #else
     (void)request;
     return nullptr;
