@@ -121,12 +121,28 @@ def main():
     league_id = created.get("id")
     require(league_id, f"league creation did not return an id: {created}")
 
+    join_info = request(
+        "GET",
+        f"/api/leagues/{league_id}/join-info",
+        token=commissioner_token,
+    )
+    join_code = join_info.get("joinCode")
+    require(join_code, f"commissioner could not load the league join code: {join_info}")
+
     joined = request(
         "POST",
-        f"/api/leagues/{league_id}/join",
+        "/api/leagues/join",
+        {"code": join_code},
         token=member_token,
     )
-    require(joined.get("id") == league_id, f"invited manager could not join league: {joined}")
+    require(joined.get("id") == league_id, f"invited manager could not accept the league invitation: {joined}")
+    require(
+        any(
+            item.get("email") == member_email and item.get("status") == "Active"
+            for item in joined.get("members", [])
+        ),
+        f"invited manager did not become an active league member: {joined}",
+    )
 
     waiting = request("GET", f"/api/leagues/{league_id}/draft", token=member_token)
     require(waiting.get("status") == "not_started", f"draft state started on entry: {waiting}")
@@ -136,11 +152,12 @@ def main():
     settings = {**created, "draftLobbyOpen": True, "draftLobbyStartedAt": "2026-08-04T02:00"}
     opened = request(
         "PUT",
-        f"/api/leagues/{league_id}",
+        f"/api/leagues/{league_id}/settings",
         settings,
         token=commissioner_token,
     )
     require(opened.get("draftLobbyOpen") is True, f"commissioner could not open lobby: {opened}")
+    require(opened.get("draftLobbyStartedAt"), f"lobby open timestamp was not persisted: {opened}")
 
     member_lobby = request("GET", f"/api/leagues/{league_id}/draft", token=member_token)
     require(member_lobby.get("lobbyOpen") is True, f"member cannot enter open lobby: {member_lobby}")
@@ -228,6 +245,8 @@ def main():
         "status": "ok",
         "leagueId": league_id,
         "members": order,
+        "invitationAccepted": True,
+        "lobbySettingsPersisted": True,
         "lobbyEntry": True,
         "explicitStart": True,
         "crossUserPickSync": True,
