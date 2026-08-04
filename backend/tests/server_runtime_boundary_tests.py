@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = (ROOT / "backend/src/main.cpp").read_text(encoding="utf-8")
+COMPOSITION = (ROOT / "backend/src/app_composition.cpp").read_text(encoding="utf-8")
 HEADER = (ROOT / "backend/src/server_runtime.h").read_text(encoding="utf-8")
 IMPLEMENTATION = (ROOT / "backend/src/server_runtime.cpp").read_text(encoding="utf-8")
 CMAKE = (ROOT / "backend/CMakeLists.txt").read_text(encoding="utf-8")
@@ -61,10 +62,10 @@ for owned_detail in (
 security_index = MAIN.index("cff::server_runtime::configureSecurityAndCors(")
 ingest_index = MAIN.index("cff::ingest_runtime::configureCfbdIngest(")
 listener_index = MAIN.index("cff::server_runtime::configureListener(")
-health_index = MAIN.index("cff::health::registerHealthRoutes(")
+composition_index = MAIN.index("cff::app_composition::registerApplicationRoutes(")
 run_index = MAIN.index("app.run();")
 require(
-    security_index < ingest_index < listener_index < health_index < run_index,
+    security_index < ingest_index < listener_index < composition_index < run_index,
     "startup ordering changed: security, startup ingestion, listener, routes, and run must remain ordered",
 )
 
@@ -75,11 +76,14 @@ for route_registration in (
     "cff::league::registerLeagueRoutes(",
     "cff::public_api::registerPublicRoutes(",
 ):
-    require(route_registration in MAIN, f"main.cpp must retain route composition: {route_registration}")
+    require(route_registration not in MAIN, f"main.cpp still directly owns route composition: {route_registration}")
+    require(route_registration in COMPOSITION, f"application composition missing route group: {route_registration}")
     require(route_registration not in IMPLEMENTATION, f"server runtime must not own routes: {route_registration}")
 
 require("app.run();" in MAIN, "main.cpp must retain the application run boundary")
 require("app.run();" not in IMPLEMENTATION, "server runtime must not own app.run in this task")
+require("app.run();" not in COMPOSITION, "application composition must not own app.run")
 require("src/server_runtime.cpp" in CMAKE, "production target must compile server_runtime.cpp")
+require("src/app_composition.cpp" in CMAKE, "production target must compile app_composition.cpp")
 
 print("server runtime boundary contracts passed")
