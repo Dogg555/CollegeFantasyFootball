@@ -13,7 +13,7 @@ def require(source: str, *needles: str) -> None:
 
 
 def main() -> None:
-    migration = read("backend/db/migrations/018_schedule_lineup_locking_reliability.sql")
+    migration = read("backend/db/migrations/019_schedule_lineup_locking_reliability.sql")
     hardening = read("backend/src/schedule_lineup_hardening.cpp")
     db_helpers = read("backend/src/schedule_lineup_hardening_db.inc")
     mutations = read("backend/src/schedule_lineup_hardening_mutations.inc")
@@ -26,6 +26,8 @@ def main() -> None:
 
     require(
         migration,
+        "lineup_week_states_legacy_018",
+        "column_name = 'manager_email'",
         "CREATE TABLE IF NOT EXISTS schedule_states",
         "CREATE TABLE IF NOT EXISTS schedule_operations",
         "CREATE TABLE IF NOT EXISTS schedule_week_states",
