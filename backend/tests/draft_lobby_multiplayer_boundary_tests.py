@@ -13,10 +13,12 @@ paths = {
     "routes": ROOT / "backend/src/league_routes.cpp",
     "header": ROOT / "backend/src/handlers/league_handler.h",
     "handler": ROOT / "backend/src/handlers/league_handler.cpp",
+    "beta_backend": ROOT / "backend/src/league_beta_stability.cpp",
     "state": ROOT / "frontend/state.js",
     "draft": ROOT / "frontend/draft.js",
     "draft_html": ROOT / "frontend/draft.html",
     "league": ROOT / "frontend/league.js",
+    "beta_frontend": ROOT / "frontend/league-beta-stability.js",
     "integration": ROOT / "scripts/draft_lobby_multiplayer_tests.py",
     "workflow": ROOT / ".github/workflows/draft-lobby-multiplayer.yml",
 }
@@ -26,10 +28,12 @@ for path in paths.values():
 routes = paths["routes"].read_text(encoding="utf-8")
 header = paths["header"].read_text(encoding="utf-8")
 handler = paths["handler"].read_text(encoding="utf-8")
+beta_backend = paths["beta_backend"].read_text(encoding="utf-8")
 state = paths["state"].read_text(encoding="utf-8")
 draft = paths["draft"].read_text(encoding="utf-8")
 draft_html = paths["draft_html"].read_text(encoding="utf-8")
 league = paths["league"].read_text(encoding="utf-8")
+beta_frontend = paths["beta_frontend"].read_text(encoding="utf-8")
 integration = paths["integration"].read_text(encoding="utf-8")
 workflow = paths["workflow"].read_text(encoding="utf-8")
 
@@ -59,6 +63,15 @@ require("currentStatus != \"open\"" in handler,
 require("status = 'active'" in handler,
         "draft order is not restricted to active league managers")
 
+require('app.registerHandler("/api/leagues/{1}/settings", handleSettings' in beta_backend,
+        "the verified league settings endpoint is missing")
+require('draft_lobby_open = $9::boolean' in beta_backend,
+        "the verified settings endpoint does not persist the lobby-open flag")
+require('draft_lobby_started_at = NULLIF($10, \'\')::timestamptz' in beta_backend,
+        "the verified settings endpoint does not persist the lobby-open timestamp")
+require('status = \'active\'' in beta_backend and 'status == "invited"' in beta_backend,
+        "invited users are not activated through the real join flow")
+
 require("status: 'not_started'" in state, "frontend draft metadata still defaults to live")
 require("async function startDraftApi" in state, "frontend has no authenticated start call")
 require("/draft/start" in state, "frontend start call does not use the new endpoint")
@@ -84,9 +97,13 @@ require("member.status || '').toLowerCase() === 'active'" in draft,
         "frontend draft order still includes invited or pending users")
 require("draftLobbyLink.hidden" in league and "draftLobbyOpen" in league,
         "league lobby entry link is not access-aware")
+require("'draftLobbyOpen'" in beta_frontend and "'draftLobbyStartedAt'" in beta_frontend,
+        "verified settings do not compare the persisted draft lobby fields")
 
 for required in (
     "/draft/start",
+    "/leagues/join",
+    "/settings",
     "crossUserPickSync",
     "wrong_email",
     "not_started",
@@ -97,6 +114,8 @@ for required in (
 require("branches: [Test]" in workflow, "draft lobby workflow does not target Test")
 require("docker build -f backend/Dockerfile" in workflow, "workflow does not build the production API image")
 require("postgres:16" in workflow, "workflow does not use PostgreSQL 16")
+require("league-beta-stability.js" in workflow,
+        "workflow does not track or syntax-check the verified settings client")
 require("draft_lobby_multiplayer_tests.py" in workflow, "workflow does not run the multiplayer integration contract")
 require("draft_lobby_multiplayer_boundary_tests.py" in workflow, "workflow does not run the ownership boundary")
 
