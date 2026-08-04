@@ -37,19 +37,18 @@ bool flexEligible(const std::string &position) {
 }
 
 int slotLimit(const Json::Value &rules, const std::string &slot) {
-    return cff::getIntOrDefault(rules, lowerString(slot), 0);
+    return cff::getIntOrDefault(rules, slot, 0);
 }
 
 bool playerEligibleForSlot(const Json::Value &player, const std::string &slot) {
-    const auto normalizedSlot = lowerString(slot);
     const auto position = lowerString(cff::getStringOrDefault(player, "position", "bench"));
-    if (normalizedSlot == "bench") {
+    if (slot == "bench") {
         return true;
     }
-    if (normalizedSlot == "flex") {
+    if (slot == "flex") {
         return flexEligible(position);
     }
-    return normalizedSlot == position;
+    return slot == position;
 }
 
 bool validateRosterSlotMove(const Json::Value &player,
@@ -57,13 +56,11 @@ bool validateRosterSlotMove(const Json::Value &player,
                             const Json::Value &rules,
                             const std::string &playerId,
                             const std::string &slot) {
-    const auto normalizedSlot = lowerString(slot);
-    if (normalizedSlot != "qb" && normalizedSlot != "rb" && normalizedSlot != "wr"
-        && normalizedSlot != "te" && normalizedSlot != "flex"
-        && normalizedSlot != "bench") {
+    if (slot != "qb" && slot != "rb" && slot != "wr" && slot != "te"
+        && slot != "flex" && slot != "bench") {
         return false;
     }
-    if (!playerEligibleForSlot(player, normalizedSlot)) {
+    if (!playerEligibleForSlot(player, slot)) {
         return false;
     }
 
@@ -72,12 +69,11 @@ bool validateRosterSlotMove(const Json::Value &player,
         if (cff::getStringOrDefault(item, "id") == playerId) {
             continue;
         }
-        if (lowerString(cff::getStringOrDefault(item, "rosterSlot", "bench"))
-            == normalizedSlot) {
+        if (lowerString(cff::getStringOrDefault(item, "rosterSlot", "bench")) == slot) {
             ++occupied;
         }
     }
-    return occupied < slotLimit(rules, normalizedSlot);
+    return occupied < slotLimit(rules, slot);
 }
 
 Json::Value lineupErrorsFromCounts(
