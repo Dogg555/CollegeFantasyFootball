@@ -56,6 +56,7 @@ int main() {
 
     assertSchedule(4, 12);
     assertSchedule(6, 15);
+    assertSchedule(8, 15);
 
     const auto hashA = cff::schedule_lineup_lifecycle::scheduleInputHash(order, 2026, 12);
     const auto hashB = cff::schedule_lineup_lifecycle::scheduleInputHash(order, 2026, 12);
