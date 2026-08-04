@@ -52,7 +52,7 @@ require("status = 'open'" in handler and "pick_deadline" in handler,
         "explicit start does not activate the shared draft clock")
 require("status = 'not_started'" in handler and "started_at = NULL" in handler,
         "draft reset does not return to the waiting lobby state")
-require("if (!dbDraftLobbyOpen(conn.get(), leagueId)" in handler,
+require("!dbDraftLobbyOpen(conn.get(), leagueId)" in handler,
         "production picks are not guarded by the lobby state")
 require("currentStatus != \"open\"" in handler,
         "production picks are not guarded by the explicit live state")
