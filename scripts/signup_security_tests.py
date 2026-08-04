@@ -219,15 +219,10 @@ def main() -> int:
     require(throttled.json().get("code") == "rate_limited", "rate-limit code missing")
     require(int(throttled.headers.get("retry-after", "0")) > 0, "Retry-After header missing")
 
-    # Recovery endpoints intentionally use the same generic response whether
-    # an address exists or not. Verify the exact safe contract rather than
-    # rejecting the phrase "if the account exists", which is itself generic.
-    unknown = f"unknown-{timestamp}@example.test"
-    resend = request(
     # Recovery copy may safely say "if the account exists". The security
     # invariant is that known and unknown addresses receive the same status and
     # body, including when transactional email delivery is unavailable.
-    unknown = f"unknown-{time.time_ns()}@example.test"
+    unknown = f"unknown-{timestamp}@example.test"
     known_resend = request(
         "/api/auth/resend-verification",
         method="POST",
@@ -238,8 +233,8 @@ def main() -> int:
         method="POST",
         payload={"email": unknown},
     )
-    require(resend.status == 200, "unknown-account resend must return a generic success")
-    resend_json = resend.json()
+    require(unknown_resend.status == 200, "unknown-account resend must return a generic success")
+    resend_json = unknown_resend.json()
     require(resend_json.get("status") == "ok", "resend generic status missing")
     require(
         resend_json.get("message") ==
@@ -260,8 +255,8 @@ def main() -> int:
         method="POST",
         payload={"email": unknown},
     )
-    require(reset.status == 200, "unknown-account reset request must return a generic success")
-    reset_json = reset.json()
+    require(unknown_reset.status == 200, "unknown-account reset request must return a generic success")
+    reset_json = unknown_reset.json()
     require(reset_json.get("status") == "ok", "reset generic status missing")
     require(
         reset_json.get("message") ==
