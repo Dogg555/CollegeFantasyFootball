@@ -88,7 +88,7 @@ require("draftLobbyLink.hidden" in league and "draftLobbyOpen" in league,
 for required in (
     "/draft/start",
     "crossUserPickSync",
-    "wrong-turn",
+    "wrong_email",
     "not_started",
     "lobbyOpen",
 ):
