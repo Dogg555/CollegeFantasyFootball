@@ -14,6 +14,9 @@ on:
       - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
       - "scripts/live_stat_refresh_runtime_contract.py"
       - "scripts/live_stat_worker_contract.py"
+      - "scripts/ops_live_ingest.py"
+      - "scripts/ops_live_ingest_tests.py"
+      - "docs/LIVE_STAT_WORKER.md"
       - ".env.example"
       - ".github/workflows/live-stat-refresh-contracts.yml"
   pull_request:
@@ -29,6 +32,9 @@ on:
       - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
       - "scripts/live_stat_refresh_runtime_contract.py"
       - "scripts/live_stat_worker_contract.py"
+      - "scripts/ops_live_ingest.py"
+      - "scripts/ops_live_ingest_tests.py"
+      - "docs/LIVE_STAT_WORKER.md"
       - ".env.example"
       - ".github/workflows/live-stat-refresh-contracts.yml"
   workflow_dispatch:
@@ -49,10 +55,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate sources
+      - name: Validate sources and cron routing
         run: |
-          python -m py_compile scripts/live_stat_refresh_runtime_contract.py scripts/live_stat_worker_contract.py
+          python -m py_compile \
+            scripts/live_stat_refresh_runtime_contract.py \
+            scripts/live_stat_worker_contract.py \
+            scripts/ops_live_ingest.py \
+            scripts/ops_live_ingest_tests.py
           python scripts/live_stat_worker_contract.py
+          python scripts/ops_live_ingest_tests.py
       - name: Compile and run orchestration rules
         run: |
           g++ -std=c++17 -Wall -Wextra -pedantic \
@@ -61,6 +72,16 @@ jobs:
             backend/src/live_stat_orchestration.cpp \
             -o /tmp/live_stat_orchestration_tests
           /tmp/live_stat_orchestration_tests
+
+  production-build:
+    name: Production backend image
+    needs: contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t college-ff-live-stat-worker .
 
   postgres-contract:
     name: PostgreSQL ingest and refresh concurrency
