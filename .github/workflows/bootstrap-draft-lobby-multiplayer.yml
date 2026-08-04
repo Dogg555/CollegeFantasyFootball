@@ -28,6 +28,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Correct the targeted draft metadata replacement
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/bootstrap_fix_draft_lobby_multiplayer.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''state = replace_once(state, "    status: meta.status || 'open',", "    status: meta.status || 'not_started',", "draft meta status default")'''
+          new = '''state = state.replace("    status: meta.status || 'open',", "    status: meta.status || 'not_started',", 1)'''
+          if old not in text:
+              raise SystemExit('draft metadata correction anchor missing')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Apply guarded source transformation
         run: python scripts/bootstrap_fix_draft_lobby_multiplayer.py
 
