@@ -20,7 +20,11 @@
   const originalValidateAuthSession = typeof root.validateAuthSession === 'function'
     ? root.validateAuthSession
     : null;
+  const originalValidateAuthSessionResult = typeof root.validateAuthSessionResult === 'function'
+    ? root.validateAuthSessionResult
+    : null;
   let privatePageRecovery = null;
+  let authUnavailablePanel = null;
 
   function recoverPrivatePageSession() {
     if (!isPrivatePage || typeof root.CFFAuthSessionSync?.recover !== 'function') {
@@ -34,23 +38,120 @@
     return privatePageRecovery;
   }
 
-  // Page scripts call validateAuthSession during their own initialization.
-  // Make those initializers wait for the same recovery request as the UI guard
-  // so league and draft state cannot render from an unauthenticated snapshot.
-  if (originalValidateAuthSession) {
-    root.validateAuthSession = async function validateAuthAfterPrivatePageRecovery() {
-      await recoverPrivatePageSession();
-      return originalValidateAuthSession();
-    };
-  }
-
   if (isPrivatePage) {
     document.documentElement.classList.add('cff-private-pending');
   }
 
-  function redirectToSignIn() {
-    const next = `${pageName}${root.location.search || ''}${root.location.hash || ''}`;
-    root.location.replace(`signin.html?next=${encodeURIComponent(next)}`);
+  function currentDestination() {
+    return `${pageName}${root.location.search || ''}${root.location.hash || ''}`;
+  }
+
+  function redirectToSignIn(reason = 'signin-required') {
+    const params = new URLSearchParams({
+      next: currentDestination(),
+      reason
+    });
+    root.location.replace(`signin.html?${params.toString()}`);
+  }
+
+  function hideAuthUnavailablePanel() {
+    authUnavailablePanel?.remove();
+    authUnavailablePanel = null;
+  }
+
+  function showAuthUnavailablePanel() {
+    if (authUnavailablePanel) return authUnavailablePanel;
+
+    const panel = document.createElement('section');
+    panel.className = 'cff-auth-gate';
+    panel.setAttribute('role', 'alert');
+    panel.setAttribute('aria-live', 'assertive');
+    Object.assign(panel.style, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '10000',
+      display: 'grid',
+      placeItems: 'center',
+      padding: '24px',
+      background: '#0d1116',
+      color: '#f4f7fb',
+      fontFamily: 'system-ui, sans-serif'
+    });
+
+    const card = document.createElement('div');
+    Object.assign(card.style, {
+      width: 'min(520px, 100%)',
+      padding: '28px',
+      border: '1px solid rgba(255, 255, 255, 0.14)',
+      borderRadius: '14px',
+      background: '#151c24',
+      boxShadow: '0 24px 80px rgba(0, 0, 0, 0.45)'
+    });
+    card.innerHTML = `
+      <div style="font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #f0b84a;">Session check unavailable</div>
+      <h1 style="margin: 10px 0 8px; font-size: clamp(1.5rem, 5vw, 2rem);">We could not verify your session</h1>
+      <p style="margin: 0; color: #b9c3cf; line-height: 1.6;">The authentication service is temporarily unreachable. Your saved session has not been cleared, and private league data will remain hidden until verification succeeds.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px;">
+        <button class="button button--primary" type="button" data-auth-retry>Retry session check</button>
+        <a class="button button--ghost" href="signin.html">Go to sign in</a>
+      </div>
+      <div data-auth-retry-status role="status" style="min-height: 1.4em; margin-top: 12px; color: #b9c3cf;"></div>
+    `;
+    panel.appendChild(card);
+    document.documentElement.appendChild(panel);
+    authUnavailablePanel = panel;
+    return panel;
+  }
+
+  function waitForRetry() {
+    const panel = showAuthUnavailablePanel();
+    const retryButton = panel.querySelector('[data-auth-retry]');
+    const retryStatus = panel.querySelector('[data-auth-retry-status]');
+
+    return new Promise((resolve) => {
+      retryButton?.addEventListener('click', () => {
+        retryButton.disabled = true;
+        retryButton.textContent = 'Checking...';
+        if (retryStatus) retryStatus.textContent = 'Checking the authentication service again...';
+        resolve();
+      }, { once: true });
+    });
+  }
+
+  async function validatePrivateSession() {
+    const auth = typeof root.getAuthState === 'function' ? root.getAuthState() : null;
+    if (!auth?.token) {
+      return { authenticated: false, unavailable: false, expired: false, missing: true };
+    }
+
+    if (originalValidateAuthSessionResult) {
+      try {
+        return await originalValidateAuthSessionResult();
+      } catch (error) {
+        return {
+          authenticated: false,
+          unavailable: true,
+          expired: false,
+          message: error?.message || 'Session validation failed'
+        };
+      }
+    }
+
+    if (originalValidateAuthSession) {
+      try {
+        const authenticated = await originalValidateAuthSession();
+        return { authenticated, unavailable: false, expired: !authenticated };
+      } catch (error) {
+        return {
+          authenticated: false,
+          unavailable: true,
+          expired: false,
+          message: error?.message || 'Session validation failed'
+        };
+      }
+    }
+
+    return { authenticated: Boolean(auth?.token), unavailable: false, expired: false };
   }
 
   async function guardPrivatePage() {
@@ -58,31 +159,38 @@
 
     await recoverPrivatePageSession();
 
-    const auth = typeof root.getAuthState === 'function' ? root.getAuthState() : null;
-    if (!auth?.token) {
-      redirectToSignIn();
-      return false;
-    }
-
-    try {
-      const valid = typeof root.validateAuthSession === 'function'
-        ? await root.validateAuthSession()
-        : Boolean(auth?.token);
-      if (!valid) {
-        redirectToSignIn();
-        return false;
+    while (true) {
+      const result = await validatePrivateSession();
+      if (result.authenticated) {
+        hideAuthUnavailablePanel();
+        document.documentElement.classList.remove('cff-private-pending');
+        return true;
       }
-    } catch {
-      redirectToSignIn();
+
+      if (result.unavailable) {
+        await waitForRetry();
+        hideAuthUnavailablePanel();
+        privatePageRecovery = null;
+        await recoverPrivatePageSession();
+        continue;
+      }
+
+      redirectToSignIn(result.expired ? 'session-expired' : 'signin-required');
       return false;
     }
-
-    document.documentElement.classList.remove('cff-private-pending');
-    return true;
   }
 
   const privateGuard = guardPrivatePage();
   root.CFFPrivatePageGuard = privateGuard;
+
+  // Page scripts call validateAuthSession during initialization. Route those
+  // calls through the same guard so private content and API requests remain
+  // blocked until the backend confirms the saved session.
+  if (isPrivatePage && originalValidateAuthSession) {
+    root.validateAuthSession = async function validateAuthAfterPrivatePageRecovery() {
+      return privateGuard;
+    };
+  }
 
   function setupBranding() {
     if (!document.querySelector('link[rel~="icon"]')) {
