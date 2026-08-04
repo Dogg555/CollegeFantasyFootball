@@ -126,13 +126,27 @@ void applyCorsHeaders(
     const drogon::HttpRequestPtr &req,
     const drogon::HttpResponsePtr &resp,
     const std::unordered_set<std::string> &allowedOrigins) {
+    if (!req || !resp) {
+        return;
+    }
     const auto origin = req->getHeader("Origin");
     if (!allowedOrigins.empty() && allowedOrigins.find(origin) != allowedOrigins.end()) {
         resp->addHeader("Access-Control-Allow-Origin", origin);
         resp->addHeader("Vary", "Origin");
     }
-    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID");
     resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+}
+
+drogon::HttpResponsePtr withConfiguredCorsHeaders(
+    const drogon::HttpRequestPtr &req,
+    const drogon::HttpResponsePtr &resp) {
+    if (!resp) {
+        return resp;
+    }
+    const auto runtimeConfig = cff::config::loadRuntimeConfig();
+    applyCorsHeaders(req, resp, runtimeConfig.allowedOrigins);
+    return resp;
 }
 
 drogon::HttpResponsePtr buildPreflightResponse(
