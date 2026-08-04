@@ -22,7 +22,6 @@ owned_functions = (
     "isAdminRequest",
     "requireAdmin",
     "applyCorsHeaders",
-    "withConfiguredCorsHeaders",
     "buildPreflightResponse",
 )
 
@@ -39,7 +38,6 @@ for implementation in (
     "bool isAdminRequest(",
     "bool requireAdmin(",
     "void applyCorsHeaders(",
-    "drogon::HttpResponsePtr withConfiguredCorsHeaders(",
     "drogon::HttpResponsePtr buildPreflightResponse(",
 ):
     for owner_name, source in (
@@ -72,12 +70,14 @@ if "cff::public_api::registerPublicRoutes(app, allowedOrigins)" not in compositi
     raise SystemExit("app_composition.cpp must register the public route group")
 
 required_server_runtime_delegation = (
-    "app.registerPostHandlingAdvice(",
+    "app.registerPreSendingAdvice(",
     "cff::http::applyCorsHeaders(request, response, allowedOrigins)",
 )
 for delegation in required_server_runtime_delegation:
     if delegation not in server_runtime:
         raise SystemExit(f"server_runtime.cpp HTTP security delegation missing: {delegation}")
+if "app.registerPostHandlingAdvice(" in server_runtime:
+    raise SystemExit("CORS must run at the pre-send boundary so sync-advice responses are covered")
 
 required_auth_route_delegation = (
     "cff::http::bearerToken(req)",
@@ -117,7 +117,6 @@ required_behavior = (
     'resp->addHeader("Vary", "Origin")',
     'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID")',
     'resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")',
-    'applyCorsHeaders(req, resp, runtimeConfig.allowedOrigins)',
     'resp->setStatusCode(drogon::k204NoContent)',
     'return std::string{"admin@example.com"}',
     'adminIdentity = "ops-token"',
