@@ -347,15 +347,21 @@
       scanQueued: false
     };
     const pageLabel = pageName === 'draft.html' ? 'draft room' : 'league';
+    const draftTargets = new Set([
+      'draft-queue',
+      'roster-list',
+      'draft-order-list',
+      'draft-pick-list',
+      'upcoming-pick-list',
+      'recommended-list'
+    ]);
     const targetIds = Object.keys(emptyStateDefinitions).filter((id) => {
-      return pageName === 'draft.html'
-        ? ['draft-queue', 'roster-list', 'draft-order-list', 'draft-pick-list', 'upcoming-pick-list', 'recommended-list'].includes(id)
-        : !['draft-queue', 'roster-list', 'draft-order-list', 'draft-pick-list', 'upcoming-pick-list', 'recommended-list'].includes(id);
+      return pageName === 'draft.html' ? draftTargets.has(id) : !draftTargets.has(id);
     });
 
     function pageHost() {
       if (pageName === 'draft.html') {
-        return document.getElementById('draft-room-content') || document.querySelector('main.layout');
+        return document.querySelector('main.layout') || document.getElementById('draft-room-content');
       }
       return document.querySelector('main.league-dashboard') || document.querySelector('main.layout');
     }
@@ -377,13 +383,9 @@
         </div>
         <div class="cff-page-state__actions"></div>
       `;
-      if (pageName === 'league.html') {
-        const tabs = host.querySelector(':scope > .league-tabs');
-        if (tabs) tabs.insertAdjacentElement('afterend', banner);
-        else host.prepend(banner);
-      } else {
-        host.prepend(banner);
-      }
+      const tabs = host.querySelector(':scope > .league-tabs');
+      if (tabs) tabs.insertAdjacentElement('afterend', banner);
+      else host.prepend(banner);
       state.banner = banner;
       return banner;
     }
@@ -449,8 +451,8 @@
     }
 
     function beginRead() {
+      if (state.activeReads === 0) state.readFailed = false;
       state.activeReads += 1;
-      state.readFailed = false;
       clearTimeout(state.settleTimer);
       if (!state.initialSettled) {
         showPageState('loading', `Loading ${pageLabel}...`, 'Checking the latest server data.');
@@ -472,8 +474,7 @@
             onClick: () => root.location.reload()
           }
         );
-      } else if (!state.activeReads) {
-        state.readFailed = false;
+      } else if (!state.activeReads && !state.readFailed) {
         scheduleInitialSettle();
       }
     }
