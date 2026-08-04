@@ -26,23 +26,63 @@ if (typeof window.apiCacheMeta !== 'function') {
   };
 }
 
-if (typeof window.mutationControlsDisabled !== 'function') window.mutationControlsDisabled = () => false;
+if (typeof window.mutationControlsDisabled !== 'function') {
+  window.mutationControlsDisabled = () => false;
+}
+
 if (typeof window.mutationErrorMessage !== 'function') {
   window.mutationErrorMessage = (error, fallback = 'Request failed. No local changes were made.') => {
     if (error?.status === 429) {
       const retry = error.retryAfter ? ` Retry after ${error.retryAfter} seconds.` : ' Try again later.';
       return `Too many requests.${retry}`;
     }
-    if (error?.status === 503 || error?.unavailable) return 'Service is temporarily unavailable. No local changes were made.';
+    if (error?.status === 503 || error?.unavailable) {
+      return 'Service is temporarily unavailable. No local changes were made.';
+    }
     return error?.data?.error || error?.message || fallback;
   };
 }
 
 (() => {
-  const scripts = ['api-client.js', 'authoritative-data.js', 'mutation-consistency.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'league-onboarding.js', 'auth-session-sync.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js'];
+  const scripts = [
+    'api-client.js',
+    'authoritative-data.js',
+    'mutation-consistency.js',
+    'roster-transactions.js',
+    'waiver-lifecycle.js',
+    'trade-lifecycle.js',
+    'scoring-lifecycle.js',
+    'league-onboarding.js',
+    'auth-session-sync.js',
+    'draft-poll-scope.js',
+    'draft-lifecycle.js',
+    'polish-core.js',
+    'polish-forms.js',
+    'polish-state.js',
+    'beta-ui.js',
+    'league-nav.js',
+    'workspace-ui.js',
+    'invite-fix.js',
+    'footer-links.js',
+    'landing-refresh.js'
+  ];
+  const styles = [
+    ['polish.css', 'cffPolish', 'data-cff-polish="true"'],
+    ['alpha-ui.css', 'cffModern', 'data-cff-modern="true"'],
+    ['beta-ui.css', 'cffBeta', 'data-cff-beta="true"'],
+    ['league-nav.css', 'cffLeagueNav', 'data-cff-league-nav="true"'],
+    ['workspace-ui.css', 'cffWorkspace', 'data-cff-workspace="true"'],
+    ['mobile-density.css', 'cffMobileDensity', 'data-cff-mobile-density="true"'],
+    ['player-catalog.css', 'cffPlayerCatalog', 'data-cff-player-catalog="true"'],
+    ['league-card-hierarchy.css', 'cffLeagueCardHierarchy', 'data-cff-league-card-hierarchy="true"'],
+    ['landing-refresh.css', 'cffLandingRefresh', 'data-cff-landing-refresh="true"']
+  ];
   const leagueSizeSelectIds = ['league-size', 'settings-teams'];
   const assetVersion = String(window.CFF_BUILD_COMMIT || '').replace(/[^A-Za-z0-9._-]/g, '');
-  const assetUrl = (source) => assetVersion ? `${source}?v=${encodeURIComponent(assetVersion)}` : source;
+
+  function assetUrl(source) {
+    return assetVersion ? `${source}?v=${encodeURIComponent(assetVersion)}` : source;
+  }
 
   function ensureBranding() {
     if (!document.querySelector('link[rel~="icon"]')) {
@@ -64,6 +104,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
     leagueSizeSelectIds.forEach((selectId) => {
       const select = document.getElementById(selectId);
       if (!select) return;
+
       const currentValue = select.value;
       const existingValues = new Set(Array.from(select.options, (option) => option.value));
       [4, 6].forEach((size) => {
@@ -74,14 +115,21 @@ if (typeof window.mutationErrorMessage !== 'function') {
         option.textContent = `${size} teams`;
         select.appendChild(option);
       });
-      Array.from(select.options).sort((a, b) => Number(a.value) - Number(b.value)).forEach((option) => select.appendChild(option));
-      if (Array.from(select.options).some((option) => option.value === currentValue)) select.value = currentValue;
+
+      Array.from(select.options)
+        .sort((left, right) => Number(left.value) - Number(right.value))
+        .forEach((option) => select.appendChild(option));
+
+      if (Array.from(select.options).some((option) => option.value === currentValue)) {
+        select.value = currentValue;
+      }
     });
   }
 
   function writeStylesheet(href, attribute) {
     const versionedHref = assetUrl(href);
-    if (!document.querySelector(`link[href="${versionedHref}"]`)) document.write(`<link rel="stylesheet" href="${versionedHref}" ${attribute}>`);
+    if (document.querySelector(`link[href="${versionedHref}"]`)) return;
+    document.write(`<link rel="stylesheet" href="${versionedHref}" ${attribute}>`);
   }
 
   function appendStylesheet(href, datasetKey) {
@@ -94,38 +142,36 @@ if (typeof window.mutationErrorMessage !== 'function') {
     document.head.appendChild(stylesheet);
   }
 
+  function appendScript(source) {
+    return new Promise((resolve, reject) => {
+      const versionedSource = assetUrl(source);
+      if (document.querySelector(`script[src="${versionedSource}"]`)) {
+        resolve();
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = versionedSource;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error(`Unable to load ${source}`));
+      document.head.appendChild(script);
+    });
+  }
+
   ensureBranding();
-  const styles = [
-    ['polish.css', 'cffPolish', 'data-cff-polish="true"'],
-    ['alpha-ui.css', 'cffModern', 'data-cff-modern="true"'],
-    ['beta-ui.css', 'cffBeta', 'data-cff-beta="true"'],
-    ['league-nav.css', 'cffLeagueNav', 'data-cff-league-nav="true"'],
-    ['workspace-ui.css', 'cffWorkspace', 'data-cff-workspace="true"'],
-    ['mobile-density.css', 'cffMobileDensity', 'data-cff-mobile-density="true"'],
-    ['player-catalog.css', 'cffPlayerCatalog', 'data-cff-player-catalog="true"'],
-    ['league-card-hierarchy.css', 'cffLeagueCardHierarchy', 'data-cff-league-card-hierarchy="true"']
-  ];
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', ensureLeagueSizeOptions, { once: true });
     styles.forEach(([href, , attribute]) => writeStylesheet(href, attribute));
-    scripts.forEach((source) => document.write(`<script src="${assetUrl(source)}"><\/script>`));
+    scripts.forEach((source) => {
+      document.write(`<script src="${assetUrl(source)}"><\/script>`);
+    });
     return;
   }
 
   ensureLeagueSizeOptions();
   styles.forEach(([href, datasetKey]) => appendStylesheet(href, datasetKey));
-  scripts.reduce((chain, source) => chain.then(() => new Promise((resolve, reject) => {
-    const versionedSource = assetUrl(source);
-    if (document.querySelector(`script[src="${versionedSource}"]`)) return resolve();
-    const script = document.createElement('script');
-    script.src = versionedSource;
-    script.onload = resolve;
-    script.onerror = reject;
-    document.head.appendChild(script);
-  })), Promise.resolve()).catch((error) => {
-    console.error('Unable to load the shared UI polish layer.', error);
-  });
-})();
-  })), Promise.resolve()).catch((error) => console.error('Unable to load the shared UI polish layer.', error));
+  scripts.reduce((chain, source) => chain.then(() => appendScript(source)), Promise.resolve())
+    .catch((error) => {
+      console.error('Unable to load the shared API, auth, or UI layer.', error);
+    });
 })();
