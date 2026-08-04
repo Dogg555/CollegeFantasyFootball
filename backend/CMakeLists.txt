@@ -9,7 +9,10 @@ option(ENABLE_DROGON "Build with Drogon HTTP framework" ON)
 
 if (NOT ENABLE_DROGON)
     message(WARNING "ENABLE_DROGON=OFF; building a stub server without HTTP bindings.")
-    add_executable(college_ff_server src/main.cpp)
+    add_executable(college_ff_server
+        src/main.cpp
+        src/application_bootstrap.cpp
+    )
     target_include_directories(college_ff_server PRIVATE src)
     return()
 endif()
@@ -18,6 +21,7 @@ endif()
 # structural boundaries and Docker contracts exercise the same composition.
 add_executable(college_ff_server
     src/main.cpp
+    src/application_bootstrap.cpp
     src/app_composition.cpp
     src/app_config.cpp
     src/server_runtime.cpp
