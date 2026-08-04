@@ -46,7 +46,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
 }
 
 (() => {
-  const scripts = ['auth-session-sync.js', 'draft-poll-scope.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js'];
+  const scripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'draft-poll-scope.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js'];
   const leagueSizeSelectIds = ['league-size', 'settings-teams'];
   const assetVersion = String(window.CFF_BUILD_COMMIT || '').replace(/[^A-Za-z0-9._-]/g, '');
 

@@ -1,0 +1,62 @@
+name: Shared API client contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "frontend/api-client.js"
+      - "frontend/config.js"
+      - "frontend/state.js"
+      - "frontend/auth.js"
+      - "frontend/tests/api-client.test.js"
+      - "backend/src/health_status.cpp"
+      - "backend/src/security_hardening.cpp"
+      - "backend/tests/shared_api_client_contract_tests.py"
+      - ".github/workflows/shared-api-client.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "frontend/api-client.js"
+      - "frontend/config.js"
+      - "frontend/state.js"
+      - "frontend/auth.js"
+      - "frontend/tests/api-client.test.js"
+      - "backend/src/health_status.cpp"
+      - "backend/src/security_hardening.cpp"
+      - "backend/tests/shared_api_client_contract_tests.py"
+      - ".github/workflows/shared-api-client.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-api-client-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate client sources
+        run: |
+          node --check frontend/api-client.js
+          node --check frontend/tests/api-client.test.js
+          python -m py_compile backend/tests/shared_api_client_contract_tests.py
+
+      - name: Run shared client contracts
+        run: |
+          node frontend/tests/api-client.test.js
+          python backend/tests/shared_api_client_contract_tests.py

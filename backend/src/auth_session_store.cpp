@@ -25,6 +25,7 @@ struct TokenRecord {
 
 std::mutex sessionMutex;
 std::unordered_map<std::string, TokenRecord> activeTokens;
+std::unordered_map<std::string, std::chrono::steady_clock::time_point> revokedTokens;
 constexpr std::chrono::hours kTokenTtl{24};
 
 void cleanupExpiredMemoryTokensLocked(std::chrono::steady_clock::time_point now) {
@@ -35,6 +36,20 @@ void cleanupExpiredMemoryTokensLocked(std::chrono::steady_clock::time_point now)
             ++it;
         }
     }
+    for (auto it = revokedTokens.begin(); it != revokedTokens.end();) {
+        if (it->second <= now) {
+            it = revokedTokens.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool tokenRevokedInMemory(const std::string &token) {
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    const auto now = std::chrono::steady_clock::now();
+    cleanupExpiredMemoryTokensLocked(now);
+    return revokedTokens.find(token) != revokedTokens.end();
 }
 
 #ifdef CFF_HAS_POSTGRES
@@ -144,15 +159,19 @@ std::optional<std::string> databaseEmailForToken(const std::string &token) {
     return std::string{PQgetvalue(result.get(), 0, 0)};
 }
 
-void revokeDatabaseToken(const std::string &token) {
+bool revokeDatabaseToken(const std::string &token) {
     auto conn = connectToDatabase();
     if (!conn) {
-        return;
+        return false;
     }
     auto result = executeParameters(conn.get(),
                                     "DELETE FROM auth_tokens WHERE token = encode(digest($1, 'sha256'), 'hex')",
                                     {token});
-    (void)result;
+    if (!resultOk(result.get(), PGRES_COMMAND_OK)) {
+        std::cerr << "[auth] token revocation failed: " << PQerrorMessage(conn.get()) << std::endl;
+        return false;
+    }
+    return true;
 }
 #endif
 
@@ -177,11 +196,15 @@ std::optional<std::string> issueSessionToken(const std::string &email) {
 
     std::lock_guard<std::mutex> lock(sessionMutex);
     cleanupExpiredMemoryTokensLocked(std::chrono::steady_clock::now());
+    revokedTokens.erase(token);
     activeTokens[token] = TokenRecord{email, expiresAt};
     return token;
 }
 
 std::optional<std::string> emailForSessionToken(const std::string &token) {
+    if (tokenRevokedInMemory(token)) {
+        return std::nullopt;
+    }
 #ifdef CFF_HAS_POSTGRES
     if (cff::config::persistentDbRequired() && !databaseConfigured()) {
         return std::nullopt;
@@ -197,6 +220,7 @@ std::optional<std::string> emailForSessionToken(const std::string &token) {
 
     std::lock_guard<std::mutex> lock(sessionMutex);
     const auto now = std::chrono::steady_clock::now();
+    cleanupExpiredMemoryTokensLocked(now);
     auto it = activeTokens.find(token);
     if (it == activeTokens.end()) {
         return std::nullopt;
@@ -209,13 +233,19 @@ std::optional<std::string> emailForSessionToken(const std::string &token) {
 }
 
 void revokeSessionToken(const std::string &token) {
+    {
+        std::lock_guard<std::mutex> lock(sessionMutex);
+        const auto now = std::chrono::steady_clock::now();
+        cleanupExpiredMemoryTokensLocked(now);
+        activeTokens.erase(token);
+        revokedTokens[token] = now + kTokenTtl;
+    }
 #ifdef CFF_HAS_POSTGRES
-    if (databaseConfigured()) {
-        revokeDatabaseToken(token);
+    if (databaseConfigured() && !revokeDatabaseToken(token)) {
+        std::cerr << "[auth] persistent token revocation could not be confirmed; "
+                  << "the token remains denied in this process" << std::endl;
     }
 #endif
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    activeTokens.erase(token);
 }
 
 } // namespace cff::auth

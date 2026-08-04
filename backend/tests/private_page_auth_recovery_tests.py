@@ -20,20 +20,33 @@ sync = AUTH_SYNC.read_text(encoding="utf-8")
 recover_helper = "function recoverPrivatePageSession()"
 wrapped_validator = "root.validateAuthSession = async function validateAuthAfterPrivatePageRecovery()"
 await_recovery = "await recoverPrivatePageSession();"
-original_validation = "return originalValidateAuthSession();"
 auth_read = "const auth = typeof root.getAuthState === 'function' ? root.getAuthState() : null;"
 
 require(recover_helper in alpha, "private pages do not share one authentication recovery promise")
 require(wrapped_validator in alpha,
-        "page initialization validation is not blocked on authentication recovery")
-require(alpha.index(await_recovery, alpha.index(wrapped_validator))
-        < alpha.index(original_validation, alpha.index(wrapped_validator)),
-        "page initialization validates before authentication recovery completes")
+        "page initialization validation is not blocked on the private-page guard")
+require("return privateGuard;" in alpha,
+        "page initialization does not wait for the authoritative private-page guard")
 require("root.CFFPrivatePageGuard = privateGuard" in alpha,
         "the resolved private-page guard is not exposed to page integrations")
 require(alpha.index(await_recovery, alpha.index("async function guardPrivatePage"))
-        < alpha.index(auth_read),
-        "private-page guard reads auth before cross-tab recovery completes")
+        < alpha.index("while (true)", alpha.index("async function guardPrivatePage")),
+        "private-page guard validates before cross-tab recovery completes")
+require(auth_read in alpha,
+        "private-page validation does not inspect the recovered authentication state")
+
+require("originalValidateAuthSessionResult" in alpha,
+        "private-page guard cannot distinguish expired sessions from API outages")
+require("if (result.unavailable)" in alpha,
+        "authentication outages are not handled separately from expired sessions")
+require("await waitForRetry();" in alpha,
+        "authentication outages do not expose a retry path")
+require("Your saved session has not been cleared" in alpha,
+        "outage recovery does not explain that the saved session was preserved")
+require("result.expired ? 'session-expired' : 'signin-required'" in alpha,
+        "expired and missing sessions do not produce distinct sign-in reasons")
+require("document.documentElement.classList.remove('cff-private-pending')" in alpha,
+        "private content is not released after successful backend validation")
 
 require("pending.responses.push(message.auth)" in sync,
         "session recovery still accepts the first response immediately")
