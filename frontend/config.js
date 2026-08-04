@@ -46,7 +46,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
 }
 
 (() => {
-  const scripts = ['auth-session-sync.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js'];
+  const scripts = ['api-client.js', 'authoritative-data.js', 'mutation-consistency.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'league-onboarding.js', 'auth-session-sync.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js'];
   const leagueSizeSelectIds = ['league-size', 'settings-teams'];
   const assetVersion = String(window.CFF_BUILD_COMMIT || '').replace(/[^A-Za-z0-9._-]/g, '');
 
@@ -123,6 +123,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
     writeStylesheet('league-nav.css', 'data-cff-league-nav="true"');
     writeStylesheet('workspace-ui.css', 'data-cff-workspace="true"');
     writeStylesheet('mobile-density.css', 'data-cff-mobile-density="true"');
+    writeStylesheet('player-catalog.css', 'data-cff-player-catalog="true"');
     writeStylesheet('league-card-hierarchy.css', 'data-cff-league-card-hierarchy="true"');
     scripts.forEach((source) => {
       document.write(`<script src="${assetUrl(source)}"><\/script>`);
@@ -137,6 +138,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
   appendStylesheet('league-nav.css', 'cffLeagueNav');
   appendStylesheet('workspace-ui.css', 'cffWorkspace');
   appendStylesheet('mobile-density.css', 'cffMobileDensity');
+  appendStylesheet('player-catalog.css', 'cffPlayerCatalog');
   appendStylesheet('league-card-hierarchy.css', 'cffLeagueCardHierarchy');
 
   scripts.reduce((chain, source) => chain.then(() => new Promise((resolve, reject) => {
