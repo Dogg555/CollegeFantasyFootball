@@ -215,8 +215,10 @@ def main() -> int:
     require(expiry_state == "1|1", f"new reset token was not stored with a future expiry: {expiry_state!r}")
 
     updated = database_scalar(
+        "WITH expired AS ("
         "UPDATE users SET password_reset_expires_at = NOW() - INTERVAL '1 second' "
         "WHERE email = " + sql_literal(EMAIL) + " RETURNING 1"
+        ") SELECT COUNT(*) FROM expired"
     )
     require(updated == "1", "test could not force the reset token to expire")
 
