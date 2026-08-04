@@ -7,6 +7,9 @@ on:
       - "frontend/alpha-ui.js"
       - "frontend/auth.js"
       - "frontend/auth-session-sync.js"
+      - "frontend/signin.html"
+      - "frontend/logout-reliability.js"
+      - "frontend/tests/logout-reliability.test.js"
       - "frontend/resend-verification.html"
       - "frontend/resend-verification-cooldown.js"
       - "frontend/tests/resend-verification-cooldown.test.js"
@@ -19,6 +22,9 @@ on:
       - "frontend/alpha-ui.js"
       - "frontend/auth.js"
       - "frontend/auth-session-sync.js"
+      - "frontend/signin.html"
+      - "frontend/logout-reliability.js"
+      - "frontend/tests/logout-reliability.test.js"
       - "frontend/resend-verification.html"
       - "frontend/resend-verification-cooldown.js"
       - "frontend/tests/resend-verification-cooldown.test.js"
@@ -55,6 +61,8 @@ jobs:
           node --check frontend/alpha-ui.js
           node --check frontend/auth.js
           node --check frontend/auth-session-sync.js
+          node --check frontend/logout-reliability.js
+          node --check frontend/tests/logout-reliability.test.js
           node --check frontend/resend-verification-cooldown.js
           node --check frontend/tests/resend-verification-cooldown.test.js
 
@@ -62,4 +70,5 @@ jobs:
         run: |
           python backend/tests/private_page_auth_recovery_tests.py
           python backend/tests/auth_redirect_contract_tests.py
+          node frontend/tests/logout-reliability.test.js
           node frontend/tests/resend-verification-cooldown.test.js
