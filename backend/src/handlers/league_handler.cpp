@@ -2984,7 +2984,7 @@ void handleAddRosterPlayer(const drogon::HttpRequestPtr &req,
     auto player = playerPayload;
     if (indexOfPlayer(roster, jsonString(player, "id")) < 0) {
         roster.append(player);
-        addTransactionLocked(leagueId, "Free Agent", cff::league_waiver::processedTransactionSummary(player), accountEmail);
+        addTransactionLocked(leagueId, "Free Agent", "Added " + jsonString(player, "name"), accountEmail);
     }
     callback(jsonResponse(roster, drogon::k200OK));
 }
