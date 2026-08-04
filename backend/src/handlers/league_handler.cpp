@@ -28,6 +28,7 @@
 #include "../league_schedule.h"
 #include "../league_roster.h"
 #include "../league_waiver.h"
+#include "../league_trade.h"
 
 namespace cff::handlers {
 
@@ -89,14 +90,6 @@ double projectionForPlayer(const Json::Value &player) {
     return 0.0;
 }
 
-bool tradeApprovalRequired(const Json::Value &rules) {
-    return rules.isMember("commissionerApproval") && rules["commissionerApproval"].asBool();
-}
-
-int tradeExpirationHours(const Json::Value &rules) {
-    return std::clamp(cff::getIntOrDefault(rules, "expirationHours", 48), 1, 336);
-}
-
 Json::Value waiverRulesForLeagueLocked(const std::string &leagueId) {
     const auto it = leaguesById.find(leagueId);
     if (it != leaguesById.end() && it->second.league.waiverRules.isObject()) {
@@ -118,23 +111,6 @@ Json::Value tradeRulesForLeagueLocked(const std::string &leagueId) {
     rules["commissionerApproval"] = false;
     rules["expirationHours"] = 48;
     return rules;
-}
-
-bool playerLockedInTradeLocked(const std::string &leagueId,
-                               const std::string &managerEmail,
-                               const std::string &playerId) {
-    auto &offers = arrayForLeague(tradesByLeague, leagueId);
-    for (const auto &offer : offers) {
-        const auto status = jsonString(offer, "status");
-        if (status != "Pending" && status != "Accepted") continue;
-        if (jsonString(offer, "offeredByEmail") == managerEmail && jsonString(offer["offerPlayer"], "id") == playerId) {
-            return true;
-        }
-        if (jsonString(offer, "offeredToEmail") == managerEmail && jsonString(offer["requestPlayer"], "id") == playerId) {
-            return true;
-        }
-    }
-    return false;
 }
 
 bool lineupLockedLocked(const std::string &leagueId) {
@@ -1947,9 +1923,9 @@ std::optional<Json::Value> dbCreateTrade(const std::string &accountEmail,
                                  ? jsonString(body["requestPlayer"], "id")
                                  : "";
     const auto rules = dbTradeRules(leagueId).value_or(Json::Value{Json::objectValue});
-    const auto requiresApproval = tradeApprovalRequired(rules);
-    const auto expirationHours = tradeExpirationHours(rules);
-    if (target.empty() || target == accountEmail) return std::nullopt;
+    const auto requiresApproval = cff::league_trade::approvalRequired(rules);
+    const auto expirationHours = cff::league_trade::expirationHours(rules);
+    if (!cff::league_trade::validTarget(accountEmail, target)) return std::nullopt;
     if (!dbIsActiveMember(conn.get(), leagueId, accountEmail) || !dbIsActiveMember(conn.get(), leagueId, target)) return std::nullopt;
     auto offer = dbRosterPlayer(conn.get(), leagueId, accountEmail, offerId);
     auto requestPlayer = dbRosterPlayer(conn.get(), leagueId, target, requestedId);
@@ -1966,7 +1942,7 @@ std::optional<Json::Value> dbCreateTrade(const std::string &accountEmail,
                               jsonToString(*offer), jsonToString(*requestPlayer), jsonString(body, "requestPlayerName"), target,
                               jsonString(body, "note"), requiresApproval ? "true" : "false", std::to_string(expirationHours)});
     if (!resultOk(result.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Trade Offer", "Offered " + jsonString(*offer, "name"), accountEmail, *offer);
+    dbAddTransaction(conn.get(), leagueId, "Trade Offer", cff::league_trade::offerTransactionSummary(*offer), accountEmail, *offer);
     auto trades = dbListTrades(accountEmail, leagueId);
     if (trades && trades->size() > 0) {
         return (*trades)[0];
@@ -1994,23 +1970,14 @@ std::optional<Json::Value> dbUpdateTradeStatus(const std::string &accountEmail,
     const auto offer = normalizePlayerJson(jsonFromString(cell(result.get(), 0, 2)));
     const auto requestPlayer = normalizePlayerJson(jsonFromString(cell(result.get(), 0, 3)));
     const auto currentStatus = cell(result.get(), 0, 7);
-    if (currentStatus != "pending" && currentStatus != "accepted") return std::nullopt;
+    if (!cff::league_trade::openStatus(currentStatus)) return std::nullopt;
     const bool involved = accountEmail == offeredBy || accountEmail == offeredTo;
     const bool requiresApproval = cellBool(result.get(), 0, 6);
-    auto nextStatus = statusForDb(status);
-    bool executeTrade = false;
-    if (nextStatus == "accepted") {
-        if (!involved) return std::nullopt;
-        executeTrade = !requiresApproval;
-        if (executeTrade) nextStatus = "approved";
-    } else if (nextStatus == "approved" || nextStatus == "vetoed") {
-        if (!commissioner) return std::nullopt;
-        executeTrade = nextStatus == "approved";
-    } else if (nextStatus == "declined" || nextStatus == "cancelled") {
-        if (!involved && !commissioner) return std::nullopt;
-    } else {
-        return std::nullopt;
-    }
+    const auto decision = cff::league_trade::decideStatus(
+        status, requiresApproval, involved, commissioner, true);
+    if (!decision.allowed) return std::nullopt;
+    const auto &nextStatus = decision.databaseStatus;
+    const bool executeTrade = decision.execute;
     if (executeTrade) {
         if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
         if (jsonString(requestPlayer, "id").empty()) {
@@ -2052,7 +2019,7 @@ std::optional<Json::Value> dbUpdateTradeStatus(const std::string &accountEmail,
                              "WHERE league_id = $1 AND id = $2 AND status IN ('pending', 'accepted')",
                              {leagueId, tradeId, nextStatus});
     if (!resultOk(update.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Trade", statusForUi(nextStatus) + ": " + jsonString(offer, "name"), accountEmail, offer);
+    dbAddTransaction(conn.get(), leagueId, "Trade", cff::league_trade::statusTransactionSummary(decision.displayStatus, offer), accountEmail, offer);
     Json::Value trade;
     trade["id"] = tradeId;
     trade["offerPlayer"] = offer;
@@ -2062,7 +2029,7 @@ std::optional<Json::Value> dbUpdateTradeStatus(const std::string &accountEmail,
     trade["offeredByEmail"] = offeredBy;
     trade["offeredToEmail"] = offeredTo;
     trade["requiresApproval"] = requiresApproval;
-    trade["status"] = statusForUi(nextStatus);
+    trade["status"] = decision.displayStatus;
     trade["note"] = cell(result.get(), 0, 8);
     return trade;
 }
@@ -3027,7 +2994,8 @@ void handleDropRosterPlayer(const drogon::HttpRequestPtr &req,
         sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
         return;
     }
-    if (playerLockedInTradeLocked(leagueId, accountEmail, playerId)) {
+    if (cff::league_trade::playerLockedInOpenOffer(
+            arrayForLeague(tradesByLeague, leagueId), accountEmail, playerId)) {
         sendError(callback, drogon::k409Conflict, "Player is locked in a pending trade");
         return;
     }
@@ -3778,7 +3746,7 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
         return;
     }
     const auto requestedTarget = jsonString(*body, "targetManager", jsonString(*body, "targetManagerEmail"));
-    if (requestedTarget.empty() || requestedTarget == accountEmail) {
+    if (!cff::league_trade::validTarget(accountEmail, requestedTarget)) {
         sendError(callback, drogon::k400BadRequest, "Trade target must be another active league manager");
         return;
     }
@@ -3807,7 +3775,7 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
         return;
     }
     const auto targetManager = jsonString(*body, "targetManager");
-    if (targetManager.empty() || targetManager == accountEmail) {
+    if (!cff::league_trade::validTarget(accountEmail, targetManager)) {
         sendError(callback, drogon::k400BadRequest, "Trade target must be another active league manager");
         return;
     }
@@ -3815,7 +3783,10 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
         sendError(callback, drogon::k403Forbidden, "Trade target must be an active league manager");
         return;
     }
-    if (playerLockedInTradeLocked(leagueId, accountEmail, jsonString((*body)["offerPlayer"], "id"))) {
+    if (cff::league_trade::playerLockedInOpenOffer(
+            arrayForLeague(tradesByLeague, leagueId),
+            accountEmail,
+            jsonString((*body)["offerPlayer"], "id"))) {
         sendError(callback, drogon::k409Conflict, "Player is locked in a pending trade");
         return;
     }
@@ -3844,13 +3815,13 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
     trade["offeredByEmail"] = accountEmail;
     trade["offeredToEmail"] = targetManager;
     const auto rules = tradeRulesForLeagueLocked(leagueId);
-    trade["requiresApproval"] = tradeApprovalRequired(rules);
+    trade["requiresApproval"] = cff::league_trade::approvalRequired(rules);
     trade["status"] = "Pending";
     trade["createdAt"] = timestampId("at");
     trade["expiresAt"] = timestampId("expires");
     auto &offers = arrayForLeague(tradesByLeague, leagueId);
     offers.insert(0, trade);
-    addTransactionLocked(leagueId, "Trade Offer", "Offered " + jsonString(trade["offerPlayer"], "name"), accountEmail);
+    addTransactionLocked(leagueId, "Trade Offer", cff::league_trade::offerTransactionSummary(trade["offerPlayer"]), accountEmail);
     callback(jsonResponse(trade, drogon::k201Created));
 }
 
@@ -3861,14 +3832,13 @@ void handleUpdateTradeStatus(const drogon::HttpRequestPtr &req,
                              const std::string &tradeId) {
     const auto body = req->getJsonObject();
     const auto status = body ? jsonString(*body, "status") : "";
-    if (!(status == "Accepted" || status == "Approved" || status == "Vetoed" || status == "Declined" || status == "Cancelled")) {
+    if (!cff::league_trade::requestStatusAllowed(status)) {
         sendError(callback, drogon::k400BadRequest, "status must be Accepted, Approved, Vetoed, Declined, or Cancelled");
         return;
     }
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
-        const auto dbStatus = statusForDb(status);
-        if ((dbStatus == "accepted" || dbStatus == "approved")) {
+        if (cff::league_trade::potentiallyExecutes(status)) {
             auto conn = connectToDb();
             if (conn && dbLineupLocked(conn.get(), leagueId)) {
                 sendError(callback, drogon::k409Conflict, "Trades are locked after finalized matchups");
@@ -3892,26 +3862,24 @@ void handleUpdateTradeStatus(const drogon::HttpRequestPtr &req,
     for (Json::ArrayIndex i = 0; i < offers.size(); ++i) {
         if (jsonString(offers[i], "id") == tradeId) {
             const auto currentStatus = jsonString(offers[i], "status");
-            if (currentStatus != "Pending" && currentStatus != "Accepted") {
+            if (!cff::league_trade::openStatus(currentStatus)) {
                 sendError(callback, drogon::k409Conflict, "Trade is no longer open");
                 return;
             }
             const bool requiresApproval = offers[i].isMember("requiresApproval") && offers[i]["requiresApproval"].asBool();
             const bool commissioner = isCommissionerLocked(accountEmail, leagueId);
-            bool executeTrade = false;
-            if (status == "Accepted") {
-                executeTrade = !requiresApproval;
-                offers[i]["status"] = executeTrade ? "Approved" : "Accepted";
-            } else if (status == "Approved" || status == "Vetoed") {
-                if (!commissioner) {
+            const auto decision = cff::league_trade::decideStatus(
+                status, requiresApproval, true, commissioner, false);
+            if (!decision.allowed) {
+                if (decision.commissionerRequired) {
                     sendError(callback, drogon::k403Forbidden, "Commissioner access required");
-                    return;
+                } else {
+                    sendError(callback, drogon::k404NotFound, "Trade offer not found");
                 }
-                executeTrade = status == "Approved";
-                offers[i]["status"] = status;
-            } else {
-                offers[i]["status"] = status;
+                return;
             }
+            const bool executeTrade = decision.execute;
+            offers[i]["status"] = decision.displayStatus;
             if (executeTrade && lineupLockedLocked(leagueId)) {
                 sendError(callback, drogon::k409Conflict, "Trades are locked after finalized matchups");
                 return;
@@ -3932,7 +3900,7 @@ void handleUpdateTradeStatus(const drogon::HttpRequestPtr &req,
                     roster.append(normalizePlayerJson(offers[i]["requestPlayer"]));
                 }
             }
-            addTransactionLocked(leagueId, "Trade", jsonString(offers[i], "status") + ": " + jsonString(offers[i]["offerPlayer"], "name"), accountEmail);
+            addTransactionLocked(leagueId, "Trade", cff::league_trade::statusTransactionSummary(decision.displayStatus, offers[i]["offerPlayer"]), accountEmail);
             callback(jsonResponse(offers[i], drogon::k200OK));
             return;
         }
