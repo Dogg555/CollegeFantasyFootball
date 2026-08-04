@@ -16,8 +16,14 @@ drogon::HttpResponsePtr scoringLifecycleAdvice(const drogon::HttpRequestPtr &req
         Preflight
     } route = Route::None;
 
-    if (method == drogon::Get
-        && !(leagueId = pathLeagueId(path, "/scoring/state")).empty()) {
+    if (method == drogon::Options
+        && path.rfind("/api/leagues/", 0) == 0
+        && (path.find("/scoring") != std::string::npos
+            || path.find("/standings") != std::string::npos
+            || path.find("/score/week/") != std::string::npos)) {
+        route = Route::Preflight;
+    } else if (method == drogon::Get
+               && !(leagueId = pathLeagueId(path, "/scoring/state")).empty()) {
         route = Route::State;
     } else if (method == drogon::Get
                && !(leagueId = pathLeagueId(path, "/standings")).empty()) {
@@ -31,11 +37,6 @@ drogon::HttpResponsePtr scoringLifecycleAdvice(const drogon::HttpRequestPtr &req
     } else if (method == drogon::Post
                && parseScoreWeekPath(path, "", leagueId, week)) {
         route = Route::LegacyScore;
-    } else if (method == drogon::Options
-               && (!(leagueId = pathLeagueId(path, "/scoring/state")).empty()
-                   || !(leagueId = pathLeagueId(path, "/standings")).empty()
-                   || !(leagueId = pathLeagueId(path, "/scoring/transactions")).empty())) {
-        route = Route::Preflight;
     }
 
     if (route == Route::None) return nullptr;
@@ -46,25 +47,34 @@ drogon::HttpResponsePtr scoringLifecycleAdvice(const drogon::HttpRequestPtr &req
 
     const auto email = accountEmail(request);
     if (!email) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+        return cff::http::withConfiguredCorsHeaders(
+            request,
+            errorResponse(drogon::k401Unauthorized,
+                          "Authentication is required.",
+                          "authentication_required"));
     }
 
+    drogon::HttpResponsePtr response;
     switch (route) {
         case Route::State:
-            return getScoringState(leagueId, *email, requestSeason(request), requestWeek(request));
+            response = getScoringState(leagueId, *email, requestSeason(request), requestWeek(request));
+            break;
         case Route::Standings:
-            return getStandingsState(leagueId, *email, requestSeason(request));
+            response = getStandingsState(leagueId, *email, requestSeason(request));
+            break;
         case Route::Transaction:
-            return dispatchScoringTransaction(request, leagueId, *email);
+            response = dispatchScoringTransaction(request, leagueId, *email);
+            break;
         case Route::LegacyScore:
-            return scoreWeek(request, leagueId, *email, requestSeason(request), week, true);
+            response = scoreWeek(request, leagueId, *email, requestSeason(request), week, true);
+            break;
         case Route::LegacyFinalize:
-            return finalizeWeek(request, leagueId, *email, requestSeason(request), week, true);
+            response = finalizeWeek(request, leagueId, *email, requestSeason(request), week, true);
+            break;
         default:
             return nullptr;
     }
+    return cff::http::withConfiguredCorsHeaders(request, response);
 #else
     (void)request;
     return nullptr;
