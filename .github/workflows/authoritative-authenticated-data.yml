@@ -1,0 +1,64 @@
+name: Authoritative authenticated data
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "frontend/config.js"
+      - "frontend/state.js"
+      - "frontend/authoritative-data.js"
+      - "frontend/tests/authoritative-data.test.js"
+      - "frontend/index.html"
+      - "frontend/players.html"
+      - "frontend/league.html"
+      - "frontend/draft.html"
+      - "backend/tests/authoritative_authenticated_data_contract_tests.py"
+      - ".github/workflows/authoritative-authenticated-data.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "frontend/config.js"
+      - "frontend/state.js"
+      - "frontend/authoritative-data.js"
+      - "frontend/tests/authoritative-data.test.js"
+      - "frontend/index.html"
+      - "frontend/players.html"
+      - "frontend/league.html"
+      - "frontend/draft.html"
+      - "backend/tests/authoritative_authenticated_data_contract_tests.py"
+      - ".github/workflows/authoritative-authenticated-data.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: authoritative-authenticated-data-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate authority sources
+        run: |
+          node --check frontend/authoritative-data.js
+          node --check frontend/tests/authoritative-data.test.js
+          python -m py_compile backend/tests/authoritative_authenticated_data_contract_tests.py
+
+      - name: Run authoritative data contracts
+        run: |
+          node frontend/tests/authoritative-data.test.js
+          python backend/tests/authoritative_authenticated_data_contract_tests.py
