@@ -371,6 +371,10 @@ std::optional<RatePolicy> ratePolicy(const drogon::HttpRequestPtr &req) {
     if (path == "/api/auth/reset-password") return RatePolicy{12, 0, std::chrono::minutes(30), false};
     if (path == "/api/auth/resend-verification") return RatePolicy{20, 5, std::chrono::minutes(30), true};
     if (path == "/api/auth/verify-email") return RatePolicy{30, 0, std::chrono::minutes(15), false};
+    if (path == "/api/admin/ingest/cfbd/stats/status" ||
+        path == "/api/admin/ingest/cfbd/stats/transactions") {
+        return RatePolicy{120, 0, std::chrono::minutes(1), false};
+    }
     if (path == "/api/admin/ingest/cfbd/live") {
         return RatePolicy{4, 0, std::chrono::minutes(5), false};
     }
