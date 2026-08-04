@@ -17,7 +17,7 @@ Json::Value scheduleStatePayload(PGconn *connection,
     payload["viewerEmail"] = email;
     payload["matchups"] = scheduleMatchupsPayload(connection, leagueId, state.season);
     payload["weekControls"] = weekControlsPayload(connection, leagueId, state.season);
-    payload["serverTime"] = drogon::utils::getHttpFullDate(std::chrono::system_clock::now());
+    payload["serverTime"] = isoNow();
     return payload;
 }
 
