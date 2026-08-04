@@ -14,7 +14,20 @@ def require(source: str, fragment: str, message: str) -> None:
         raise AssertionError(message)
 
 
-require(CONFIG, "'api-client.js', 'authoritative-data.js', 'mutation-consistency.js'", "mutation consistency must load with the shared reliability layer")
+def script_index(name: str) -> int:
+    marker = f"'{name}'"
+    index = CONFIG.find(marker)
+    if index < 0:
+        raise AssertionError(f"missing shared script: {name}")
+    return index
+
+
+if not (
+    script_index("api-client.js")
+    < script_index("authoritative-data.js")
+    < script_index("mutation-consistency.js")
+):
+    raise AssertionError("mutation consistency must load after the shared API and authoritative data layers")
 require(MODULE, "const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])", "all mutation methods must be classified")
 require(MODULE, "if (!MUTATION_METHODS.has(normalizedMethod) || !normalizedPath.startsWith('/leagues')) return null", "non-league and read requests must bypass mutation refresh")
 

@@ -30,6 +30,14 @@ def require(source: str, fragment: str, message: str) -> None:
         raise AssertionError(message)
 
 
+def script_index(name: str) -> int:
+    marker = f"'{name}'"
+    index = CONFIG.find(marker)
+    if index < 0:
+        raise AssertionError(f"missing shared script: {name}")
+    return index
+
+
 require(CMAKE, "src/draft_lifecycle.cpp", "production target must compile lifecycle rules")
 require(CMAKE, "src/draft_lifecycle_hardening.cpp", "production target must compile draft transaction boundary")
 require(CMAKE, "draft_lifecycle_tests", "core test target must exercise draft lifecycle rules")
@@ -65,7 +73,8 @@ require(CPP_TESTS, "totalDraftPicks(4, rules) == 56", "4-team draft completion m
 require(CPP_TESTS, "totalDraftPicks(6, rules) == 84", "6-team draft completion must be covered")
 require(CPP_TESTS, "picksByManager", "full draft simulations must distribute every roster slot")
 
-require(CONFIG, "'draft-poll-scope.js', 'draft-lifecycle.js'", "lifecycle client must load after poll scoping")
+if not script_index("draft-poll-scope.js") < script_index("draft-lifecycle.js"):
+    raise AssertionError("lifecycle client must load after poll scoping")
 require(CLIENT, "shouldApplySnapshot", "reconnects must reject stale snapshots")
 require(CLIENT, "'Idempotency-Key': operation.operationKey", "browser retries must reuse stable operation keys")
 require(CLIENT, "expectedPick", "browser picks must send the confirmed pick number")

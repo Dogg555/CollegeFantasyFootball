@@ -15,7 +15,16 @@ def require(source: str, needle: str, description: str) -> None:
         raise AssertionError(f"Missing {description}: {needle}")
 
 
-require(CONFIG, "['api-client.js', 'authoritative-data.js'", "API client first in the shared script chain")
+def script_index(name: str) -> int:
+    marker = f"'{name}'"
+    index = CONFIG.find(marker)
+    if index < 0:
+        raise AssertionError(f"Missing shared script: {name}")
+    return index
+
+
+if not script_index("api-client.js") < script_index("authoritative-data.js"):
+    raise AssertionError("API client must load before authoritative data")
 require(CLIENT, "const DEFAULT_TIMEOUT_MS = 12000", "default request timeout")
 require(CLIENT, "const SAFE_RETRY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])", "safe-method retry allowlist")
 require(CLIENT, "const RETRYABLE_STATUSES = new Set([408, 425, 502, 503, 504])", "transient status allowlist")
