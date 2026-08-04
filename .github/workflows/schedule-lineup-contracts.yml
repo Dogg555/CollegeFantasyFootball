@@ -1,0 +1,247 @@
+name: Schedule and lineup lifecycle contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/Dockerfile"
+      - "backend/docker-entrypoint.sh"
+      - "backend/src/schedule_lifecycle.h"
+      - "backend/src/schedule_lifecycle.cpp"
+      - "backend/src/schedule_lifecycle_hardening.cpp"
+      - "backend/src/schedule_lifecycle_hardening_*.inc"
+      - "backend/tests/schedule_lifecycle_tests.cpp"
+      - "backend/tests/schedule_lifecycle_contract_tests.py"
+      - "backend/db/migrations/018_schedule_lineup_lock_reliability.sql"
+      - "scripts/schedule_lineup_runtime_contract.py"
+      - "scripts/test_smtp_server.py"
+      - "frontend/config.js"
+      - "frontend/schedule-lineup-lifecycle.js"
+      - "frontend/tests/schedule-lineup-lifecycle.test.js"
+      - ".github/workflows/schedule-lineup-contracts.yml"
+  pull_request:
+    branches: [main, Test, agent/trade-lifecycle-reliability]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/Dockerfile"
+      - "backend/docker-entrypoint.sh"
+      - "backend/src/schedule_lifecycle.h"
+      - "backend/src/schedule_lifecycle.cpp"
+      - "backend/src/schedule_lifecycle_hardening.cpp"
+      - "backend/src/schedule_lifecycle_hardening_*.inc"
+      - "backend/tests/schedule_lifecycle_tests.cpp"
+      - "backend/tests/schedule_lifecycle_contract_tests.py"
+      - "backend/db/migrations/018_schedule_lineup_lock_reliability.sql"
+      - "scripts/schedule_lineup_runtime_contract.py"
+      - "scripts/test_smtp_server.py"
+      - "frontend/config.js"
+      - "frontend/schedule-lineup-lifecycle.js"
+      - "frontend/tests/schedule-lineup-lifecycle.test.js"
+      - ".github/workflows/schedule-lineup-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: schedule-lineup-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install focused C++ dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjsoncpp-dev
+
+      - name: Validate lifecycle sources
+        run: |
+          node --check frontend/schedule-lineup-lifecycle.js
+          node --check frontend/tests/schedule-lineup-lifecycle.test.js
+          python -m py_compile \
+            backend/tests/schedule_lifecycle_contract_tests.py \
+            scripts/schedule_lineup_runtime_contract.py
+
+      - name: Run browser and source contracts
+        run: |
+          node frontend/tests/schedule-lineup-lifecycle.test.js
+          python backend/tests/schedule_lifecycle_contract_tests.py
+
+      - name: Compile and run schedule lifecycle rules
+        run: |
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            -I/usr/include/jsoncpp -Ibackend/src \
+            backend/tests/schedule_lifecycle_tests.cpp \
+            backend/src/schedule_lifecycle.cpp \
+            -ljsoncpp -o /tmp/schedule_lifecycle_tests
+          /tmp/schedule_lifecycle_tests
+
+  postgres-race:
+    name: PostgreSQL schedule race and lineup locks
+    needs: contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cff"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime contract dependency
+        run: python -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
+
+      - name: Validate runtime contract
+        run: python -m py_compile scripts/schedule_lineup_runtime_contract.py scripts/test_smtp_server.py
+
+      - name: Build production API image
+        run: docker build -f backend/Dockerfile -t college-ff-api-schedule-contracts .
+
+      - name: Apply production migrations
+        run: |
+          docker run --rm --network host \
+            --entrypoint sh \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            college-ff-api-schedule-contracts \
+            /srv/db/migrate.sh
+
+      - name: Generate isolated contract values
+        shell: bash
+        run: |
+          set -euo pipefail
+          jwt_secret="$(openssl rand -hex 32)"
+          admin_token="$(openssl rand -hex 32)"
+          password="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' 'Rr')-R4!"
+          run_key="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          for value in "$jwt_secret" "$admin_token" "$password"; do
+            echo "::add-mask::$value"
+          done
+          echo "CFF_SCHEDULE_JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          echo "CFF_SCHEDULE_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "CFF_SCHEDULE_RUN_KEY=$run_key" >> "$GITHUB_ENV"
+
+      - name: Start isolated SMTP catcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > /tmp/cff-schedule-mail.jsonl
+          python scripts/test_smtp_server.py \
+            --host 127.0.0.1 \
+            --port 1025 \
+            --output /tmp/cff-schedule-mail.jsonl \
+            > /tmp/cff-schedule-smtp.log 2>&1 &
+          echo $! > /tmp/cff-schedule-smtp.pid
+          python - <<'PY'
+          import socket
+          import time
+
+          for _ in range(30):
+              try:
+                  with socket.create_connection(("127.0.0.1", 1025), timeout=1):
+                      raise SystemExit(0)
+              except OSError:
+                  time.sleep(1)
+          raise SystemExit("SMTP test server did not become ready")
+          PY
+
+      - name: Start production API
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name college-ff-api-schedule-contracts --network host \
+            -e PORT=8080 \
+            -e DB_URL=postgresql://postgres:postgres@127.0.0.1:5432/cff \
+            -e JWT_SECRET="$CFF_SCHEDULE_JWT_SECRET" \
+            -e ALLOWED_ORIGINS=https://frontend.example.test \
+            -e CFF_ADMIN_API_TOKEN="$CFF_SCHEDULE_ADMIN_TOKEN" \
+            -e CFF_REQUIRE_DB=true \
+            -e CFF_RUN_MIGRATIONS_ON_STARTUP=false \
+            -e ESPN_ROSTER_AUTO_ONCE=false \
+            -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION=false \
+            -e CFF_EXPOSE_AUTH_TOKENS=false \
+            -e CFF_LOG_AUTH_TOKENS=false \
+            -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
+            -e CFF_TRUST_PROXY_HEADERS=false \
+            -e CFF_FRONTEND_BASE_URL=https://frontend.example.test \
+            -e CFF_EMAIL_PROVIDER=smtp \
+            -e CFF_EMAIL_FROM='College Fantasy Schedule Test <noreply@example.test>' \
+            -e CFF_SMTP_HOST=127.0.0.1 \
+            -e CFF_SMTP_PORT=1025 \
+            -e CFF_SMTP_SECURITY=none \
+            -e CFF_SMTP_USERNAME=test-user \
+            -e CFF_SMTP_PASSWORD=test-password \
+            -e CFF_MIN_PASSWORD_LENGTH=12 \
+            -e CFF_MAX_REQUEST_BODY_BYTES=262144 \
+            -e CFF_AUTH_REQUEST_BODY_BYTES=8192 \
+            -e CFF_AUTH_BURST_CLIENT_LIMIT=500 \
+            -e CFF_SIGNUP_CLIENT_LIMIT=500 \
+            -e CFF_SIGNUP_ACCOUNT_LIMIT=100 \
+            -e CFF_SIGNUP_RATE_WINDOW_MINUTES=60 \
+            college-ff-api-schedule-contracts
+
+      - name: Run generation, locking, scoring, and advancement contracts
+        shell: bash
+        env:
+          CFF_API_BASE_URL: http://127.0.0.1:8080
+          DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+          CFF_CONTRACT_ORIGIN: https://frontend.example.test
+        run: |
+          set -o pipefail
+          python scripts/schedule_lineup_runtime_contract.py 2>&1 | tee /tmp/schedule-lineup-runtime.log
+
+      - name: Retain runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: schedule-lineup-runtime-diagnostics
+          path: |
+            /tmp/schedule-lineup-runtime.log
+            /tmp/cff-schedule-mail.jsonl
+            /tmp/cff-schedule-smtp.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Backend logs
+        if: always()
+        run: docker logs college-ff-api-schedule-contracts || true
+
+      - name: Stop containers
+        if: always()
+        run: |
+          docker rm -f college-ff-api-schedule-contracts || true
+          if test -f /tmp/cff-schedule-smtp.pid; then
+            kill "$(cat /tmp/cff-schedule-smtp.pid)" || true
+          fi
