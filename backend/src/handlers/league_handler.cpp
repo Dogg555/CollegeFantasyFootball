@@ -25,6 +25,7 @@
 #endif
 #include "../json_utils.h"
 #include "../league_models.h"
+#include "../league_schedule.h"
 
 namespace cff::handlers {
 
@@ -237,78 +238,6 @@ bool lineupLockedLocked(const std::string &leagueId) {
         }
     }
     return false;
-}
-
-Json::Value activeMembers(const Json::Value &members) {
-    Json::Value active(Json::arrayValue);
-    for (const auto &member : members) {
-        const auto status = cff::getStringOrDefault(member, "status", "Active");
-        if (status != "Removed" && status != "removed") {
-            active.append(member);
-        }
-    }
-    return active;
-}
-
-Json::Value buildMatchups(const Json::Value &members,
-                          const std::string &leagueId,
-                          int week,
-                          const std::function<double(const std::string&)> &scoreForManager) {
-    Json::Value matchups(Json::arrayValue);
-    const auto managers = activeMembers(members);
-    std::vector<std::string> emails;
-    emails.reserve(managers.size());
-    for (const auto &manager : managers) {
-        const auto email = cff::getStringOrDefault(manager, "email");
-        if (!email.empty()) {
-            emails.push_back(email);
-        }
-    }
-    if (emails.empty()) return matchups;
-    const bool hasBye = emails.size() % 2 == 1;
-    if (hasBye) {
-        emails.push_back("");
-    }
-    const auto teamCount = emails.size();
-    const auto roundCount = teamCount > 1 ? teamCount - 1 : 1;
-    const auto round = (std::max(1, week) - 1) % roundCount;
-    std::vector<std::string> rotated = emails;
-    if (teamCount > 2) {
-        std::rotate(rotated.begin() + 1, rotated.begin() + 1 + round, rotated.end());
-    }
-    for (std::size_t i = 0; i < teamCount / 2; ++i) {
-        auto home = rotated[i];
-        auto away = rotated[teamCount - 1 - i];
-        if (home.empty() && away.empty()) continue;
-        if (home.empty()) std::swap(home, away);
-        if (week % 2 == 0 && !away.empty()) std::swap(home, away);
-        Json::Value matchup;
-        matchup["id"] = leagueId + "-week-" + std::to_string(week) + "-" + std::to_string(i + 1);
-        matchup["leagueId"] = leagueId;
-        matchup["week"] = week;
-        matchup["homeManager"] = home;
-        matchup["awayManager"] = away;
-        matchup["homeScore"] = scoreForManager(home);
-        matchup["awayScore"] = away.empty() ? 0.0 : scoreForManager(away);
-        matchup["status"] = "scheduled";
-        matchup["createdAt"] = "";
-        matchups.append(matchup);
-    }
-    return matchups;
-}
-
-Json::Value buildSeasonSchedule(const Json::Value &members,
-                                const std::string &leagueId,
-                                int weeks,
-                                const std::function<double(const std::string&)> &scoreForManager) {
-    Json::Value schedule(Json::arrayValue);
-    for (int week = 1; week <= weeks; ++week) {
-        const auto weekly = buildMatchups(members, leagueId, week, scoreForManager);
-        for (const auto &matchup : weekly) {
-            schedule.append(matchup);
-        }
-    }
-    return schedule;
 }
 
 #ifdef CFF_HAS_POSTGRES
@@ -1411,19 +1340,6 @@ std::string draftTypeForLeague(PGconn *conn, const std::string &leagueId) {
     return "snake";
 }
 
-std::string currentDraftManager(const Json::Value &draftOrder, int currentPick, const std::string &draftType = "snake") {
-    if (!draftOrder.isArray() || draftOrder.empty()) return "";
-    const auto orderSize = static_cast<int>(draftOrder.size());
-    const auto zeroBasedPick = std::max(1, currentPick) - 1;
-    const auto round = zeroBasedPick / orderSize;
-    auto offset = zeroBasedPick % orderSize;
-    if (lowerString(draftType) == "snake" && round % 2 == 1) {
-        offset = orderSize - 1 - offset;
-    }
-    const auto index = static_cast<Json::ArrayIndex>(offset);
-    return draftOrder[index].isString() ? draftOrder[index].asString() : "";
-}
-
 bool dbDraftComplete(PGconn *conn, const std::string &leagueId) {
     const auto limit = dbRosterLimit(leagueId).value_or(14);
     auto members = membersForLeague(conn, leagueId);
@@ -1490,7 +1406,7 @@ std::optional<Json::Value> dbGetDraftState(const std::string &accountEmail, cons
     }
     payload["draftType"] = draftTypeForLeague(conn.get(), leagueId);
     payload["draftOrder"] = draftOrderForLeague(conn.get(), leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt(), payload["draftType"].asString());
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt(), payload["draftType"].asString());
     payload["picks"] = draftPicksForLeague(conn.get(), leagueId);
     if (dbDraftComplete(conn.get(), leagueId)) {
         payload["status"] = "complete";
@@ -1555,7 +1471,7 @@ std::optional<Json::Value> dbMakeDraftPick(const std::string &accountEmail,
     const auto pickNumber = resultOk(pickNumberResult.get(), PGRES_TUPLES_OK) && PQntuples(pickNumberResult.get()) > 0
                                 ? cellInt(pickNumberResult.get(), 0, 0, 1)
                                 : 1;
-    const auto expectedManager = currentDraftManager(order, pickNumber, draftType);
+    const auto expectedManager = cff::league_schedule::currentDraftManager(order, pickNumber, draftType);
     if (!expectedManager.empty() && expectedManager != accountEmail) return std::nullopt;
     auto pickResult = execParams(conn.get(),
                                  "INSERT INTO draft_picks (id, league_id, manager_email, pick_number, player_id, player_snapshot) "
@@ -2498,7 +2414,7 @@ std::optional<Json::Value> dbGenerateMatchups(const std::string &accountEmail, c
     if (!conn) return std::nullopt;
     if (dbWeekFinalized(conn.get(), leagueId, week)) return std::nullopt;
     auto members = membersForLeague(conn.get(), leagueId);
-    auto matchups = buildMatchups(members, leagueId, week, [conn = conn.get(), &leagueId](const std::string &managerEmail) {
+    auto matchups = cff::league_schedule::buildMatchups(members, leagueId, week, [conn = conn.get(), &leagueId](const std::string &managerEmail) {
         return dbProjectedScore(conn, leagueId, managerEmail);
     });
     int matchupIndex = 1;
@@ -2524,7 +2440,7 @@ std::optional<Json::Value> dbGenerateSeasonSchedule(const std::string &accountEm
         return std::nullopt;
     }
     auto members = membersForLeague(conn.get(), leagueId);
-    auto schedule = buildSeasonSchedule(members, leagueId, weeks, [conn = conn.get(), &leagueId](const std::string &managerEmail) {
+    auto schedule = cff::league_schedule::buildSeasonSchedule(members, leagueId, weeks, [conn = conn.get(), &leagueId](const std::string &managerEmail) {
         return dbProjectedScore(conn, leagueId, managerEmail);
     });
     auto clear = execParams(conn.get(), "DELETE FROM league_matchups WHERE league_id = $1", {leagueId});
@@ -2664,7 +2580,7 @@ std::optional<Json::Value> dbScoreWeek(const std::string &accountEmail,
     }
 
     auto members = membersForLeague(conn.get(), leagueId);
-    auto matchups = buildMatchups(members, leagueId, week, [&managerTotals](const std::string &managerEmail) {
+    auto matchups = cff::league_schedule::buildMatchups(members, leagueId, week, [&managerTotals](const std::string &managerEmail) {
         return managerTotals[managerEmail];
     });
     int matchupIndex = 1;
@@ -3364,7 +3280,7 @@ void handleGetDraftState(const drogon::HttpRequestPtr&,
     payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
     payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
     payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
     callback(jsonResponse(payload, drogon::k200OK));
 }
 
@@ -3397,7 +3313,7 @@ void handleSaveDraftQueue(const drogon::HttpRequestPtr &req,
     payload["queue"] = queue;
     payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
     payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
     callback(jsonResponse(payload, drogon::k200OK));
 }
 
@@ -3506,7 +3422,7 @@ void handleMakeDraftPick(const drogon::HttpRequestPtr &req,
     payload["queue"] = queue;
     payload["picks"] = picks;
     payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
     callback(jsonResponse(payload, drogon::k201Created));
 }
 
@@ -3538,7 +3454,7 @@ void handleResetDraft(const drogon::HttpRequestPtr&,
     payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
     payload["picks"] = draftPicksByLeague[leagueId];
     payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], 1);
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], 1);
     callback(jsonResponse(payload, drogon::k200OK));
 }
 
@@ -3582,7 +3498,7 @@ void handleUndoDraftPick(const drogon::HttpRequestPtr&,
     payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
     payload["picks"] = picks;
     payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
     callback(jsonResponse(payload, drogon::k200OK));
 }
 
@@ -4289,7 +4205,7 @@ void handleListMatchups(const drogon::HttpRequestPtr&,
             }
             return total;
         };
-        matchups = buildMatchups(members, leagueId, 1, scoreForManager);
+        matchups = cff::league_schedule::buildMatchups(members, leagueId, 1, scoreForManager);
     }
     callback(jsonResponse(matchups, drogon::k200OK));
 }
@@ -4336,7 +4252,7 @@ void handleGenerateMatchups(const drogon::HttpRequestPtr&,
             return;
         }
     }
-    matchups = buildMatchups(members, leagueId, 1, scoreForManager);
+    matchups = cff::league_schedule::buildMatchups(members, leagueId, 1, scoreForManager);
     addTransactionLocked(leagueId, "Schedule", "Generated week 1 matchups", accountEmail);
     callback(jsonResponse(matchups, drogon::k200OK));
 }
@@ -4382,7 +4298,7 @@ void handleGenerateSeasonSchedule(const drogon::HttpRequestPtr &req,
         }
         return total;
     };
-    matchups = buildSeasonSchedule(members, leagueId, weeks, scoreForManager);
+    matchups = cff::league_schedule::buildSeasonSchedule(members, leagueId, weeks, scoreForManager);
     addTransactionLocked(leagueId, "Schedule", "Generated " + std::to_string(weeks) + "-week season schedule", accountEmail);
     callback(jsonResponse(matchups, drogon::k200OK));
 }
@@ -4456,7 +4372,7 @@ void handleScoreWeek(const drogon::HttpRequestPtr &req,
             return;
         }
     }
-    matchups = buildMatchups(members, leagueId, weekNumber, scoreForManager);
+    matchups = cff::league_schedule::buildMatchups(members, leagueId, weekNumber, scoreForManager);
     int matchupIndex = 1;
     for (auto &matchup : matchups) {
         matchup["week"] = weekNumber;
