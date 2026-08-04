@@ -113,8 +113,8 @@ Json::Value canonicalPriorityBoard(const Json::Value &members) {
     std::sort(active.begin(), active.end(), [](const Member &left, const Member &right) {
         const auto leftCommissioner = left.role == "commissioner" ? 0 : 1;
         const auto rightCommissioner = right.role == "commissioner" ? 0 : 1;
-        return std::tie(leftCommissioner, left.joinedAt, left.email)
-            < std::tie(rightCommissioner, right.joinedAt, right.email);
+        return std::make_tuple(leftCommissioner, left.joinedAt, left.email)
+            < std::make_tuple(rightCommissioner, right.joinedAt, right.email);
     });
     Json::Value board(Json::arrayValue);
     int priority = 1;
@@ -169,14 +169,14 @@ std::vector<Json::ArrayIndex> orderedClaimIndexes(const Json::Value &claims,
         const auto rightPriority = priorities.count(rightEmail)
             ? priorities[rightEmail]
             : intValue(claims[right], "priority", std::numeric_limits<int>::max());
-        return std::tie(leftPriority,
-                        intValue(claims[left], "claimOrder", std::numeric_limits<int>::max()),
-                        stringValue(claims[left], "createdAt"),
-                        stringValue(claims[left], "id"))
-            < std::tie(rightPriority,
-                       intValue(claims[right], "claimOrder", std::numeric_limits<int>::max()),
-                       stringValue(claims[right], "createdAt"),
-                       stringValue(claims[right], "id"));
+        return std::make_tuple(leftPriority,
+                               intValue(claims[left], "claimOrder", std::numeric_limits<int>::max()),
+                               stringValue(claims[left], "createdAt"),
+                               stringValue(claims[left], "id"))
+            < std::make_tuple(rightPriority,
+                              intValue(claims[right], "claimOrder", std::numeric_limits<int>::max()),
+                              stringValue(claims[right], "createdAt"),
+                              stringValue(claims[right], "id"));
     });
     return indexes;
 }
