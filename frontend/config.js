@@ -39,7 +39,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
 }
 
 (() => {
-  const scripts = ['api-client.js', 'authoritative-data.js', 'mutation-consistency.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'league-onboarding.js', 'auth-session-sync.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js'];
+  const scripts = ['api-client.js', 'authoritative-data.js', 'mutation-consistency.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'schedule-lineup-lifecycle.js', 'scoring-lifecycle.js', 'league-onboarding.js', 'auth-session-sync.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js'];
   const leagueSizeSelectIds = ['league-size', 'settings-teams'];
   const assetVersion = String(window.CFF_BUILD_COMMIT || '').replace(/[^A-Za-z0-9._-]/g, '');
   const assetUrl = (source) => assetVersion ? `${source}?v=${encodeURIComponent(assetVersion)}` : source;
