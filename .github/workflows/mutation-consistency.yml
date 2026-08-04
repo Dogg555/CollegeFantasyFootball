@@ -1,0 +1,56 @@
+name: Post-mutation consistency
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "frontend/config.js"
+      - "frontend/state.js"
+      - "frontend/mutation-consistency.js"
+      - "frontend/tests/mutation-consistency.test.js"
+      - "backend/tests/mutation_consistency_contract_tests.py"
+      - ".github/workflows/mutation-consistency.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "frontend/config.js"
+      - "frontend/state.js"
+      - "frontend/mutation-consistency.js"
+      - "frontend/tests/mutation-consistency.test.js"
+      - "backend/tests/mutation_consistency_contract_tests.py"
+      - ".github/workflows/mutation-consistency.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-consistency-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate consistency sources
+        run: |
+          node --check frontend/mutation-consistency.js
+          node --check frontend/tests/mutation-consistency.test.js
+          python -m py_compile backend/tests/mutation_consistency_contract_tests.py
+
+      - name: Run mutation consistency contracts
+        run: |
+          node frontend/tests/mutation-consistency.test.js
+          python backend/tests/mutation_consistency_contract_tests.py
