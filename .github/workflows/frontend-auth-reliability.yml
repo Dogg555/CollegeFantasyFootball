@@ -1,0 +1,56 @@
+name: Frontend authentication reliability
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "frontend/alpha-ui.js"
+      - "frontend/auth.js"
+      - "frontend/auth-session-sync.js"
+      - "backend/tests/private_page_auth_recovery_tests.py"
+      - "backend/tests/auth_redirect_contract_tests.py"
+      - ".github/workflows/frontend-auth-reliability.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "frontend/alpha-ui.js"
+      - "frontend/auth.js"
+      - "frontend/auth-session-sync.js"
+      - "backend/tests/private_page_auth_recovery_tests.py"
+      - "backend/tests/auth_redirect_contract_tests.py"
+      - ".github/workflows/frontend-auth-reliability.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-auth-reliability-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate JavaScript syntax
+        run: |
+          node --check frontend/alpha-ui.js
+          node --check frontend/auth.js
+          node --check frontend/auth-session-sync.js
+
+      - name: Run frontend authentication contracts
+        run: |
+          python backend/tests/private_page_auth_recovery_tests.py
+          python backend/tests/auth_redirect_contract_tests.py
