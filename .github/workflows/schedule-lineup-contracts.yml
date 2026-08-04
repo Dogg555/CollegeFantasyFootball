@@ -126,7 +126,10 @@ jobs:
         run: python -m py_compile scripts/schedule_lineup_runtime_contract.py scripts/test_smtp_server.py
 
       - name: Build production API image
-        run: docker build -f backend/Dockerfile -t college-ff-api-schedule-contracts .
+        shell: bash
+        run: |
+          set -o pipefail
+          docker build -f backend/Dockerfile -t college-ff-api-schedule-contracts . 2>&1 | tee /tmp/schedule-production-build.log
 
       - name: Apply production migrations
         run: |
@@ -228,6 +231,7 @@ jobs:
         with:
           name: schedule-lineup-runtime-diagnostics
           path: |
+            /tmp/schedule-production-build.log
             /tmp/schedule-lineup-runtime.log
             /tmp/cff-schedule-mail.jsonl
             /tmp/cff-schedule-smtp.log
