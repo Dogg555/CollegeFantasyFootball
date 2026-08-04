@@ -52,6 +52,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
     'waiver-lifecycle.js',
     'trade-lifecycle.js',
     'scoring-lifecycle.js',
+    'schedule-lineup-lifecycle.js',
     'league-onboarding.js',
     'auth-session-sync.js',
     'draft-poll-scope.js',
