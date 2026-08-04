@@ -1,0 +1,217 @@
+name: Apply Codex review fixes
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fixes:
+    if: github.event.issue.pull_request && github.event.comment.body == '/apply-codex-review-fixes'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: Test
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply reviewed fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          ROOT = Path.cwd()
+
+          def replace_once(relative_path, old, new):
+              path = ROOT / relative_path
+              text = path.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected one match in {relative_path}, found {count}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          def add_paths_to_event_blocks(path, additions):
+              lines = path.read_text(encoding="utf-8").splitlines()
+              changed = False
+              i = 0
+              while i < len(lines):
+                  if lines[i] != "    paths:":
+                      i += 1
+                      continue
+                  j = i + 1
+                  while j < len(lines) and (not lines[j] or lines[j].startswith("      ")):
+                      j += 1
+                  block = set(lines[i + 1:j])
+                  missing = [f'      - "{item}"' for item in additions if f'      - "{item}"' not in block]
+                  if missing:
+                      lines[i + 1:i + 1] = missing
+                      changed = True
+                      i += len(missing)
+                  i = j
+              if changed:
+                  path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+          old_poll = (
+              "async function refreshDraftFromApi() {\n"
+              "  if (!getAuthState()?.token) return;\n"
+              "  if (draftRefreshInFlight) return;\n"
+              "  draftRefreshInFlight = true;\n"
+              "  try {\n"
+              "    await syncLeaguesFromApi();\n"
+              "    await syncActiveLeagueCollectionsFromApi();\n"
+              "    await syncDraftFromApi();\n"
+              "  } catch {\n"
+              "    // Keep the last authoritative draft snapshot visible during an outage.\n"
+              "  } finally {\n"
+              "    draftRefreshInFlight = false;\n"
+              "  }\n"
+              "}\n"
+          )
+          new_poll = (
+              "async function refreshDraftFromApi() {\n"
+              "  if (!getAuthState()?.token) return;\n"
+              "  if (draftRefreshInFlight) return;\n"
+              "  draftRefreshInFlight = true;\n"
+              "  try {\n"
+              "    await syncDraftFromApi();\n"
+              "  } catch {\n"
+              "    // Keep the last authoritative draft snapshot visible during an outage.\n"
+              "  } finally {\n"
+              "    draftRefreshInFlight = false;\n"
+              "  }\n"
+              "}\n\n"
+              "async function refreshDraftContextFromApi() {\n"
+              "  if (!getAuthState()?.token) return;\n"
+              "  try {\n"
+              "    await syncLeaguesFromApi();\n"
+              "    await syncActiveLeagueCollectionsFromApi();\n"
+              "  } catch {\n"
+              "    // Keep the current league shell visible while draft state continues polling.\n"
+              "  }\n"
+              "  await refreshDraftFromApi();\n"
+              "}\n"
+          )
+          replace_once("frontend/draft.js", old_poll, new_poll)
+          replace_once(
+              "frontend/draft.js",
+              "refreshDraftBtn?.addEventListener('click', async () => {\n  await refreshDraftFromApi();\n  renderAll();\n});\n",
+              "refreshDraftBtn?.addEventListener('click', async () => {\n  await refreshDraftContextFromApi();\n  renderAll();\n});\n",
+          )
+          replace_once(
+              "frontend/draft.js",
+              "  await refreshDraftLeagueShell();\n  renderAll();\n  await refreshDraftFromApi();\n  renderAll();\n",
+              "  await refreshDraftLeagueShell();\n  renderAll();\n  await refreshDraftContextFromApi();\n  renderAll();\n",
+          )
+
+          old_guard = (
+              "  async function guardPrivatePage() {\n"
+              "    if (!isPrivatePage) return true;\n\n"
+              "    try {\n"
+              "      await root.CFFAuthSessionSync?.recover();\n"
+              "    } catch {\n"
+              "      // Continue with the current tab's session when cross-tab recovery is unavailable.\n"
+              "    }\n\n"
+              "    const auth = typeof root.getAuthState === 'function' ? root.getAuthState() : null;\n"
+          )
+          new_guard = (
+              "  let privatePageRecovery = null;\n\n"
+              "  function recoverPrivatePageSession() {\n"
+              "    if (!isPrivatePage) return Promise.resolve(null);\n"
+              "    if (!privatePageRecovery) {\n"
+              "      privatePageRecovery = Promise.resolve()\n"
+              "        .then(() => root.CFFAuthSessionSync?.recover())\n"
+              "        .catch(() => null);\n"
+              "    }\n"
+              "    return privatePageRecovery;\n"
+              "  }\n\n"
+              "  if (isPrivatePage && typeof root.validateAuthSession === 'function') {\n"
+              "    const originalValidateAuthSession = root.validateAuthSession;\n"
+              "    root.validateAuthSession = async function validateAuthAfterPrivatePageRecovery() {\n"
+              "      await recoverPrivatePageSession();\n"
+              "      return originalValidateAuthSession();\n"
+              "    };\n"
+              "  }\n\n"
+              "  async function guardPrivatePage() {\n"
+              "    if (!isPrivatePage) return true;\n\n"
+              "    await recoverPrivatePageSession();\n\n"
+              "    const auth = typeof root.getAuthState === 'function' ? root.getAuthState() : null;\n"
+          )
+          replace_once("frontend/alpha-ui.js", old_guard, new_guard)
+          replace_once(
+              "frontend/alpha-ui.js",
+              "  const privateGuard = guardPrivatePage();\n\n  function setupBranding() {\n",
+              "  const privateGuard = guardPrivatePage();\n  root.CFFPrivatePageGuard = privateGuard;\n\n  function setupBranding() {\n",
+          )
+
+          workflow_dir = ROOT / ".github/workflows"
+          workflows = list(workflow_dir.glob("*.yml"))
+          bootstrap_tests = [
+              test for test in (ROOT / "backend/tests").glob("*.py")
+              if "application_bootstrap.cpp" in test.read_text(encoding="utf-8")
+          ]
+          matched = set()
+          for test in bootstrap_tests:
+              relative = test.relative_to(ROOT).as_posix()
+              for workflow in workflows:
+                  if relative in workflow.read_text(encoding="utf-8"):
+                      add_paths_to_event_blocks(
+                          workflow,
+                          ["backend/src/application_bootstrap.h", "backend/src/application_bootstrap.cpp"],
+                      )
+                      matched.add(workflow.name)
+          if not matched:
+              raise SystemExit("no bootstrap-aware workflows found")
+
+          waiver = workflow_dir / "league-waiver-contracts.yml"
+          add_paths_to_event_blocks(waiver, ["backend/src/json_utils.h", "backend/src/json_utils.cpp"])
+
+          draft_workflow = workflow_dir / "draft-lobby-multiplayer.yml"
+          text = draft_workflow.read_text(encoding="utf-8")
+          if "  push:\n" not in text:
+              start = text.index("  pull_request:\n")
+              end = text.index("  workflow_dispatch:", start)
+              pull_block = text[start:end]
+              text = text[:start] + pull_block.replace("  pull_request:\n", "  push:\n", 1) + text[start:]
+              draft_workflow.write_text(text, encoding="utf-8")
+          add_paths_to_event_blocks(
+              draft_workflow,
+              ["backend/src/league_schedule.h", "backend/src/league_schedule.cpp"],
+          )
+
+          print("bootstrap-aware workflows:", ", ".join(sorted(matched)))
+
+      - name: Validate fixes
+        run: |
+          node --check frontend/draft.js
+          node --check frontend/alpha-ui.js
+          node --check frontend/auth-session-sync.js
+          node --check frontend/league.js
+          python backend/tests/private_page_auth_recovery_tests.py
+          python backend/tests/draft_lobby_multiplayer_boundary_tests.py
+          python backend/tests/draft_room_active_member_entry_tests.py
+          python backend/tests/league_waiver_boundary_tests.py
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+          root = Path.cwd()
+          tests = [p for p in (root / "backend/tests").glob("*.py") if "application_bootstrap.cpp" in p.read_text(encoding="utf-8")]
+          for test in sorted(tests):
+              subprocess.run([sys.executable, str(test)], check=True)
+          PY
+
+      - name: Commit to Test
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/draft.js frontend/alpha-ui.js .github/workflows
+          git diff --cached --check
+          git commit -m "Implement Codex review fixes"
+          git push origin HEAD:Test
