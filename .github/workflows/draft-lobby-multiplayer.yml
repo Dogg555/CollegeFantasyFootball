@@ -10,10 +10,13 @@ on:
       - "backend/src/league_beta_stability.cpp"
       - "backend/tests/draft_lobby_multiplayer_boundary_tests.py"
       - "backend/tests/draft_room_active_member_entry_tests.py"
+      - "backend/tests/private_page_auth_recovery_tests.py"
       - "frontend/state.js"
       - "frontend/draft.js"
       - "frontend/draft.html"
       - "frontend/draft-auth-bridge.js"
+      - "frontend/auth-session-sync.js"
+      - "frontend/alpha-ui.js"
       - "frontend/league.js"
       - "frontend/league.html"
       - "frontend/league-beta-stability.js"
@@ -61,12 +64,15 @@ jobs:
 
       - name: Verify draft lobby ownership and frontend syntax
         run: |
-          python -m py_compile scripts/draft_lobby_multiplayer_tests.py backend/tests/draft_lobby_multiplayer_boundary_tests.py backend/tests/draft_room_active_member_entry_tests.py
+          python -m py_compile scripts/draft_lobby_multiplayer_tests.py backend/tests/draft_lobby_multiplayer_boundary_tests.py backend/tests/draft_room_active_member_entry_tests.py backend/tests/private_page_auth_recovery_tests.py
           python backend/tests/draft_lobby_multiplayer_boundary_tests.py
           python backend/tests/draft_room_active_member_entry_tests.py
+          python backend/tests/private_page_auth_recovery_tests.py
           node --check frontend/state.js
           node --check frontend/draft.js
           node --check frontend/draft-auth-bridge.js
+          node --check frontend/auth-session-sync.js
+          node --check frontend/alpha-ui.js
           node --check frontend/league.js
           node --check frontend/league-beta-stability.js
 
