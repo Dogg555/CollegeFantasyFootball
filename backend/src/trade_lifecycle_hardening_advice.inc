@@ -8,6 +8,7 @@ drogon::HttpResponsePtr tradeLifecycleAdvice(const drogon::HttpRequestPtr &reque
 
     enum class Route {
         None,
+        Preflight,
         State,
         Transaction,
         List,
@@ -15,8 +16,12 @@ drogon::HttpResponsePtr tradeLifecycleAdvice(const drogon::HttpRequestPtr &reque
         Status
     } route = Route::None;
 
-    if (method == drogon::Get
-        && !(leagueId = pathLeagueId(path, "/trades/state")).empty()) {
+    if (method == drogon::Options
+        && path.rfind("/api/leagues/", 0) == 0
+        && path.find("/trades") != std::string::npos) {
+        route = Route::Preflight;
+    } else if (method == drogon::Get
+               && !(leagueId = pathLeagueId(path, "/trades/state")).empty()) {
         route = Route::State;
     } else if (method == drogon::Post
                && !(leagueId = pathLeagueId(path, "/trades/transactions")).empty()) {
@@ -33,27 +38,41 @@ drogon::HttpResponsePtr tradeLifecycleAdvice(const drogon::HttpRequestPtr &reque
     }
 
     if (route == Route::None) return nullptr;
-    const auto email = accountEmail(request);
-    if (!email) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+    if (route == Route::Preflight) {
+        const auto config = cff::config::loadRuntimeConfig();
+        return cff::http::buildPreflightResponse(request, config.allowedOrigins);
     }
 
+    const auto email = accountEmail(request);
+    if (!email) {
+        return cff::http::withConfiguredCorsHeaders(
+            request,
+            errorResponse(drogon::k401Unauthorized,
+                          "Authentication is required.",
+                          "authentication_required"));
+    }
+
+    drogon::HttpResponsePtr response;
     switch (route) {
         case Route::State:
-            return getTradeState(leagueId, *email, false);
+            response = getTradeState(leagueId, *email, false);
+            break;
         case Route::Transaction:
-            return dispatchTradeTransaction(request, leagueId, *email);
+            response = dispatchTradeTransaction(request, leagueId, *email);
+            break;
         case Route::List:
-            return getTradeState(leagueId, *email, true);
+            response = getTradeState(leagueId, *email, true);
+            break;
         case Route::Create:
-            return createTradeOffer(request, leagueId, *email, true);
+            response = createTradeOffer(request, leagueId, *email, true);
+            break;
         case Route::Status:
-            return updateTradeLifecycleStatus(request, leagueId, *email, tradeId, true);
+            response = updateTradeLifecycleStatus(request, leagueId, *email, tradeId, true);
+            break;
         default:
             return nullptr;
     }
+    return cff::http::withConfiguredCorsHeaders(request, response);
 #else
     (void)request;
     return nullptr;
