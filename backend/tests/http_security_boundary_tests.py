@@ -3,6 +3,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 main = (root / "backend/src/main.cpp").read_text(encoding="utf-8")
+server_runtime = (root / "backend/src/server_runtime.cpp").read_text(encoding="utf-8")
 auth_routes = (root / "backend/src/auth_routes.cpp").read_text(encoding="utf-8")
 operations_routes = (root / "backend/src/operations_routes.cpp").read_text(encoding="utf-8")
 league_routes = (root / "backend/src/league_routes.cpp").read_text(encoding="utf-8")
@@ -39,6 +40,8 @@ for implementation in (
 ):
     if implementation in main:
         raise SystemExit(f"shared HTTP security implementation leaked into main.cpp: {implementation}")
+    if implementation in server_runtime:
+        raise SystemExit(f"shared HTTP security implementation leaked into server_runtime.cpp: {implementation}")
     if implementation in auth_routes:
         raise SystemExit(f"shared HTTP security implementation leaked into auth_routes.cpp: {implementation}")
     if implementation in operations_routes:
@@ -49,12 +52,20 @@ for implementation in (
         raise SystemExit(f"shared HTTP security implementation leaked into public_routes.cpp: {implementation}")
 
 required_main_delegation = (
-    "cff::http::applyCorsHeaders(req, resp, allowedOrigins)",
+    "cff::server_runtime::configureSecurityAndCors(",
     "cff::public_api::registerPublicRoutes(app, allowedOrigins)",
 )
 for delegation in required_main_delegation:
     if delegation not in main:
         raise SystemExit(f"main.cpp HTTP security delegation missing: {delegation}")
+
+required_server_runtime_delegation = (
+    "app.registerPostHandlingAdvice(",
+    "cff::http::applyCorsHeaders(request, response, allowedOrigins)",
+)
+for delegation in required_server_runtime_delegation:
+    if delegation not in server_runtime:
+        raise SystemExit(f"server_runtime.cpp HTTP security delegation missing: {delegation}")
 
 required_auth_route_delegation = (
     "cff::http::bearerToken(req)",
@@ -108,5 +119,7 @@ for contract in required_behavior:
 
 if "src/http_security.cpp" not in cmake:
     raise SystemExit("http_security.cpp is not part of the production target")
+if "src/server_runtime.cpp" not in cmake:
+    raise SystemExit("server_runtime.cpp is not part of the production target")
 
 print("HTTP security boundary contracts passed")
