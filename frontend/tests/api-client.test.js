@@ -13,6 +13,8 @@ const {
   retryDelayMs,
   shouldRetry,
   normalizeApiError,
+  normalizedUserMessage,
+  specificUiErrorMessage,
   apiErrorDiagnostics,
   apiUrl,
   createApiFetch
@@ -43,6 +45,19 @@ assert.equal(normalized.requestId, 'req-123');
 assert.equal(normalized.correlationId, 'req-123');
 assert.equal(normalized.unavailable, true);
 assert.match(normalized.userMessage, /Reference: req-123/);
+assert.match(normalized.userMessage, /No unconfirmed changes were saved/);
+assert.equal(
+  specificUiErrorMessage({ status: 409, code: 'player_already_rostered' }),
+  'That player is already on a roster in this league.'
+);
+assert.equal(
+  specificUiErrorMessage({ status: 422 }),
+  'Review the highlighted fields and try again.'
+);
+assert.equal(
+  normalizedUserMessage({ status: 404, requestId: 'req-404' }),
+  'We could not find that item. Refresh the page and try again. Reference: req-404.'
+);
 assert.equal(
   normalized.diagnostics,
   'Diagnostics: code=database_unavailable status=503 method=GET path=/leagues requestId=req-123'
