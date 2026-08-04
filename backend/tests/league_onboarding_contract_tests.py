@@ -18,6 +18,14 @@ def require(source: str, fragment: str, message: str) -> None:
         raise AssertionError(message)
 
 
+def script_index(name: str) -> int:
+    marker = f"'{name}'"
+    index = CONFIG.find(marker)
+    if index < 0:
+        raise AssertionError(f"missing shared script: {name}")
+    return index
+
+
 require(CMAKE, "src/league_onboarding_hardening.cpp", "production target must compile onboarding hardening")
 require(MIGRATION, "ADD COLUMN IF NOT EXISTS creation_key TEXT", "league creation keys must be persisted")
 require(MIGRATION, "UNIQUE INDEX IF NOT EXISTS uq_leagues_account_creation_key", "creation keys must be unique per account")
@@ -45,7 +53,8 @@ require(ROUTES, '"/api/leagues/{1}/members/{2}"', "member approval route must re
 require(CORS, "Authorization, Content-Type, X-Request-ID, Idempotency-Key", "browser preflight must allow onboarding operation keys")
 require(CORS, '"GET, POST, PUT, PATCH, DELETE, OPTIONS"', "onboarding methods must remain available through CORS")
 
-require(CONFIG, "'mutation-consistency.js', 'league-onboarding.js'", "onboarding must load after mutation consistency")
+if not script_index("mutation-consistency.js") < script_index("league-onboarding.js"):
+    raise AssertionError("onboarding must load after mutation consistency")
 require(FRONTEND, "const ALLOWED_TEAM_COUNTS = Object.freeze([4, 6, 8, 10, 12, 14, 16])", "frontend must expose supported league sizes")
 require(FRONTEND, "event.stopImmediatePropagation()", "new create coordinator must prevent legacy double submission")
 require(FRONTEND, "'Idempotency-Key': operation.operationKey", "create and join requests must send stable operation keys")

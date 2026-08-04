@@ -56,11 +56,30 @@ drogon::HttpResponsePtr scoringLifecycleAdvice(const drogon::HttpRequestPtr &req
             return getScoringState(leagueId, *email, requestSeason(request), requestWeek(request));
         case Route::Standings:
             return getStandingsState(leagueId, *email, requestSeason(request));
-        case Route::Transaction:
+        case Route::Transaction: {
+            const auto body = request->getJsonObject();
+            const auto action = body && body->isObject()
+                ? lower(body->get("action", "").asString())
+                : "";
+            if (action == "score" || action == "finalize") {
+                if (auto blocked = cff::schedule_lineup_hardening::prepareLineupsForScoring(
+                        leagueId, *email, requestSeason(request), requestWeek(request))) {
+                    return blocked;
+                }
+            }
             return dispatchScoringTransaction(request, leagueId, *email);
+        }
         case Route::LegacyScore:
+            if (auto blocked = cff::schedule_lineup_hardening::prepareLineupsForScoring(
+                    leagueId, *email, requestSeason(request), week)) {
+                return blocked;
+            }
             return scoreWeek(request, leagueId, *email, requestSeason(request), week, true);
         case Route::LegacyFinalize:
+            if (auto blocked = cff::schedule_lineup_hardening::prepareLineupsForScoring(
+                    leagueId, *email, requestSeason(request), week)) {
+                return blocked;
+            }
             return finalizeWeek(request, leagueId, *email, requestSeason(request), week, true);
         default:
             return nullptr;

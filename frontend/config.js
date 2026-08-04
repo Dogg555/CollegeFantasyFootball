@@ -44,6 +44,29 @@ if (typeof window.mutationErrorMessage !== 'function') {
 }
 
 (() => {
+  const scripts = [
+    'api-client.js',
+    'authoritative-data.js',
+    'mutation-consistency.js',
+    'roster-transactions.js',
+    'waiver-lifecycle.js',
+    'trade-lifecycle.js',
+    'scoring-lifecycle.js',
+    'schedule-lineup-lifecycle.js',
+    'league-onboarding.js',
+    'auth-session-sync.js',
+    'draft-poll-scope.js',
+    'draft-lifecycle.js',
+    'polish-core.js',
+    'polish-forms.js',
+    'polish-state.js',
+    'beta-ui.js',
+    'league-nav.js',
+    'workspace-ui.js',
+    'invite-fix.js',
+    'footer-links.js',
+    'landing-refresh.js'
+  ];
   // Keep dependency-sensitive modules contiguous so contract checks and runtime
   // loading agree after stacked PR merges.
   const scripts = ['api-client.js', 'authoritative-data.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'auth-session-sync.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];

@@ -22,6 +22,7 @@
 #include "http_security.h"
 #include "league_roster.h"
 #include "league_schedule.h"
+#include "schedule_lineup_hardening.h"
 #include "scoring_lifecycle.h"
 
 namespace {
@@ -201,6 +202,3 @@ bool parseScoreWeekPath(const std::string &path,
 #include "scoring_lifecycle_hardening_advice.inc"
 
 } // namespace
-
-#include "schedule_lineup_lifecycle.cpp"
-#include "schedule_lineup_hardening.cpp"
