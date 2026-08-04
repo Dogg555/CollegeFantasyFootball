@@ -99,14 +99,8 @@ drogon::HttpResponsePtr scheduleLifecycleAdvice(const drogon::HttpRequestPtr &re
             return mutateLineupControl(request, leagueId, *email, week, "lock", true);
         case Route::Unlock:
             return mutateLineupControl(request, leagueId, *email, week, "unlock", true);
-        case Route::Deadline: {
-            auto body = request->getJsonObject();
-            Json::Value payload = body && body->isObject() ? *body : Json::Value{Json::objectValue};
-            payload["action"] = "set_deadline";
-            payload["week"] = week;
-            request->setParameter("week", std::to_string(week));
+        case Route::Deadline:
             return mutateLineupControl(request, leagueId, *email, week, "set_deadline", true);
-        }
         case Route::MutationGuard:
             return lineupMutationGuard(request, leagueId, *email);
         default:
