@@ -179,7 +179,7 @@ Json::Value &localDraftStateLocked(const std::string &leagueId) {
     const auto leagueIt = leaguesById.find(leagueId);
     state["lobbyOpen"] = leagueIt != leaguesById.end() && leagueIt->second.league.draftLobbyOpen;
     state["draftType"] = leagueIt != leaguesById.end()
-        ? leagueIt->second.league.draftType
+        ? leagueIt->second.league.draft.type
         : "snake";
     return state;
 }
