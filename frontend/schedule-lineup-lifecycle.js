@@ -193,12 +193,12 @@
         state = await request();
       }
       clearOperation(action, league.id, season, week, operation.operationKey);
-      applyState(state);
       try {
         await root.syncActiveLeagueCollectionsFromApi?.();
       } catch {
-        // The schedule response is authoritative enough to continue.
+        // The confirmed schedule response remains authoritative.
       }
+      applyState(state);
       root.renderLeague?.();
       return state;
     } catch (error) {
