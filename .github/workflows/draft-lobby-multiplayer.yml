@@ -7,12 +7,14 @@ on:
       - "backend/src/league_routes.cpp"
       - "backend/src/handlers/league_handler.h"
       - "backend/src/handlers/league_handler.cpp"
+      - "backend/src/league_beta_stability.cpp"
       - "backend/tests/draft_lobby_multiplayer_boundary_tests.py"
       - "frontend/state.js"
       - "frontend/draft.js"
       - "frontend/draft.html"
       - "frontend/league.js"
       - "frontend/league.html"
+      - "frontend/league-beta-stability.js"
       - "scripts/draft_lobby_multiplayer_tests.py"
       - ".github/workflows/draft-lobby-multiplayer.yml"
   workflow_dispatch:
@@ -62,6 +64,7 @@ jobs:
           node --check frontend/state.js
           node --check frontend/draft.js
           node --check frontend/league.js
+          node --check frontend/league-beta-stability.js
 
       - name: Build production API image
         run: docker build -f backend/Dockerfile -t college-ff-api ./backend
