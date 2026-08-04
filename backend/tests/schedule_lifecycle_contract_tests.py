@@ -55,6 +55,7 @@ assert "trg_rosters_lineup_lock" in migration
 assert "trg_scoring_week_lineup_control" in migration
 assert "cff_capture_lineup_snapshot" in migration
 assert "current_week = GREATEST(current_week, NEW.week + 1)" in migration
+assert "version = version + CASE WHEN current_week < NEW.week + 1 THEN 1 ELSE 0 END" in migration
 
 assert "schedule-lineup-lifecycle.js" in config
 assert config.index("schedule-lineup-lifecycle.js") < config.index("scoring-lifecycle.js")
@@ -66,6 +67,7 @@ assert "unlockLineupWeekApi" in frontend
 assert "setLineupDeadlineApi" in frontend
 assert "storage" in frontend
 assert "visibilitychange" in frontend
+assert frontend.index("syncActiveLeagueCollectionsFromApi") < frontend.index("applyState(state)", frontend.index("syncActiveLeagueCollectionsFromApi"))
 assert "location.reload" not in frontend
 
 assert "src/schedule_lifecycle.cpp" in cmake
