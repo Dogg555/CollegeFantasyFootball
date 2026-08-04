@@ -140,19 +140,19 @@ assert.equal(context.document.documentElement.dataset.cffAuthoritativeData, 'tru
   assert.equal(queueApiCalls, 0, 'missing-token request must not reach legacy local fallback');
   assert.throws(() => context.addPlayerToQueue({ id: 'p1' }), /No browser-only changes/);
   assert.equal(localQueueMutations, 0);
-  assert.deepEqual(context.normalizeMembers([], []), []);
+  assert.equal(context.normalizeMembers([], []).length, 0);
   assert.equal(context.currentDraftManager(context.getDraftMeta()), '');
   assert.equal(context.isMyDraftTurn(context.getDraftMeta()), false);
-  assert.deepEqual(context.getAvailablePlayers(), []);
-  assert.deepEqual(context.generateLocalMatchups(), []);
-  assert.deepEqual(context.generateLocalSeasonSchedule(), []);
+  assert.equal(context.getAvailablePlayers().length, 0);
+  assert.equal(context.generateLocalMatchups().length, 0);
+  assert.equal(context.generateLocalSeasonSchedule().length, 0);
   assert.equal(context.getLeagueState(), null, 'account cache must be hidden without an authenticated account');
-  assert.deepEqual(context.getLeaguesForCurrentAccount(), []);
+  assert.equal(context.getLeaguesForCurrentAccount().length, 0);
 
   auth = { email: 'manager@example.test', token: 'server-token' };
   await context.saveDraftQueueApi([]);
   assert.equal(queueApiCalls, 1, 'production token must use the wrapped API function');
-  assert.deepEqual(context.normalizeMembers([], []), []);
+  assert.equal(context.normalizeMembers([], []).length, 0);
 
   context.CFF_ALLOW_LOCAL_DEMO = true;
   context.location.hostname = 'localhost';
