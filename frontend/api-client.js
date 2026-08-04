@@ -244,12 +244,17 @@
         } catch (error) {
           clearTimer(timeout);
           externalSignal?.removeEventListener?.('abort', abortFromCaller);
+          if (externalAborted) {
+            error.externalAborted = true;
+            error.requestId = error.requestId || requestId;
+            error.retryable = false;
+            throw error;
+          }
           const normalized = normalizeApiError(error, {
             requestId,
             method: requestMethod,
             path: target.pathname,
             timedOut,
-            externalAborted,
             attempts: attempt + 1
           });
           normalized.retryable = shouldRetry({
