@@ -1,14 +1,16 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 
+const alphaPath = path.join(__dirname, '..', 'alpha-ui.js');
 const {
   requestMethod,
   requestStateMessage,
   emptyStateDefinition,
   emptyStateTitle
-} = require(path.join('..', 'alpha-ui.js'));
+} = require(alphaPath);
 
 assert.equal(requestMethod(), 'GET');
 assert.equal(requestMethod({ method: 'post' }), 'POST');
@@ -35,5 +37,12 @@ assert.equal(emptyStateDefinition('missing-state'), null);
 assert.equal(emptyStateTitle('draft-pick-list', 'No picks made yet.'), 'No picks made');
 assert.equal(emptyStateTitle('upcoming-pick-list', 'Draft complete.'), 'Draft complete');
 assert.equal(emptyStateTitle('missing-state', ''), 'Nothing here yet');
+
+const alphaSource = fs.readFileSync(alphaPath, 'utf8');
+assert.match(
+  alphaSource,
+  /pageName === 'draft\.html'[\s\S]*document\.querySelector\('main\.layout'\)[\s\S]*document\.getElementById\('draft-room-content'\)/,
+  'draft page state and retry controls should render outside the mutation-disable region'
+);
 
 console.log('authenticated page state helper tests passed');
