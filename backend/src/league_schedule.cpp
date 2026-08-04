@@ -2,8 +2,45 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <string>
 #include <vector>
+
+#ifdef CFF_HAS_POSTGRES
+namespace cff::handlers {
+
+int activeMemberCountForLeague(PGconn *connection, const std::string &leagueId) {
+    if (!connection || leagueId.empty()) {
+        return 0;
+    }
+
+    const char *values[] = {leagueId.c_str()};
+    PGresult *result = PQexecParams(
+        connection,
+        "SELECT COUNT(*) FROM league_members WHERE league_id = $1 AND status = 'active'",
+        1,
+        nullptr,
+        values,
+        nullptr,
+        nullptr,
+        0
+    );
+    if (!result) {
+        return 0;
+    }
+
+    int count = 0;
+    if (PQresultStatus(result) == PGRES_TUPLES_OK
+        && PQntuples(result) > 0
+        && !PQgetisnull(result, 0, 0)) {
+        count = std::atoi(PQgetvalue(result, 0, 0));
+    }
+    PQclear(result);
+    return count;
+}
+
+} // namespace cff::handlers
+#endif
 
 namespace cff::league_schedule {
 namespace {

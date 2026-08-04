@@ -213,6 +213,8 @@
       'teams',
       'scoring',
       'draftDate',
+      'draftLobbyOpen',
+      'draftLobbyStartedAt',
       'notes',
       'invitedEmails',
       'scoringSettings',

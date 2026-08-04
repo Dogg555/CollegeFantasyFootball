@@ -62,6 +62,7 @@ std::unordered_map<std::string, Json::Value> membersByLeague;
 std::unordered_map<std::string, Json::Value> draftPicksByLeague;
 std::unordered_map<std::string, Json::Value> draftOrdersByLeague;
 std::unordered_map<std::string, Json::Value> draftQueuesByLeagueManager;
+std::unordered_map<std::string, Json::Value> draftStateByLeague;
 
 std::string lowerString(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
@@ -90,6 +91,27 @@ double projectionForPlayer(const Json::Value &player) {
     return 0.0;
 }
 
+std::string draftIsoTimestamp(std::chrono::system_clock::time_point value) {
+    const auto raw = std::chrono::system_clock::to_time_t(value);
+    std::tm timeInfo{};
+#ifdef _WIN32
+    gmtime_s(&timeInfo, &raw);
+#else
+    gmtime_r(&raw, &timeInfo);
+#endif
+    std::ostringstream out;
+    out << std::put_time(&timeInfo, "%Y-%m-%dT%H:%M:%SZ");
+    return out.str();
+}
+
+std::string draftIsoNow() {
+    return draftIsoTimestamp(std::chrono::system_clock::now());
+}
+
+std::string draftDeadlineFromNow(int seconds) {
+    return draftIsoTimestamp(std::chrono::system_clock::now() + std::chrono::seconds(std::max(1, seconds)));
+}
+
 Json::Value waiverRulesForLeagueLocked(const std::string &leagueId) {
     const auto it = leaguesById.find(leagueId);
     if (it != leaguesById.end() && it->second.league.waiverRules.isObject()) {
@@ -111,6 +133,68 @@ Json::Value tradeRulesForLeagueLocked(const std::string &leagueId) {
     rules["commissionerApproval"] = false;
     rules["expirationHours"] = 48;
     return rules;
+}
+
+Json::Value activeDraftOrderLocked(const std::string &leagueId) {
+    Json::Value order(Json::arrayValue);
+    for (const auto &member : arrayForLeague(membersByLeague, leagueId)) {
+        if (lowerString(jsonString(member, "status")) != "active") continue;
+        const auto email = canonicalEmail(jsonString(member, "email"));
+        if (!email.empty()) order.append(email);
+    }
+    return order;
+}
+
+bool localDraftOrderMatchesActiveMembers(const std::string &leagueId,
+                                         const Json::Value &order) {
+    const auto active = activeDraftOrderLocked(leagueId);
+    if (!order.isArray() || order.empty() || order.size() != active.size()) return false;
+    std::unordered_set<std::string> activeEmails;
+    for (const auto &email : active) activeEmails.insert(canonicalEmail(email.asString()));
+    std::unordered_set<std::string> seen;
+    for (const auto &value : order) {
+        if (!value.isString()) return false;
+        const auto email = canonicalEmail(value.asString());
+        if (email.empty() || activeEmails.find(email) == activeEmails.end() || !seen.insert(email).second) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Json::Value &localDraftStateLocked(const std::string &leagueId) {
+    auto &state = draftStateByLeague[leagueId];
+    if (!state.isObject()) {
+        state = Json::Value{Json::objectValue};
+        state["status"] = "not_started";
+        state["currentPick"] = 1;
+        state["pickClockSeconds"] = 90;
+        state["pickDeadline"] = "";
+        state["startedAt"] = "";
+        state["draftOrder"] = activeDraftOrderLocked(leagueId);
+    }
+    if (!state["draftOrder"].isArray() || state["draftOrder"].empty()) {
+        state["draftOrder"] = activeDraftOrderLocked(leagueId);
+    }
+    const auto leagueIt = leaguesById.find(leagueId);
+    state["lobbyOpen"] = leagueIt != leaguesById.end() && leagueIt->second.league.draftLobbyOpen;
+    state["draftType"] = leagueIt != leaguesById.end()
+        ? leagueIt->second.league.draft.type
+        : "snake";
+    return state;
+}
+
+Json::Value localDraftPayloadLocked(const std::string &accountEmail,
+                                    const std::string &leagueId) {
+    auto &state = localDraftStateLocked(leagueId);
+    Json::Value payload = state;
+    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
+    payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(
+        payload["draftOrder"],
+        payload.get("currentPick", 1).asInt(),
+        payload.get("draftType", "snake").asString());
+    return payload;
 }
 
 bool lineupLockedLocked(const std::string &leagueId) {
@@ -141,6 +225,10 @@ struct PgResultDeleter {
 
 using PgConnPtr = std::unique_ptr<PGconn, PgConnDeleter>;
 using PgResultPtr = std::unique_ptr<PGresult, PgResultDeleter>;
+
+bool draftOrderMatchesMembers(PGconn *conn,
+const std::string &leagueId,
+const Json::Value &draftOrder);
 
 bool dbConfigured() {
     const auto *url = std::getenv("DB_URL");
@@ -1152,21 +1240,26 @@ Json::Value draftPicksForLeague(PGconn *conn, const std::string &leagueId) {
     return picks;
 }
 
+Json::Value activeDraftOrderForLeague(PGconn *conn, const std::string &leagueId) {
+    auto members = membersForLeague(conn, leagueId);
+    Json::Value order(Json::arrayValue);
+    for (const auto &member : members) {
+        if (lowerString(jsonString(member, "status")) != "active") continue;
+        const auto email = canonicalEmail(jsonString(member, "email"));
+        if (!email.empty()) order.append(email);
+    }
+    return order;
+}
+
 Json::Value draftOrderForLeague(PGconn *conn, const std::string &leagueId) {
     auto result = execParams(conn,
                              "SELECT to_json(draft_order)::text FROM draft_states WHERE league_id = $1",
                              {leagueId});
     if (resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0) {
-        return jsonFromString(cell(result.get(), 0, 0), Json::Value{Json::arrayValue});
+        const auto stored = jsonFromString(cell(result.get(), 0, 0), Json::Value{Json::arrayValue});
+        if (stored.isArray() && !stored.empty()) return stored;
     }
-    auto members = membersForLeague(conn, leagueId);
-    Json::Value order(Json::arrayValue);
-    for (const auto &member : members) {
-        if (lowerString(jsonString(member, "status")) == "active") {
-            order.append(jsonString(member, "email"));
-        }
-    }
-    return order;
+    return activeDraftOrderForLeague(conn, leagueId);
 }
 
 bool draftOrderMatchesMembers(PGconn *conn, const std::string &leagueId, const Json::Value &draftOrder) {
@@ -1202,9 +1295,12 @@ std::string draftTypeForLeague(PGconn *conn, const std::string &leagueId) {
 bool dbDraftComplete(PGconn *conn, const std::string &leagueId) {
     const auto limit = dbRosterLimit(leagueId).value_or(14);
     auto members = membersForLeague(conn, leagueId);
+    int activeMembers = 0;
     for (const auto &member : members) {
+        if (lowerString(jsonString(member, "status")) != "active") continue;
         const auto email = jsonString(member, "email");
-        if (email.empty() || jsonString(member, "status") == "Removed") continue;
+        if (email.empty()) continue;
+        ++activeMembers;
         auto result = execParams(conn,
                                  "SELECT COUNT(*) FROM rosters WHERE league_id = $1 AND manager_email = $2",
                                  {leagueId, email});
@@ -1212,7 +1308,7 @@ bool dbDraftComplete(PGconn *conn, const std::string &leagueId) {
             return false;
         }
     }
-    return members.size() > 0;
+    return activeMembers > 0;
 }
 
 bool dbDraftLobbyOpen(PGconn *conn, const std::string &leagueId) {
@@ -1233,10 +1329,9 @@ std::optional<Json::Value> dbGetDraftState(const std::string &accountEmail, cons
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
-    if (!dbDraftLobbyOpen(conn.get(), leagueId) && !dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
     auto state = execParams(conn.get(),
                             "INSERT INTO draft_states (league_id, status, current_pick, draft_order, pick_deadline, started_at) "
-                            "VALUES ($1, 'open', 1, ARRAY(SELECT email FROM league_members WHERE league_id = $1 AND status <> 'removed' ORDER BY role, created_at), NOW() + INTERVAL '90 seconds', NOW()) "
+                            "VALUES ($1, 'not_started', 1, ARRAY(SELECT email FROM league_members WHERE league_id = $1 AND status = 'active' ORDER BY role, created_at), NULL, NULL) "
                             "ON CONFLICT (league_id) DO NOTHING",
                             {leagueId});
     (void)state;
@@ -1250,27 +1345,71 @@ std::optional<Json::Value> dbGetDraftState(const std::string &accountEmail, cons
     }
     auto stateResult = execParams(conn.get(),
                                   "SELECT status, current_pick, pick_clock_seconds, "
-                                  "COALESCE(to_char(pick_deadline AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+                                  "COALESCE(to_char(pick_deadline AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
+                                  "COALESCE(to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
                                   "FROM draft_states WHERE league_id = $1",
                                   {leagueId});
-    payload["status"] = "open";
+    payload["status"] = "not_started";
     payload["currentPick"] = 1;
     payload["pickClockSeconds"] = 90;
     payload["pickDeadline"] = "";
+    payload["startedAt"] = "";
     if (resultOk(stateResult.get(), PGRES_TUPLES_OK) && PQntuples(stateResult.get()) > 0) {
         payload["status"] = cell(stateResult.get(), 0, 0);
         payload["currentPick"] = cellInt(stateResult.get(), 0, 1, 1);
         payload["pickClockSeconds"] = cellInt(stateResult.get(), 0, 2, 90);
         payload["pickDeadline"] = cell(stateResult.get(), 0, 3);
+        payload["startedAt"] = cell(stateResult.get(), 0, 4);
     }
+    payload["lobbyOpen"] = dbDraftLobbyOpen(conn.get(), leagueId);
     payload["draftType"] = draftTypeForLeague(conn.get(), leagueId);
     payload["draftOrder"] = draftOrderForLeague(conn.get(), leagueId);
-    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt(), payload["draftType"].asString());
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(
+        payload["draftOrder"], payload["currentPick"].asInt(), payload["draftType"].asString());
     payload["picks"] = draftPicksForLeague(conn.get(), leagueId);
-    if (dbDraftComplete(conn.get(), leagueId)) {
+    if (payload["status"].asString() != "not_started" && dbDraftComplete(conn.get(), leagueId)) {
         payload["status"] = "complete";
     }
     return payload;
+}
+
+std::optional<Json::Value> dbStartDraft(const std::string &accountEmail,
+                                          const std::string &leagueId) {
+    if (!dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
+    auto conn = connectToDb();
+    if (!conn || !dbDraftLobbyOpen(conn.get(), leagueId)) return std::nullopt;
+    auto insertState = execParams(conn.get(),
+                                  "INSERT INTO draft_states (league_id, status, current_pick, draft_order, pick_deadline, started_at) "
+                                  "VALUES ($1, 'not_started', 1, ARRAY(SELECT email FROM league_members WHERE league_id = $1 AND status = 'active' ORDER BY role, created_at), NULL, NULL) "
+                                  "ON CONFLICT (league_id) DO NOTHING",
+                                  {leagueId});
+    (void)insertState;
+    auto current = execParams(conn.get(),
+                              "SELECT status FROM draft_states WHERE league_id = $1",
+                              {leagueId});
+    if (!resultOk(current.get(), PGRES_TUPLES_OK) || PQntuples(current.get()) == 0) return std::nullopt;
+    const auto currentStatus = cell(current.get(), 0, 0);
+    if (currentStatus == "open") return dbGetDraftState(accountEmail, leagueId);
+    if (currentStatus != "not_started") return std::nullopt;
+    auto order = draftOrderForLeague(conn.get(), leagueId);
+    if (!draftOrderMatchesMembers(conn.get(), leagueId, order)) {
+        order = activeDraftOrderForLeague(conn.get(), leagueId);
+    }
+    if (activeMemberCountForLeague(conn.get(), leagueId) < 2
+    || order.size() < 2
+    || !draftOrderMatchesMembers(conn.get(), leagueId, order)) return std::nullopt;
+    auto picks = execParams(conn.get(),
+                            "SELECT COUNT(*) FROM draft_picks WHERE league_id = $1",
+                            {leagueId});
+    if (!resultOk(picks.get(), PGRES_TUPLES_OK) || cellInt(picks.get(), 0, 0, 0) > 0) return std::nullopt;
+    auto update = execParams(conn.get(),
+                             "UPDATE draft_states SET status = 'open', current_pick = 1, "
+                             "draft_order = ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), "
+                             "started_at = NOW(), pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), "
+                             "updated_at = NOW() WHERE league_id = $1 AND status = 'not_started'",
+                             {leagueId, jsonToString(order)});
+    if (!resultOk(update.get(), PGRES_COMMAND_OK) || std::string{PQcmdTuples(update.get())} == "0") return std::nullopt;
+    return dbGetDraftState(accountEmail, leagueId);
 }
 
 std::optional<Json::Value> dbSaveDraftQueue(const std::string &accountEmail,
@@ -1301,16 +1440,16 @@ std::optional<Json::Value> dbSaveDraftOrder(const std::string &accountEmail,
     if (!resultOk(picks.get(), PGRES_TUPLES_OK) || cellInt(picks.get(), 0, 0, 0) > 0) return std::nullopt;
     auto insertState = execParams(conn.get(),
                                   "INSERT INTO draft_states (league_id, status, current_pick, draft_order, pick_deadline, started_at) "
-                                  "VALUES ($1, 'open', 1, ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), NOW() + INTERVAL '90 seconds', NOW()) "
+                                  "VALUES ($1, 'not_started', 1, ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), NULL, NULL) "
                                   "ON CONFLICT (league_id) DO NOTHING",
                                   {leagueId, jsonToString(draftOrder)});
     auto updateState = execParams(conn.get(),
                                   "UPDATE draft_states SET draft_order = ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), "
-                                  "current_pick = 1, status = 'open', pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), updated_at = NOW() "
-                                  "WHERE league_id = $1",
+                                  "current_pick = 1, pick_deadline = NULL, started_at = NULL, updated_at = NOW() "
+                                  "WHERE league_id = $1 AND status = 'not_started'",
                                   {leagueId, jsonToString(draftOrder)});
     (void)insertState;
-    if (!resultOk(updateState.get(), PGRES_COMMAND_OK)) return std::nullopt;
+    if (!resultOk(updateState.get(), PGRES_COMMAND_OK) || std::string{PQcmdTuples(updateState.get())} == "0") return std::nullopt;
     return dbGetDraftState(accountEmail, leagueId);
 }
 
@@ -1319,9 +1458,15 @@ std::optional<Json::Value> dbMakeDraftPick(const std::string &accountEmail,
                                            const Json::Value &player) {
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
-    if (!conn) return std::nullopt;
-    if (!dbDraftLobbyOpen(conn.get(), leagueId) && !dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
+    if (!conn || !dbDraftLobbyOpen(conn.get(), leagueId)) return std::nullopt;
+    auto state = execParams(conn.get(),
+                            "SELECT status FROM draft_states WHERE league_id = $1",
+                            {leagueId});
+    if (!resultOk(state.get(), PGRES_TUPLES_OK) || PQntuples(state.get()) == 0) return std::nullopt;
+    const auto currentStatus = cell(state.get(), 0, 0);
+    if (currentStatus != "open") return std::nullopt;
     const auto normalized = normalizePlayerJson(player);
+    if (jsonString(normalized, "id").empty()) return std::nullopt;
     auto order = draftOrderForLeague(conn.get(), leagueId);
     const auto draftType = draftTypeForLeague(conn.get(), leagueId);
     auto pickNumberResult = execParams(conn.get(),
@@ -1331,7 +1476,7 @@ std::optional<Json::Value> dbMakeDraftPick(const std::string &accountEmail,
                                 ? cellInt(pickNumberResult.get(), 0, 0, 1)
                                 : 1;
     const auto expectedManager = cff::league_schedule::currentDraftManager(order, pickNumber, draftType);
-    if (!expectedManager.empty() && expectedManager != accountEmail) return std::nullopt;
+    if (!expectedManager.empty() && canonicalEmail(expectedManager) != canonicalEmail(accountEmail)) return std::nullopt;
     auto pickResult = execParams(conn.get(),
                                  "INSERT INTO draft_picks (id, league_id, manager_email, pick_number, player_id, player_snapshot) "
                                  "VALUES ($1, $2, $3, $4::int, $5, $6::jsonb)",
@@ -1352,7 +1497,7 @@ std::optional<Json::Value> dbMakeDraftPick(const std::string &accountEmail,
                                   "UPDATE draft_states SET current_pick = $2::int + 1, "
                                   "status = CASE WHEN $3 = 'true' THEN 'complete' ELSE status END, "
                                   "pick_deadline = CASE WHEN $3 = 'true' THEN NULL ELSE NOW() + (pick_clock_seconds * INTERVAL '1 second') END, "
-                                  "updated_at = NOW() WHERE league_id = $1",
+                                  "updated_at = NOW() WHERE league_id = $1 AND status = 'open'",
                                   {leagueId, std::to_string(pickNumber), dbDraftComplete(conn.get(), leagueId) ? "true" : "false"});
     (void)queueResult;
     (void)stateResult;
@@ -1367,12 +1512,19 @@ std::optional<Json::Value> dbResetDraft(const std::string &accountEmail, const s
     if (!conn) return std::nullopt;
     auto picks = execParams(conn.get(), "DELETE FROM draft_picks WHERE league_id = $1", {leagueId});
     auto rosters = execParams(conn.get(), "DELETE FROM rosters WHERE league_id = $1 AND acquired_via = 'draft'", {leagueId});
+    auto insertState = execParams(conn.get(),
+                                  "INSERT INTO draft_states (league_id, status, current_pick, draft_order, pick_deadline, started_at) "
+                                  "VALUES ($1, 'not_started', 1, ARRAY(SELECT email FROM league_members WHERE league_id = $1 AND status = 'active' ORDER BY role, created_at), NULL, NULL) "
+                                  "ON CONFLICT (league_id) DO NOTHING",
+                                  {leagueId});
     auto state = execParams(conn.get(),
-                            "UPDATE draft_states SET current_pick = 1, status = 'open', pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), updated_at = NOW() WHERE league_id = $1",
+                            "UPDATE draft_states SET current_pick = 1, status = 'not_started', "
+                            "pick_deadline = NULL, started_at = NULL, updated_at = NOW() WHERE league_id = $1",
                             {leagueId});
     (void)picks;
     (void)rosters;
-    (void)state;
+    (void)insertState;
+    if (!resultOk(state.get(), PGRES_COMMAND_OK)) return std::nullopt;
     return dbGetDraftState(accountEmail, leagueId);
 }
 
@@ -3116,23 +3268,8 @@ void handleGetDraftState(const drogon::HttpRequestPtr&,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
-    const auto leagueIt = leaguesById.find(leagueId);
-    const bool lobbyOpen = leagueIt != leaguesById.end() && leagueIt->second.league.draftLobbyOpen;
-    if (!lobbyOpen && !isCommissionerLocked(accountEmail, leagueId)) {
-        sendError(callback, drogon::k403Forbidden, "Draft lobby is not open");
-        return;
-    }
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = static_cast<int>(arrayForLeague(draftPicksByLeague, leagueId).size()) + 1;
-    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
-    callback(jsonResponse(payload, drogon::k200OK));
+    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) return;
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleSaveDraftQueue(const drogon::HttpRequestPtr &req,
@@ -3154,18 +3291,9 @@ void handleSaveDraftQueue(const drogon::HttpRequestPtr &req,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
+    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) return;
     draftQueuesByLeagueManager[leagueId + ":" + accountEmail] = queue;
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = static_cast<int>(arrayForLeague(draftPicksByLeague, leagueId).size()) + 1;
-    payload["queue"] = queue;
-    payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
-    callback(jsonResponse(payload, drogon::k200OK));
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleSaveDraftOrder(const drogon::HttpRequestPtr &req,
@@ -3189,35 +3317,63 @@ void handleSaveDraftOrder(const drogon::HttpRequestPtr &req,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
-    if (!arrayForLeague(draftPicksByLeague, leagueId).empty() || !order.isArray() || order.empty()) {
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) return;
+    auto &state = localDraftStateLocked(leagueId);
+    if (state["status"].asString() != "not_started"
+        || !arrayForLeague(draftPicksByLeague, leagueId).empty()
+        || !localDraftOrderMatchesActiveMembers(leagueId, order)) {
         sendError(callback, drogon::k409Conflict, "Unable to save draft order");
         return;
     }
-    std::unordered_set<std::string> seenOrderEmails;
-    for (const auto &emailValue : order) {
-        if (!emailValue.isString() || emailValue.asString().empty()) {
-            sendError(callback, drogon::k409Conflict, "Unable to save draft order");
+    state["draftOrder"] = order;
+    state["currentPick"] = 1;
+    state["pickDeadline"] = "";
+    state["startedAt"] = "";
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
+}
+
+void handleStartDraft(const drogon::HttpRequestPtr&,
+                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                      const std::string &accountEmail,
+                      const std::string &leagueId) {
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        auto state = dbStartDraft(accountEmail, leagueId);
+        if (!state) {
+            sendError(callback, drogon::k403Forbidden, "Commissioner access and an open lobby with at least two active managers are required");
             return;
         }
-        const auto email = lowerString(emailValue.asString());
-        if (seenOrderEmails.find(email) != seenOrderEmails.end()) {
-            sendError(callback, drogon::k409Conflict, "Unable to save draft order");
-            return;
-        }
-        seenOrderEmails.insert(email);
+        callback(jsonResponse(*state, drogon::k200OK));
+        return;
     }
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = 1;
-    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
-    payload["draftOrder"] = order;
-    payload["currentManager"] = order[0].asString();
-    draftOrdersByLeague[leagueId] = order;
-    callback(jsonResponse(payload, drogon::k200OK));
+#endif
+
+    std::lock_guard<std::mutex> lock(storeMutex);
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) return;
+    auto &state = localDraftStateLocked(leagueId);
+    if (!state["lobbyOpen"].asBool()) {
+        sendError(callback, drogon::k403Forbidden, "Draft lobby is not open");
+        return;
+    }
+    if (state["status"].asString() == "open") {
+        callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
+        return;
+    }
+    auto order = state["draftOrder"];
+    if (!localDraftOrderMatchesActiveMembers(leagueId, order)) {
+        order = activeDraftOrderLocked(leagueId);
+    }
+    if (order.size() < 2 || !localDraftOrderMatchesActiveMembers(leagueId, order)
+        || !arrayForLeague(draftPicksByLeague, leagueId).empty()) {
+        sendError(callback, drogon::k409Conflict, "At least two active managers and a valid draft order are required");
+        return;
+    }
+    state["status"] = "open";
+    state["currentPick"] = 1;
+    state["draftOrder"] = order;
+    state["startedAt"] = draftIsoNow();
+    state["pickDeadline"] = draftDeadlineFromNow(state.get("pickClockSeconds", 90).asInt());
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleMakeDraftPick(const drogon::HttpRequestPtr &req,
@@ -3242,39 +3398,46 @@ void handleMakeDraftPick(const drogon::HttpRequestPtr &req,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) return;
+    auto &state = localDraftStateLocked(leagueId);
+    if (!state["lobbyOpen"].asBool() || state["status"].asString() != "open") {
+        sendError(callback, drogon::k409Conflict, "Draft has not started");
         return;
     }
-    const auto leagueIt = leaguesById.find(leagueId);
-    const bool lobbyOpen = leagueIt != leaguesById.end() && leagueIt->second.league.draftLobbyOpen;
-    if (!lobbyOpen && !isCommissionerLocked(accountEmail, leagueId)) {
-        sendError(callback, drogon::k403Forbidden, "Draft lobby is not open");
+    const auto expectedManager = cff::league_schedule::currentDraftManager(
+        state["draftOrder"], state.get("currentPick", 1).asInt(), state.get("draftType", "snake").asString());
+    if (!expectedManager.empty() && canonicalEmail(expectedManager) != canonicalEmail(accountEmail)) {
+        sendError(callback, drogon::k409Conflict, "It is not this manager's turn");
         return;
     }
     auto player = normalizePlayerJson((*body)["player"]);
+    const auto playerId = jsonString(player, "id");
+    if (playerId.empty()) {
+        sendError(callback, drogon::k400BadRequest, "player id is required");
+        return;
+    }
     auto &picks = arrayForLeague(draftPicksByLeague, leagueId);
+    for (const auto &existing : picks) {
+        if (jsonString(existing["player"], "id") == playerId) {
+            sendError(callback, drogon::k409Conflict, "Player has already been drafted");
+            return;
+        }
+    }
     Json::Value pick;
     pick["id"] = timestampId("pick");
     pick["managerEmail"] = accountEmail;
     pick["pickNumber"] = static_cast<int>(picks.size()) + 1;
     pick["player"] = player;
-    pick["createdAt"] = timestampId("at");
+    pick["createdAt"] = draftIsoNow();
     picks.append(pick);
     auto &roster = arrayForLeague(rostersByLeague, leagueId);
-    if (indexOfPlayer(roster, jsonString(player, "id")) < 0) {
-        roster.append(player);
-    }
+    if (indexOfPlayer(roster, playerId) < 0) roster.append(player);
     auto &queue = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    removePlayer(queue, jsonString(player, "id"));
+    removePlayer(queue, playerId);
     addTransactionLocked(leagueId, "Draft Pick", "Drafted " + jsonString(player, "name"), accountEmail);
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = static_cast<int>(picks.size()) + 1;
-    payload["queue"] = queue;
-    payload["picks"] = picks;
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
-    callback(jsonResponse(payload, drogon::k201Created));
+    state["currentPick"] = static_cast<int>(picks.size()) + 1;
+    state["pickDeadline"] = draftDeadlineFromNow(state.get("pickClockSeconds", 90).asInt());
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k201Created));
 }
 
 void handleResetDraft(const drogon::HttpRequestPtr&,
@@ -3294,19 +3457,15 @@ void handleResetDraft(const drogon::HttpRequestPtr&,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) return;
     draftPicksByLeague[leagueId] = Json::Value{Json::arrayValue};
     rostersByLeague[leagueId] = Json::Value{Json::arrayValue};
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = 1;
-    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    payload["picks"] = draftPicksByLeague[leagueId];
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], 1);
-    callback(jsonResponse(payload, drogon::k200OK));
+    auto &state = localDraftStateLocked(leagueId);
+    state["status"] = "not_started";
+    state["currentPick"] = 1;
+    state["pickDeadline"] = "";
+    state["startedAt"] = "";
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleUndoDraftPick(const drogon::HttpRequestPtr&,
@@ -3326,10 +3485,9 @@ void handleUndoDraftPick(const drogon::HttpRequestPtr&,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) return;
     auto &picks = arrayForLeague(draftPicksByLeague, leagueId);
+    auto &state = localDraftStateLocked(leagueId);
     if (!picks.empty()) {
         Json::Value removed;
         picks.removeIndex(static_cast<Json::ArrayIndex>(picks.size() - 1), &removed);
@@ -3339,18 +3497,12 @@ void handleUndoDraftPick(const drogon::HttpRequestPtr&,
         auto &roster = arrayForLeague(rostersByLeague, leagueId);
         removePlayer(roster, playerId);
         auto &queue = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + managerEmail);
-        if (indexOfPlayer(queue, playerId) < 0) {
-            queue.append(player);
-        }
+        if (indexOfPlayer(queue, playerId) < 0) queue.append(player);
+        state["status"] = "open";
+        state["currentPick"] = static_cast<int>(picks.size()) + 1;
+        state["pickDeadline"] = draftDeadlineFromNow(state.get("pickClockSeconds", 90).asInt());
     }
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = static_cast<int>(picks.size()) + 1;
-    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    payload["picks"] = picks;
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = cff::league_schedule::currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
-    callback(jsonResponse(payload, drogon::k200OK));
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleListWaivers(const drogon::HttpRequestPtr&,
