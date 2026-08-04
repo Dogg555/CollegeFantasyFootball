@@ -52,6 +52,8 @@ add_executable(college_ff_server
     src/scoring_lifecycle_hardening.cpp
     src/schedule_lineup_lifecycle.cpp
     src/schedule_lineup_hardening.cpp
+    src/stat_ingestion_lifecycle.cpp
+    src/stat_ingestion_hardening.cpp
     src/public_routes.cpp
     src/league_beta_stability.cpp
     src/team_name_handler.cpp
@@ -250,6 +252,15 @@ if (BUILD_TESTING)
     target_include_directories(schedule_lineup_lifecycle_tests PRIVATE src)
     target_link_libraries(schedule_lineup_lifecycle_tests PRIVATE Drogon::Drogon)
     add_test(NAME schedule_lineup_lifecycle_tests COMMAND schedule_lineup_lifecycle_tests)
+
+
+    add_executable(stat_ingestion_lifecycle_tests
+        tests/stat_ingestion_lifecycle_tests.cpp
+        src/stat_ingestion_lifecycle.cpp
+    )
+    target_include_directories(stat_ingestion_lifecycle_tests PRIVATE src)
+    target_link_libraries(stat_ingestion_lifecycle_tests PRIVATE Drogon::Drogon)
+    add_test(NAME stat_ingestion_lifecycle_tests COMMAND stat_ingestion_lifecycle_tests)
 
 
     add_executable(league_roster_tests
