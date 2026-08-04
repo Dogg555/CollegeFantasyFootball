@@ -208,6 +208,17 @@ void registerLeagueRoutes(
                              cff::handlers::handleSaveDraftOrder(req, std::move(callback), accountEmail, leagueId);
                          },
                          {drogon::Put, drogon::Post})
+        .registerHandler("/api/leagues/{1}/draft/start",
+                         [jwtSecret](const drogon::HttpRequestPtr& req,
+                                     std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &leagueId) {
+                             std::string accountEmail;
+                             if (!cff::http::requireAccount(req, callback, jwtSecret, accountEmail)) {
+                                 return;
+                             }
+                             cff::handlers::handleStartDraft(req, std::move(callback), accountEmail, leagueId);
+                         },
+                         {drogon::Post})
         .registerHandler("/api/leagues/{1}/draft/picks",
                          [jwtSecret](const drogon::HttpRequestPtr& req,
                                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
@@ -489,6 +500,7 @@ void registerLeagueRoutes(
         .registerHandler("/api/leagues/{1}/draft", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/draft/queue", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/draft/order", preflightOneParamHandler, {drogon::Options})
+        .registerHandler("/api/leagues/{1}/draft/start", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/draft/picks", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/draft/reset", preflightOneParamHandler, {drogon::Options})
         .registerHandler("/api/leagues/{1}/draft/undo", preflightOneParamHandler, {drogon::Options})

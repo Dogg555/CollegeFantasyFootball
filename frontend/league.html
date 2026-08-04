@@ -55,7 +55,7 @@
       <button class="league-tab" data-league-tab="managers" type="button">Members</button>
       <button class="league-tab" data-league-tab="activity" type="button">Activity</button>
       <button class="league-tab" data-league-tab="settings" type="button">Settings</button>
-      <a class="league-tab" href="draft.html">Draft Room</a>
+      <a class="league-tab" id="league-draft-tab-link" href="draft.html">Draft Room</a>
     </section>
 
     <section class="card card--accent" data-league-panel="overview">
@@ -118,6 +118,20 @@
       </div>
     </section>
 
+    <section class="card" data-league-panel="overview">
+      <div class="card__header">
+        <div>
+          <h2>Draft lobby</h2>
+          <div class="muted small" id="draft-lobby-overview-status">Waiting for league status.</div>
+        </div>
+        <span class="pill pill--muted" id="draft-lobby-overview-badge">Closed</span>
+      </div>
+      <div class="cta-row">
+        <a class="button button--primary" id="draft-lobby-overview-link" href="draft.html" hidden>Enter draft lobby</a>
+        <a class="button button--ghost" href="league.html#managers">View managers</a>
+      </div>
+    </section>
+
     <section class="card card--accent" data-league-panel="team">
       <div class="card__header">
         <h2>My Team</h2>
@@ -126,7 +140,7 @@
       <div id="team-roster" class="list">No players drafted yet.</div>
       <div class="cta-row" style="margin-top: 12px">
         <a class="button button--primary" href="players.html">Add players</a>
-        <a class="button" href="draft.html">Open draft room</a>
+        <a class="button" id="team-draft-link" href="draft.html">Open draft room</a>
       </div>
     </section>
 
