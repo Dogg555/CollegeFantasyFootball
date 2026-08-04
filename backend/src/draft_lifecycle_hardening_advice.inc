@@ -5,24 +5,9 @@ drogon::HttpResponsePtr draftLifecycleAdvice(const drogon::HttpRequestPtr &reque
     const auto method = request->getMethod();
 
     std::string leagueId;
-    enum class Action {
-        None,
-        Preflight,
-        Get,
-        ReadinessGet,
-        ReadinessSet,
-        Order,
-        Start,
-        Pick,
-        Reset,
-        Undo
-    } action = Action::None;
+    enum class Action { None, Get, ReadinessGet, ReadinessSet, Order, Start, Pick, Reset, Undo } action = Action::None;
 
-    if (method == drogon::Options
-        && path.rfind("/api/leagues/", 0) == 0
-        && path.find("/draft") != std::string::npos) {
-        action = Action::Preflight;
-    } else if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/draft/readiness")).empty()) {
+    if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/draft/readiness")).empty()) {
         action = Action::ReadinessGet;
     } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/readiness")).empty()) {
         action = Action::ReadinessSet;
@@ -42,48 +27,32 @@ drogon::HttpResponsePtr draftLifecycleAdvice(const drogon::HttpRequestPtr &reque
     }
 
     if (action == Action::None) return nullptr;
-    if (action == Action::Preflight) {
-        const auto config = cff::config::loadRuntimeConfig();
-        return cff::http::buildPreflightResponse(request, config.allowedOrigins);
-    }
-
     const auto email = accountEmail(request);
     if (!email) {
-        return cff::http::withConfiguredCorsHeaders(
-            request,
-            errorResponse(drogon::k401Unauthorized,
-                          "Authentication is required.",
-                          "authentication_required"));
+        return errorResponse(drogon::k401Unauthorized,
+                             "Authentication is required.",
+                             "authentication_required");
     }
 
-    drogon::HttpResponsePtr response;
     switch (action) {
         case Action::Get:
         case Action::ReadinessGet:
-            response = getDraft(leagueId, *email);
-            break;
+            return getDraft(leagueId, *email);
         case Action::ReadinessSet:
-            response = setReadiness(request, leagueId, *email);
-            break;
+            return setReadiness(request, leagueId, *email);
         case Action::Order:
-            response = saveOrder(request, leagueId, *email);
-            break;
+            return saveOrder(request, leagueId, *email);
         case Action::Start:
-            response = startDraft(request, leagueId, *email);
-            break;
+            return startDraft(request, leagueId, *email);
         case Action::Pick:
-            response = makePick(request, leagueId, *email);
-            break;
+            return makePick(request, leagueId, *email);
         case Action::Reset:
-            response = resetDraft(request, leagueId, *email);
-            break;
+            return resetDraft(request, leagueId, *email);
         case Action::Undo:
-            response = undoPick(request, leagueId, *email);
-            break;
+            return undoPick(request, leagueId, *email);
         default:
             return nullptr;
     }
-    return cff::http::withConfiguredCorsHeaders(request, response);
 #else
     (void)request;
     return nullptr;
