@@ -136,10 +136,20 @@ assert.match(normalized.userMessage, /Reference: req-123/);
         reject(error);
       }, { once: true });
     });
-  }, { apiBase: '/api', sleep: async () => {} });
+  }, {
+    apiBase: '/api',
+    crypto: { randomUUID: () => 'caller-request-id' },
+    sleep: async () => {}
+  });
   const pending = abortFetch('/api/leagues', { signal: abortController.signal });
   abortController.abort();
-  await assert.rejects(pending, (error) => error.externalAborted === true && error.retryable === false);
+  await assert.rejects(
+    pending,
+    (error) => error.name === 'AbortError'
+      && error.externalAborted === true
+      && error.retryable === false
+      && error.requestId === 'caller-request-id'
+  );
   assert.equal(abortCalls, 1, 'caller cancellation must never be retried');
 
   let assetHeaders = null;
