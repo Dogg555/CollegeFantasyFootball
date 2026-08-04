@@ -22,6 +22,7 @@ owned_functions = (
     "isAdminRequest",
     "requireAdmin",
     "applyCorsHeaders",
+    "withConfiguredCorsHeaders",
     "buildPreflightResponse",
 )
 
@@ -38,6 +39,7 @@ for implementation in (
     "bool isAdminRequest(",
     "bool requireAdmin(",
     "void applyCorsHeaders(",
+    "drogon::HttpResponsePtr withConfiguredCorsHeaders(",
     "drogon::HttpResponsePtr buildPreflightResponse(",
 ):
     for owner_name, source in (
@@ -113,8 +115,9 @@ required_behavior = (
     'resp->setStatusCode(drogon::k403Forbidden)',
     'resp->addHeader("Access-Control-Allow-Origin", origin)',
     'resp->addHeader("Vary", "Origin")',
-    'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type")',
+    'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID")',
     'resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")',
+    'applyCorsHeaders(req, resp, runtimeConfig.allowedOrigins)',
     'resp->setStatusCode(drogon::k204NoContent)',
     'return std::string{"admin@example.com"}',
     'adminIdentity = "ops-token"',
