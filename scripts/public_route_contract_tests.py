@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "backend/src/main.cpp"
+BOOTSTRAP = ROOT / "backend/src/application_bootstrap.cpp"
 COMPOSITION = ROOT / "backend/src/app_composition.cpp"
 HEADER = ROOT / "backend/src/public_routes.h"
 SOURCE = ROOT / "backend/src/public_routes.cpp"
@@ -37,32 +38,44 @@ def registrations(source: str) -> list[tuple[str, str]]:
 
 def main() -> int:
     main_source = MAIN.read_text()
+    bootstrap = BOOTSTRAP.read_text()
     composition = COMPOSITION.read_text()
     header = HEADER.read_text()
     source = SOURCE.read_text()
     cmake = CMAKE.read_text()
 
-    require('#include "app_composition.h"' in main_source, "main.cpp does not include app_composition.h")
+    require('#include "application_bootstrap.h"' in main_source, "main.cpp does not include application_bootstrap.h")
     require(
-        "cff::public_api::registerPublicRoutes(" not in main_source,
-        "main.cpp must delegate public route registration through app composition",
+        main_source.count("cff::application::runApplication()") == 1,
+        "main.cpp must delegate application startup exactly once",
+    )
+    require(
+        bootstrap.count("cff::app_composition::registerApplicationRoutes(") == 1,
+        "application bootstrap must delegate route composition exactly once",
+    )
+    require(
+        "cff::public_api::registerPublicRoutes(" not in main_source
+        and "cff::public_api::registerPublicRoutes(" not in bootstrap,
+        "entry-point layers must delegate public route registration through app composition",
     )
     require(
         composition.count("cff::public_api::registerPublicRoutes(app, allowedOrigins);") == 1,
         "application composition must register public routes exactly once",
     )
     require(
-        main_source.index("cff::app_composition::registerApplicationRoutes") < main_source.index("app.run();"),
+        bootstrap.index("cff::app_composition::registerApplicationRoutes") < bootstrap.index("app.run();"),
         "application routes must be composed before the server starts",
     )
     for path in EXPECTED_PATHS:
         require(path not in main_source, f"main.cpp still owns {path}")
+        require(path not in bootstrap, f"application bootstrap still owns {path}")
 
     require("namespace cff::public_api" in header, "public route namespace changed")
     require("registerPublicRoutes" in header, "public route interface missing")
     require("jwtSecret" not in header, "public routes unexpectedly depend on authentication secrets")
     require("src/public_routes.cpp" in cmake, "production target does not compile public_routes.cpp")
     require("src/app_composition.cpp" in cmake, "production target does not compile app_composition.cpp")
+    require("src/application_bootstrap.cpp" in cmake, "server targets do not compile application_bootstrap.cpp")
 
     found = registrations(source)
     counts = Counter(found)
@@ -105,6 +118,7 @@ def main() -> int:
                 "preflightRoutes": 4,
                 "publicAuthorization": True,
                 "queryContracts": True,
+                "bootstrapDelegation": True,
                 "compositionDelegation": True,
             },
             indent=2,
