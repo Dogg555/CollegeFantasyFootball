@@ -105,24 +105,41 @@
     return fields.length ? `Diagnostics: ${fields.join(' ')}` : '';
   }
 
+
+  function specificUiErrorMessage(error = {}, fallback = 'The request could not be completed.') {
+    const code = String(error?.code || error?.data?.code || '').trim();
+    const status = Number(error?.status || 0);
+    const retry = error?.retryAfter ? ` Retry after ${error.retryAfter} seconds.` : '';
+    const messages = {
+      account_not_verified: 'Verify your email before continuing.',
+      draft_already_started: 'The draft has already started, so these settings are locked.',
+      draft_not_open: 'The draft lobby is not open yet.',
+      duplicate_league_name: 'You already have a league with this name. Choose a different league name.',
+      invalid_credentials: 'We could not find an account with that email and password.',
+      invalid_lineup: 'Your lineup is incomplete or uses an ineligible player. Fix the highlighted lineup spots.',
+      invitation_expired: 'This invitation has expired. Ask the commissioner for a new invite.',
+      league_create_conflict: 'That league was already created or is being created. Refresh your leagues before trying again.',
+      league_full: 'This league is full. Ask the commissioner to increase the league size or remove an invite.',
+      lineup_locked: 'Lineups are locked for this matchup.',
+      player_already_rostered: 'That player is already on a roster in this league.',
+      roster_limit_exceeded: 'Your roster is full. Drop a player before adding another one.',
+      token_expired: 'Your secure link has expired. Request a new link to continue.',
+      waiver_claim_not_found: 'That waiver claim is no longer available. Refresh waivers and try again.'
+    };
+    if (messages[code]) return messages[code];
+    if (error?.timedOut || code === 'request_timeout' || status === 408) return 'The request timed out. Check your connection and try again.';
+    if (status === 400 || status === 422) return error?.data?.error || 'Review the highlighted fields and try again.';
+    if (status === 401) return 'Your session is no longer authorized. Sign in again.';
+    if (status === 403) return error?.data?.error || 'You are not allowed to perform this action.';
+    if (status === 404) return error?.data?.error || 'We could not find that item. Refresh the page and try again.';
+    if (status === 409) return error?.data?.error || 'Someone else updated this first. Refresh and try again.';
+    if (status === 429) return `Too many requests.${retry || ' Try again later.'}`;
+    if (error?.unavailable || [502, 503, 504].includes(status)) return 'The service is temporarily unavailable. No unconfirmed changes were saved.';
+    return error?.data?.error || error?.userMessage || error?.message || fallback;
+  }
+
   function normalizedUserMessage(error, fallback = 'The request could not be completed.') {
-    const reference = requestReference(error?.requestId);
-    if (error?.timedOut) {
-      return `The request timed out. Check your connection and try again.${reference}`;
-    }
-    if (error?.status === 429) {
-      return `Too many requests. Try again later.${reference}`;
-    }
-    if (error?.status === 401) {
-      return `Your session is no longer authorized. Sign in again.${reference}`;
-    }
-    if (error?.status === 403) {
-      return `${error?.data?.error || 'You are not allowed to perform this action.'}${reference}`;
-    }
-    if (error?.unavailable || [502, 503, 504].includes(Number(error?.status || 0))) {
-      return `The service is temporarily unavailable. No unconfirmed changes were saved.${reference}`;
-    }
-    return `${error?.data?.error || error?.message || fallback}${reference}`;
+    return `${specificUiErrorMessage(error, fallback)}${requestReference(error?.requestId)}`;
   }
 
   function normalizeApiError(error, context = {}) {
@@ -320,6 +337,7 @@
     shouldRetry,
     normalizeApiError,
     normalizedUserMessage,
+    specificUiErrorMessage,
     apiErrorDiagnostics,
     apiUrl,
     createApiFetch
@@ -383,7 +401,8 @@
     if (typeof original !== 'function' || original === lastMutationMessage || original.__cffSharedApiClient) return false;
     const wrapped = function sharedMutationErrorMessage(error, fallback) {
       const normalized = normalizeApiError(error, { fallback });
-      const base = original.call(this, normalized, fallback);
+      const specific = specificUiErrorMessage(normalized, fallback);
+      const base = specific || original.call(this, normalized, fallback);
       const reference = requestReference(normalized.requestId);
       return reference && !String(base).includes(normalized.requestId) ? `${base}${reference}` : base;
     };
