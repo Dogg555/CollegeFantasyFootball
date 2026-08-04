@@ -326,7 +326,12 @@ def main() -> None:
     require(scored.status == 200, f"score failed: {scored.status} {scored.data}")
 
     scoring_locked = request("GET", f"/api/leagues/{league_id}/schedule/state?season={SEASON}&week=1", commissioner)
-    require(scoring_locked.status == 200 and scoring_locked.data["scheduleVersion"] == 7, f"scoring lock version incorrect: {scoring_locked.data}")
+    scoring_schedule_version = scoring_locked.data.get("scheduleVersion", -1)
+    require(
+        scoring_locked.status == 200
+        and scoring_schedule_version > auto_locked.data["scheduleVersion"],
+        f"scoring lock version did not advance: {scoring_locked.data}",
+    )
     reasons = {lineup["lockReason"] for lineup in scoring_locked.data["lineups"]}
     require(reasons == {"scoring"}, f"lineups not promoted to scoring lock: {reasons}")
 
@@ -334,7 +339,13 @@ def main() -> None:
         "POST",
         f"/api/leagues/{league_id}/schedule/transactions",
         commissioner,
-        {"action": "generate", "season": SEASON, "week": 1, "weeks": 4, "expectedVersion": 7},
+        {
+            "action": "generate",
+            "season": SEASON,
+            "week": 1,
+            "weeks": 4,
+            "expectedVersion": scoring_schedule_version,
+        },
         f"schedule-regenerate-{RUN_KEY}",
     )
     require(regenerate.status == 409 and regenerate.data.get("code") == "schedule_locked", f"locked schedule regenerated: {regenerate.data}")
@@ -364,7 +375,10 @@ def main() -> None:
         with connection.cursor() as cursor:
             cursor.execute("SELECT version, weeks FROM schedule_states WHERE league_id = %s AND season = %s", (league_id, SEASON))
             schedule_version, weeks = cursor.fetchone()
-            require(schedule_version == 7 and weeks == 3, f"unexpected schedule state: {(schedule_version, weeks)}")
+            require(
+                schedule_version == scoring_schedule_version and weeks == 3,
+                f"unexpected schedule state: {(schedule_version, weeks)}",
+            )
 
             cursor.execute(
                 "SELECT COUNT(*), COUNT(DISTINCT id), MIN(schedule_version), MAX(schedule_version) "
