@@ -114,7 +114,10 @@ drogon::HttpResponsePtr scheduleLifecycleAdvice(const drogon::HttpRequestPtr &re
 
 struct ScheduleLifecycleInstaller {
     ScheduleLifecycleInstaller() {
-        drogon::app().registerSyncAdvice(scheduleLifecycleAdvice);
+        drogon::AdviceCallbackSync advice = [](const drogon::HttpRequestPtr &request) {
+            return scheduleLifecycleAdvice(request);
+        };
+        drogon::app().registerSyncAdvice(std::move(advice));
     }
 };
 
