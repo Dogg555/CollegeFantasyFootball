@@ -12,6 +12,8 @@ on:
       - "backend/CMakeLists.txt"
       - "backend/tests/live_stat_orchestration_tests.cpp"
       - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
+      - "backend/db/migrate.sh"
+      - "backend/db/schema.sql"
       - "scripts/live_stat_refresh_runtime_contract.py"
       - "scripts/live_stat_worker_contract.py"
       - "scripts/ops_live_ingest.py"
@@ -30,6 +32,8 @@ on:
       - "backend/CMakeLists.txt"
       - "backend/tests/live_stat_orchestration_tests.cpp"
       - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
+      - "backend/db/migrate.sh"
+      - "backend/db/schema.sql"
       - "scripts/live_stat_refresh_runtime_contract.py"
       - "scripts/live_stat_worker_contract.py"
       - "scripts/ops_live_ingest.py"
@@ -109,13 +113,10 @@ jobs:
           python-version: "3.12"
       - name: Install contract dependency
         run: python -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
-      - name: Apply production migrations
+      - name: Apply production schema and migrations
         env:
-          PGPASSWORD: postgres
-        run: |
-          for migration in backend/db/migrations/*.sql; do
-            psql -h 127.0.0.1 -U postgres -d cff -v ON_ERROR_STOP=1 -f "$migration"
-          done
+          DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+        run: sh backend/db/migrate.sh
       - name: Run concurrency and partial-failure contract
         env:
           DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
