@@ -3,6 +3,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 main = (root / "backend/src/main.cpp").read_text(encoding="utf-8")
+composition = (root / "backend/src/app_composition.cpp").read_text(encoding="utf-8")
 server_runtime = (root / "backend/src/server_runtime.cpp").read_text(encoding="utf-8")
 auth_routes = (root / "backend/src/auth_routes.cpp").read_text(encoding="utf-8")
 operations_routes = (root / "backend/src/operations_routes.cpp").read_text(encoding="utf-8")
@@ -40,6 +41,8 @@ for implementation in (
 ):
     if implementation in main:
         raise SystemExit(f"shared HTTP security implementation leaked into main.cpp: {implementation}")
+    if implementation in composition:
+        raise SystemExit(f"shared HTTP security implementation leaked into app_composition.cpp: {implementation}")
     if implementation in server_runtime:
         raise SystemExit(f"shared HTTP security implementation leaked into server_runtime.cpp: {implementation}")
     if implementation in auth_routes:
@@ -53,11 +56,16 @@ for implementation in (
 
 required_main_delegation = (
     "cff::server_runtime::configureSecurityAndCors(",
-    "cff::public_api::registerPublicRoutes(app, allowedOrigins)",
+    "cff::app_composition::registerApplicationRoutes(",
 )
 for delegation in required_main_delegation:
     if delegation not in main:
         raise SystemExit(f"main.cpp HTTP security delegation missing: {delegation}")
+
+if "cff::public_api::registerPublicRoutes(" in main:
+    raise SystemExit("main.cpp must not directly own public route composition")
+if "cff::public_api::registerPublicRoutes(app, allowedOrigins)" not in composition:
+    raise SystemExit("app_composition.cpp must register the public route group")
 
 required_server_runtime_delegation = (
     "app.registerPostHandlingAdvice(",
@@ -121,5 +129,7 @@ if "src/http_security.cpp" not in cmake:
     raise SystemExit("http_security.cpp is not part of the production target")
 if "src/server_runtime.cpp" not in cmake:
     raise SystemExit("server_runtime.cpp is not part of the production target")
+if "src/app_composition.cpp" not in cmake:
+    raise SystemExit("app_composition.cpp is not part of the production target")
 
 print("HTTP security boundary contracts passed")

@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "backend/src/main.cpp"
+COMPOSITION = ROOT / "backend/src/app_composition.cpp"
 HEADER = ROOT / "backend/src/public_routes.h"
 SOURCE = ROOT / "backend/src/public_routes.cpp"
 CMAKE = ROOT / "backend/CMakeLists.txt"
@@ -36,18 +37,23 @@ def registrations(source: str) -> list[tuple[str, str]]:
 
 def main() -> int:
     main_source = MAIN.read_text()
+    composition = COMPOSITION.read_text()
     header = HEADER.read_text()
     source = SOURCE.read_text()
     cmake = CMAKE.read_text()
 
-    require('#include "public_routes.h"' in main_source, "main.cpp does not include public_routes.h")
+    require('#include "app_composition.h"' in main_source, "main.cpp does not include app_composition.h")
     require(
-        main_source.count("cff::public_api::registerPublicRoutes(app, allowedOrigins);") == 1,
-        "main.cpp must delegate public route registration exactly once",
+        "cff::public_api::registerPublicRoutes(" not in main_source,
+        "main.cpp must delegate public route registration through app composition",
     )
     require(
-        main_source.index("cff::public_api::registerPublicRoutes") < main_source.index("app.run();"),
-        "public routes must be registered before the server starts",
+        composition.count("cff::public_api::registerPublicRoutes(app, allowedOrigins);") == 1,
+        "application composition must register public routes exactly once",
+    )
+    require(
+        main_source.index("cff::app_composition::registerApplicationRoutes") < main_source.index("app.run();"),
+        "application routes must be composed before the server starts",
     )
     for path in EXPECTED_PATHS:
         require(path not in main_source, f"main.cpp still owns {path}")
@@ -56,6 +62,7 @@ def main() -> int:
     require("registerPublicRoutes" in header, "public route interface missing")
     require("jwtSecret" not in header, "public routes unexpectedly depend on authentication secrets")
     require("src/public_routes.cpp" in cmake, "production target does not compile public_routes.cpp")
+    require("src/app_composition.cpp" in cmake, "production target does not compile app_composition.cpp")
 
     found = registrations(source)
     counts = Counter(found)
@@ -98,7 +105,7 @@ def main() -> int:
                 "preflightRoutes": 4,
                 "publicAuthorization": True,
                 "queryContracts": True,
-                "mainDelegation": True,
+                "compositionDelegation": True,
             },
             indent=2,
             sort_keys=True,

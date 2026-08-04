@@ -3,14 +3,10 @@
 #ifdef DROGON_FOUND
 #include <drogon/drogon.h>
 
+#include "app_composition.h"
 #include "app_config.h"
-#include "auth_routes.h"
 #include "cfbd_ingest.h"
-#include "health_routes.h"
 #include "ingest_runtime.h"
-#include "league_routes.h"
-#include "operations_routes.h"
-#include "public_routes.h"
 #include "server_runtime.h"
 #endif
 
@@ -41,15 +37,11 @@ int main(int argc, char* argv[]) {
         useSsl
     );
 
-    cff::health::registerHealthRoutes(app, jwtSecret, allowedOrigins);
-
-    cff::auth::registerAuthRoutes(app, jwtSecret, allowedOrigins);
-
-    cff::operations::registerOperationsRoutes(app, jwtSecret, allowedOrigins);
-
-    cff::league::registerLeagueRoutes(app, jwtSecret, allowedOrigins);
-
-    cff::public_api::registerPublicRoutes(app, allowedOrigins);
+    cff::app_composition::registerApplicationRoutes(
+        app,
+        jwtSecret,
+        allowedOrigins
+    );
 
     app.run();
 #else

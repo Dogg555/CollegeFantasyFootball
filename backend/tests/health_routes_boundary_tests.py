@@ -3,6 +3,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 main = (root / "backend/src/main.cpp").read_text(encoding="utf-8")
+composition = (root / "backend/src/app_composition.cpp").read_text(encoding="utf-8")
 routes = (root / "backend/src/health_routes.cpp").read_text(encoding="utf-8")
 header = (root / "backend/src/health_routes.h").read_text(encoding="utf-8")
 status_advice = (root / "backend/src/health_status.cpp").read_text(encoding="utf-8")
@@ -20,10 +21,12 @@ if '.registerHandler("/health"' in main:
     raise SystemExit("/health registration leaked into main.cpp")
 if '.registerHandler("/api/health"' in main:
     raise SystemExit("/api/health registration leaked into main.cpp")
-if main.count(
+if "cff::health::registerHealthRoutes(" in main:
+    raise SystemExit("main.cpp must delegate health registration through app composition")
+if composition.count(
     "cff::health::registerHealthRoutes(app, jwtSecret, allowedOrigins);"
 ) != 1:
-    raise SystemExit("main.cpp must register health routes exactly once")
+    raise SystemExit("application composition must register health routes exactly once")
 
 if routes.count('"/health"') != 1:
     raise SystemExit("health module must register one GET /health route")
@@ -76,5 +79,7 @@ for retained_advice in (
 
 if "src/health_routes.cpp" not in cmake:
     raise SystemExit("health_routes.cpp is not part of the production target")
+if "src/app_composition.cpp" not in cmake:
+    raise SystemExit("app_composition.cpp is not part of the production target")
 
 print("health route boundary contracts passed")
