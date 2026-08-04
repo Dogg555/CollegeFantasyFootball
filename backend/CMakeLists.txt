@@ -42,6 +42,8 @@ add_executable(college_ff_server
     src/league_onboarding_hardening.cpp
     src/draft_lifecycle.cpp
     src/draft_lifecycle_hardening.cpp
+    src/roster_transaction.cpp
+    src/roster_transaction_hardening.cpp
     src/public_routes.cpp
     src/league_beta_stability.cpp
     src/team_name_handler.cpp
@@ -189,6 +191,18 @@ if (BUILD_TESTING)
     target_include_directories(draft_lifecycle_tests PRIVATE src)
     target_link_libraries(draft_lifecycle_tests PRIVATE Drogon::Drogon)
     add_test(NAME draft_lifecycle_tests COMMAND draft_lifecycle_tests)
+
+
+    add_executable(roster_transaction_tests
+        tests/roster_transaction_tests.cpp
+        src/roster_transaction.cpp
+        src/league_roster.cpp
+        src/league_waiver.cpp
+        src/json_utils.cpp
+    )
+    target_include_directories(roster_transaction_tests PRIVATE src)
+    target_link_libraries(roster_transaction_tests PRIVATE Drogon::Drogon)
+    add_test(NAME roster_transaction_tests COMMAND roster_transaction_tests)
 
 
     add_executable(league_roster_tests
