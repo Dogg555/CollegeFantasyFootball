@@ -138,17 +138,6 @@ void applyCorsHeaders(
     resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 }
 
-drogon::HttpResponsePtr withConfiguredCorsHeaders(
-    const drogon::HttpRequestPtr &req,
-    const drogon::HttpResponsePtr &resp) {
-    if (!resp) {
-        return resp;
-    }
-    const auto runtimeConfig = cff::config::loadRuntimeConfig();
-    applyCorsHeaders(req, resp, runtimeConfig.allowedOrigins);
-    return resp;
-}
-
 drogon::HttpResponsePtr buildPreflightResponse(
     const drogon::HttpRequestPtr &req,
     const std::unordered_set<std::string> &allowedOrigins) {
