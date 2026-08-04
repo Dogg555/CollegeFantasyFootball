@@ -40,6 +40,8 @@ add_executable(college_ff_server
     src/operations_routes.cpp
     src/league_routes.cpp
     src/league_onboarding_hardening.cpp
+    src/draft_lifecycle.cpp
+    src/draft_lifecycle_hardening.cpp
     src/public_routes.cpp
     src/league_beta_stability.cpp
     src/team_name_handler.cpp
@@ -177,6 +179,16 @@ if (BUILD_TESTING)
     target_include_directories(league_schedule_tests PRIVATE src)
     target_link_libraries(league_schedule_tests PRIVATE Drogon::Drogon)
     add_test(NAME league_schedule_tests COMMAND league_schedule_tests)
+
+
+    add_executable(draft_lifecycle_tests
+        tests/draft_lifecycle_tests.cpp
+        src/draft_lifecycle.cpp
+        src/league_schedule.cpp
+    )
+    target_include_directories(draft_lifecycle_tests PRIVATE src)
+    target_link_libraries(draft_lifecycle_tests PRIVATE Drogon::Drogon)
+    add_test(NAME draft_lifecycle_tests COMMAND draft_lifecycle_tests)
 
 
     add_executable(league_roster_tests
