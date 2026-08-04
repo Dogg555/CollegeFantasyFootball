@@ -9,6 +9,7 @@
 #include "app_config.h"
 #include "cfbd_ingest.h"
 #include "ingest_runtime.h"
+#include "live_stat_worker.h"
 #include "server_runtime.h"
 #endif
 
@@ -34,6 +35,7 @@ int runApplication() {
         runtimeConfig.ingestIntervalHours,
         cff::runCfbdIngestOnce
     );
+    cff::live_stats::configureLiveStatWorker();
 
     cff::server_runtime::configureListener(
         app,

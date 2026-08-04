@@ -5,17 +5,41 @@ on:
     branches: [main, Test]
     paths:
       - "backend/src/live_stat_orchestration.*"
+      - "backend/src/live_stat_worker.*"
+      - "backend/src/live_stat_routes.*"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/application_bootstrap.cpp"
+      - "backend/CMakeLists.txt"
       - "backend/tests/live_stat_orchestration_tests.cpp"
       - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
+      - "backend/db/migrate.sh"
+      - "backend/db/schema.sql"
       - "scripts/live_stat_refresh_runtime_contract.py"
+      - "scripts/live_stat_worker_contract.py"
+      - "scripts/ops_live_ingest.py"
+      - "scripts/ops_live_ingest_tests.py"
+      - "docs/LIVE_STAT_WORKER.md"
+      - ".env.example"
       - ".github/workflows/live-stat-refresh-contracts.yml"
   pull_request:
     branches: [main, Test]
     paths:
       - "backend/src/live_stat_orchestration.*"
+      - "backend/src/live_stat_worker.*"
+      - "backend/src/live_stat_routes.*"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/application_bootstrap.cpp"
+      - "backend/CMakeLists.txt"
       - "backend/tests/live_stat_orchestration_tests.cpp"
       - "backend/db/migrations/019_live_stat_refresh_reliability.sql"
+      - "backend/db/migrate.sh"
+      - "backend/db/schema.sql"
       - "scripts/live_stat_refresh_runtime_contract.py"
+      - "scripts/live_stat_worker_contract.py"
+      - "scripts/ops_live_ingest.py"
+      - "scripts/ops_live_ingest_tests.py"
+      - "docs/LIVE_STAT_WORKER.md"
+      - ".env.example"
       - ".github/workflows/live-stat-refresh-contracts.yml"
   workflow_dispatch:
 
@@ -35,8 +59,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate sources
-        run: python -m py_compile scripts/live_stat_refresh_runtime_contract.py
+      - name: Validate sources and cron routing
+        run: |
+          python -m py_compile \
+            scripts/live_stat_refresh_runtime_contract.py \
+            scripts/live_stat_worker_contract.py \
+            scripts/ops_live_ingest.py \
+            scripts/ops_live_ingest_tests.py
+          python scripts/live_stat_worker_contract.py
+          python scripts/ops_live_ingest_tests.py
       - name: Compile and run orchestration rules
         run: |
           g++ -std=c++17 -Wall -Wextra -pedantic \
@@ -45,6 +76,16 @@ jobs:
             backend/src/live_stat_orchestration.cpp \
             -o /tmp/live_stat_orchestration_tests
           /tmp/live_stat_orchestration_tests
+
+  production-build:
+    name: Production backend image
+    needs: contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t college-ff-live-stat-worker .
 
   postgres-contract:
     name: PostgreSQL ingest and refresh concurrency
@@ -72,13 +113,10 @@ jobs:
           python-version: "3.12"
       - name: Install contract dependency
         run: python -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
-      - name: Apply production migrations
+      - name: Apply production schema and migrations
         env:
-          PGPASSWORD: postgres
-        run: |
-          for migration in backend/db/migrations/*.sql; do
-            psql -h 127.0.0.1 -U postgres -d cff -v ON_ERROR_STOP=1 -f "$migration"
-          done
+          DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+        run: sh backend/db/migrate.sh
       - name: Run concurrency and partial-failure contract
         env:
           DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff

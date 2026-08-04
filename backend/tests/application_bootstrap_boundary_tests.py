@@ -30,6 +30,7 @@ for forbidden in (
     "loadRuntimeConfig",
     "configureSecurityAndCors",
     "configureCfbdIngest",
+    "configureLiveStatWorker",
     "configureListener",
     "registerApplicationRoutes",
     "app.run()",
@@ -40,12 +41,17 @@ for forbidden in (
 require("int runApplication();" in HEADER, "application bootstrap interface missing")
 require("int runApplication()" in BOOTSTRAP, "application bootstrap implementation missing")
 require("#ifdef DROGON_FOUND" in BOOTSTRAP, "bootstrap must retain Drogon and stub paths")
+require(
+    '#include "live_stat_worker.h"' in BOOTSTRAP,
+    "bootstrap must include the live stat worker interface",
+)
 
 ordered_steps = (
     "drogon::app()",
     "cff::config::loadRuntimeConfig()",
     "cff::server_runtime::configureSecurityAndCors(",
     "cff::ingest_runtime::configureCfbdIngest(",
+    "cff::live_stats::configureLiveStatWorker();",
     "cff::server_runtime::configureListener(",
     "cff::app_composition::registerApplicationRoutes(",
     "app.run();",
@@ -54,6 +60,10 @@ positions = [BOOTSTRAP.index(step) for step in ordered_steps]
 require(
     positions == sorted(positions),
     "application startup order changed",
+)
+require(
+    BOOTSTRAP.count("cff::live_stats::configureLiveStatWorker();") == 1,
+    "live stat worker must be configured exactly once",
 )
 
 for stub_line in (
@@ -68,5 +78,6 @@ require(
     "application_bootstrap.cpp must compile in stub and production targets",
 )
 require("src/main.cpp" in CMAKE, "main.cpp must remain the executable entry point")
+require("src/live_stat_worker.cpp" in CMAKE, "production target must compile live_stat_worker.cpp")
 
 print("application bootstrap boundary contracts passed")

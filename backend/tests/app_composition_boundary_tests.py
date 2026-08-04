@@ -33,6 +33,7 @@ route_registrations = (
     "cff::health::registerHealthRoutes(app, jwtSecret, allowedOrigins);",
     "cff::auth::registerAuthRoutes(app, jwtSecret, allowedOrigins);",
     "cff::operations::registerOperationsRoutes(app, jwtSecret, allowedOrigins);",
+    "cff::live_stats::registerLiveStatRoutes(app, jwtSecret, allowedOrigins);",
     "cff::league::registerLeagueRoutes(app, jwtSecret, allowedOrigins);",
     "cff::public_api::registerPublicRoutes(app, allowedOrigins);",
 )
@@ -48,13 +49,14 @@ for registration in route_registrations:
 positions = [COMPOSITION.index(registration) for registration in route_registrations]
 require(
     positions == sorted(positions),
-    "route group order changed: health, auth, operations, league, public must remain stable",
+    "route group order changed: health, auth, operations, live stats, league, public must remain stable",
 )
 
 for include in (
     '#include "health_routes.h"',
     '#include "auth_routes.h"',
     '#include "operations_routes.h"',
+    '#include "live_stat_routes.h"',
     '#include "league_routes.h"',
     '#include "public_routes.h"',
 ):
@@ -76,5 +78,6 @@ require(
 )
 require("src/app_composition.cpp" in CMAKE, "production target must compile app_composition.cpp")
 require("src/application_bootstrap.cpp" in CMAKE, "targets must compile application_bootstrap.cpp")
+require("src/live_stat_routes.cpp" in CMAKE, "production target must compile live_stat_routes.cpp")
 
 print("application composition boundary contracts passed")

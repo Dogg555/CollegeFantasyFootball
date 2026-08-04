@@ -66,6 +66,9 @@ add_executable(college_ff_server
     src/ingest_runtime.cpp
     src/cfbd_ingest.cpp
     src/live_scores.cpp
+    src/live_stat_orchestration.cpp
+    src/live_stat_worker.cpp
+    src/live_stat_routes.cpp
 )
 
 # Drogon 1.9.7's handler traits support free-function pointers but not the
