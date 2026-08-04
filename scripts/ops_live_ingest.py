@@ -36,7 +36,7 @@ def decode_response(text):
 def request(method, path, *, admin=False, timeout=60):
     headers = {
         "Accept": "application/json",
-        "User-Agent": "college-ff-live-score-cron/1.0",
+        "User-Agent": "college-ff-live-score-cron/2.0",
     }
     if admin:
         if not ADMIN_TOKEN:
@@ -51,6 +51,8 @@ def request(method, path, *, admin=False, timeout=60):
         status = exc.code
         body = exc.read().decode("utf-8")
     payload = decode_response(body)
+    if status == 409 and payload.get("code") == "ingest_already_running":
+        return payload
     if status < 200 or status >= 300:
         raise RuntimeError(f"{method} {path} failed with {status}: {payload}")
     return payload
@@ -73,6 +75,21 @@ def request_with_retries(path, retries, delay_seconds):
     raise RuntimeError(f"GET {path} failed after {retries} attempts: {last_error}")
 
 
+def successful_worker_result(payload):
+    status = str(payload.get("status", "")).lower()
+    code = str(payload.get("code", "")).lower()
+    if status == "succeeded":
+        return True
+    if status == "duplicate" and code == "duplicate_ingest":
+        return True
+    if status == "skipped" and code in {
+        "duplicate_ingest",
+        "ingest_already_running",
+    }:
+        return True
+    return False
+
+
 def main():
     if not BASE_URL.startswith(("http://", "https://")):
         raise RuntimeError("CFF_API_BASE_URL must start with http:// or https://")
@@ -87,15 +104,15 @@ def main():
     }
     result["ingest"] = request(
         "POST",
-        "/api/admin/ingest/cfbd/live",
+        "/api/admin/live-stats/run",
         admin=True,
         timeout=timeout,
     )
-    if str(result["ingest"].get("status", "")).lower() != "ok":
+    if not successful_worker_result(result["ingest"]):
         raise RuntimeError(f"Live score ingestion did not complete successfully: {result['ingest']}")
     result["status"] = request(
         "GET",
-        "/api/admin/ingest/cfbd/live/status",
+        "/api/admin/live-stats/status",
         admin=True,
         timeout=30,
     )
