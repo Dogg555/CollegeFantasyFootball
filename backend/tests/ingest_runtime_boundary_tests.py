@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = (ROOT / "backend/src/main.cpp").read_text(encoding="utf-8")
+BOOTSTRAP = (ROOT / "backend/src/application_bootstrap.cpp").read_text(encoding="utf-8")
 HEADER = (ROOT / "backend/src/ingest_runtime.h").read_text(encoding="utf-8")
 IMPLEMENTATION = (ROOT / "backend/src/ingest_runtime.cpp").read_text(encoding="utf-8")
 CMAKE = (ROOT / "backend/CMakeLists.txt").read_text(encoding="utf-8")
@@ -14,14 +15,18 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-require('#include "ingest_runtime.h"' in MAIN, "main.cpp must include the ingestion runtime")
 require(
-    MAIN.count("cff::ingest_runtime::configureCfbdIngest(") == 1,
-    "main.cpp must delegate ingestion lifecycle exactly once",
+    MAIN.count("cff::application::runApplication()") == 1,
+    "main.cpp must delegate application startup exactly once",
+)
+require('#include "ingest_runtime.h"' in BOOTSTRAP, "bootstrap must include the ingestion runtime")
+require(
+    BOOTSTRAP.count("cff::ingest_runtime::configureCfbdIngest(") == 1,
+    "bootstrap must delegate ingestion lifecycle exactly once",
 )
 require(
-    "cff::runCfbdIngestOnce" in MAIN,
-    "main.cpp must inject the existing one-shot ingestion function",
+    "cff::runCfbdIngestOnce" in BOOTSTRAP,
+    "bootstrap must inject the existing one-shot ingestion function",
 )
 
 for forbidden in (
@@ -33,6 +38,7 @@ for forbidden in (
     "while (true)",
 ):
     require(forbidden not in MAIN, f"main.cpp still owns ingestion runtime detail: {forbidden}")
+    require(forbidden not in BOOTSTRAP, f"bootstrap contains ingestion runtime implementation: {forbidden}")
 
 for contract in (
     "using IngestRunner",
@@ -53,13 +59,8 @@ for owned_detail in (
 ):
     require(owned_detail in IMPLEMENTATION, f"ingestion runtime does not own {owned_detail}")
 
-require(
-    "src/ingest_runtime.cpp" in CMAKE,
-    "production target must compile the ingestion runtime module",
-)
-require(
-    "tests/ingest_runtime_tests.cpp" in CMAKE,
-    "CTest must register deterministic ingestion runtime tests",
-)
+require("src/ingest_runtime.cpp" in CMAKE, "production target must compile the ingestion runtime module")
+require("tests/ingest_runtime_tests.cpp" in CMAKE, "CTest must register deterministic ingestion runtime tests")
+require("src/application_bootstrap.cpp" in CMAKE, "targets must compile application_bootstrap.cpp")
 
 print("ingestion runtime boundary contracts passed")

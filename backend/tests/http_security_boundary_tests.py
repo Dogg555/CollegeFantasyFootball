@@ -3,6 +3,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 main = (root / "backend/src/main.cpp").read_text(encoding="utf-8")
+bootstrap = (root / "backend/src/application_bootstrap.cpp").read_text(encoding="utf-8")
 composition = (root / "backend/src/app_composition.cpp").read_text(encoding="utf-8")
 server_runtime = (root / "backend/src/server_runtime.cpp").read_text(encoding="utf-8")
 auth_routes = (root / "backend/src/auth_routes.cpp").read_text(encoding="utf-8")
@@ -39,31 +40,32 @@ for implementation in (
     "void applyCorsHeaders(",
     "drogon::HttpResponsePtr buildPreflightResponse(",
 ):
-    if implementation in main:
-        raise SystemExit(f"shared HTTP security implementation leaked into main.cpp: {implementation}")
-    if implementation in composition:
-        raise SystemExit(f"shared HTTP security implementation leaked into app_composition.cpp: {implementation}")
-    if implementation in server_runtime:
-        raise SystemExit(f"shared HTTP security implementation leaked into server_runtime.cpp: {implementation}")
-    if implementation in auth_routes:
-        raise SystemExit(f"shared HTTP security implementation leaked into auth_routes.cpp: {implementation}")
-    if implementation in operations_routes:
-        raise SystemExit(f"shared HTTP security implementation leaked into operations_routes.cpp: {implementation}")
-    if implementation in league_routes:
-        raise SystemExit(f"shared HTTP security implementation leaked into league_routes.cpp: {implementation}")
-    if implementation in public_routes:
-        raise SystemExit(f"shared HTTP security implementation leaked into public_routes.cpp: {implementation}")
+    for owner_name, source in (
+        ("main.cpp", main),
+        ("application_bootstrap.cpp", bootstrap),
+        ("app_composition.cpp", composition),
+        ("server_runtime.cpp", server_runtime),
+        ("auth_routes.cpp", auth_routes),
+        ("operations_routes.cpp", operations_routes),
+        ("league_routes.cpp", league_routes),
+        ("public_routes.cpp", public_routes),
+    ):
+        if implementation in source:
+            raise SystemExit(f"shared HTTP security implementation leaked into {owner_name}: {implementation}")
 
-required_main_delegation = (
+if "cff::application::runApplication()" not in main:
+    raise SystemExit("main.cpp must delegate to the application bootstrap")
+
+required_bootstrap_delegation = (
     "cff::server_runtime::configureSecurityAndCors(",
     "cff::app_composition::registerApplicationRoutes(",
 )
-for delegation in required_main_delegation:
-    if delegation not in main:
-        raise SystemExit(f"main.cpp HTTP security delegation missing: {delegation}")
+for delegation in required_bootstrap_delegation:
+    if delegation not in bootstrap:
+        raise SystemExit(f"application bootstrap HTTP security delegation missing: {delegation}")
 
-if "cff::public_api::registerPublicRoutes(" in main:
-    raise SystemExit("main.cpp must not directly own public route composition")
+if "cff::public_api::registerPublicRoutes(" in main or "cff::public_api::registerPublicRoutes(" in bootstrap:
+    raise SystemExit("entry-point layers must not directly own public route composition")
 if "cff::public_api::registerPublicRoutes(app, allowedOrigins)" not in composition:
     raise SystemExit("app_composition.cpp must register the public route group")
 
@@ -101,12 +103,8 @@ for delegation in required_league_route_delegation:
     if delegation not in league_routes:
         raise SystemExit(f"league_routes.cpp HTTP security delegation missing: {delegation}")
 
-required_public_route_delegation = (
-    "cff::http::buildPreflightResponse(request, allowedOrigins)",
-)
-for delegation in required_public_route_delegation:
-    if delegation not in public_routes:
-        raise SystemExit(f"public_routes.cpp HTTP security delegation missing: {delegation}")
+if "cff::http::buildPreflightResponse(request, allowedOrigins)" not in public_routes:
+    raise SystemExit("public_routes.cpp HTTP security delegation missing")
 
 required_behavior = (
     'error["error"] = "Unauthorized"',
@@ -125,11 +123,13 @@ for contract in required_behavior:
     if contract not in security:
         raise SystemExit(f"HTTP security behavior contract missing: {contract}")
 
-if "src/http_security.cpp" not in cmake:
-    raise SystemExit("http_security.cpp is not part of the production target")
-if "src/server_runtime.cpp" not in cmake:
-    raise SystemExit("server_runtime.cpp is not part of the production target")
-if "src/app_composition.cpp" not in cmake:
-    raise SystemExit("app_composition.cpp is not part of the production target")
+for source_path in (
+    "src/http_security.cpp",
+    "src/server_runtime.cpp",
+    "src/app_composition.cpp",
+    "src/application_bootstrap.cpp",
+):
+    if source_path not in cmake:
+        raise SystemExit(f"{source_path} is not part of the server targets")
 
 print("HTTP security boundary contracts passed")
