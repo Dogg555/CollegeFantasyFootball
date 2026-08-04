@@ -122,6 +122,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
     writeStylesheet('beta-ui.css', 'data-cff-beta="true"');
     writeStylesheet('league-nav.css', 'data-cff-league-nav="true"');
     writeStylesheet('workspace-ui.css', 'data-cff-workspace="true"');
+    writeStylesheet('mobile-density.css', 'data-cff-mobile-density="true"');
     scripts.forEach((source) => {
       document.write(`<script src="${assetUrl(source)}"><\/script>`);
     });
@@ -134,6 +135,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
   appendStylesheet('beta-ui.css', 'cffBeta');
   appendStylesheet('league-nav.css', 'cffLeagueNav');
   appendStylesheet('workspace-ui.css', 'cffWorkspace');
+  appendStylesheet('mobile-density.css', 'cffMobileDensity');
 
   scripts.reduce((chain, source) => chain.then(() => new Promise((resolve, reject) => {
     const versionedSource = assetUrl(source);

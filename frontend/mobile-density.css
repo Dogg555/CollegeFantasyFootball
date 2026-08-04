@@ -1,0 +1,139 @@
+/* Mobile-first density and feedback fixes from the staging UI audit. */
+
+/* Keep transient feedback away from bottom controls and browser chrome. */
+@media (max-width: 760px) {
+  .cff-toast-region {
+    top: calc(76px + env(safe-area-inset-top, 0px));
+    right: 12px;
+    bottom: auto;
+    left: 12px;
+    width: auto;
+    max-height: min(42vh, 320px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .cff-toast {
+    padding: 11px 12px;
+    border-radius: 11px;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
+  }
+
+  .cff-toast__copy {
+    font-size: 0.88rem;
+    line-height: 1.35;
+  }
+
+  /* Reduce unnecessary scrolling while preserving 44px touch targets. */
+  .beta-ui .layout,
+  .beta-ui .layout--wide,
+  .beta-ui .auth-layout {
+    padding-inline: 12px;
+  }
+
+  .beta-ui .card {
+    padding: 16px;
+  }
+
+  .beta-ui .card__header {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .beta-ui .card__header h1,
+  .beta-ui .card__header h2,
+  .beta-ui .card__header h3 {
+    line-height: 1.08;
+  }
+
+  .beta-ui .form {
+    gap: 14px;
+  }
+
+  .beta-ui .field input,
+  .beta-ui .field select,
+  .beta-ui .field textarea,
+  .beta-ui .search input,
+  .beta-ui .search select,
+  .beta-ui .lineup-select,
+  .beta-ui .league-tab-select,
+  .beta-ui .scoreboard-select {
+    min-height: 48px;
+  }
+
+  .beta-ui .compact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .beta-ui .compact-grid > * {
+    min-width: 0;
+  }
+
+  .beta-ui .summary__card {
+    gap: 10px;
+  }
+
+  .beta-ui .summary__row {
+    padding-block: 9px;
+  }
+
+  .beta-ui .row {
+    gap: 10px;
+    padding-block: 12px;
+  }
+
+  /* Secondary actions should not visually compete with the primary action. */
+  .beta-ui .cta-row {
+    gap: 9px;
+  }
+
+  .beta-ui .cta-row .button:not(.button--primary),
+  .beta-ui .card__header .button:not(.button--primary) {
+    min-height: 42px;
+  }
+
+  /* Keep horizontal league navigation usable without clipping labels. */
+  .beta-ui .league-tabs {
+    position: sticky;
+    top: 66px;
+    z-index: 8;
+    margin-inline: -12px;
+    padding-inline: 12px;
+    border-radius: 0;
+    background: rgba(8, 13, 18, 0.94);
+    backdrop-filter: blur(16px);
+  }
+
+  .beta-ui .league-tab {
+    flex: 0 0 auto;
+    min-width: max-content;
+  }
+
+  /* Draft and player lists are scan-heavy; tighten each row slightly. */
+  .beta-ui #draft-queue .row,
+  .beta-ui #roster-list .row,
+  .beta-ui #draft-order-list .row,
+  .beta-ui #draft-pick-list .row,
+  .beta-ui #upcoming-pick-list .row,
+  .beta-ui #recommended-list .row,
+  .beta-ui #player-list .row,
+  .beta-ui #players-list .row {
+    padding-block: 11px;
+  }
+}
+
+@media (max-width: 420px) {
+  .beta-ui .compact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .beta-ui .card {
+    padding: 14px;
+  }
+
+  .beta-ui .pill,
+  .beta-ui .badge {
+    font-size: 0.74rem;
+  }
+}
