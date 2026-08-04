@@ -13,6 +13,8 @@ on:
       - "frontend/resend-verification.html"
       - "frontend/resend-verification-cooldown.js"
       - "frontend/tests/resend-verification-cooldown.test.js"
+      - "backend/src/auth_session_store.cpp"
+      - "backend/tests/logout_revocation_contract_tests.py"
       - "backend/tests/private_page_auth_recovery_tests.py"
       - "backend/tests/auth_redirect_contract_tests.py"
       - ".github/workflows/frontend-auth-reliability.yml"
@@ -28,6 +30,8 @@ on:
       - "frontend/resend-verification.html"
       - "frontend/resend-verification-cooldown.js"
       - "frontend/tests/resend-verification-cooldown.test.js"
+      - "backend/src/auth_session_store.cpp"
+      - "backend/tests/logout_revocation_contract_tests.py"
       - "backend/tests/private_page_auth_recovery_tests.py"
       - "backend/tests/auth_redirect_contract_tests.py"
       - ".github/workflows/frontend-auth-reliability.yml"
@@ -70,5 +74,6 @@ jobs:
         run: |
           python backend/tests/private_page_auth_recovery_tests.py
           python backend/tests/auth_redirect_contract_tests.py
+          python backend/tests/logout_revocation_contract_tests.py
           node frontend/tests/logout-reliability.test.js
           node frontend/tests/resend-verification-cooldown.test.js
