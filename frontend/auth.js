@@ -35,6 +35,8 @@ const urlParams = new URLSearchParams(window.location.search);
 const pendingInvite = urlParams.get('invite');
 const verificationTokenParam = urlParams.get('verify') || urlParams.get('token');
 const resetTokenParam = urlParams.get('reset') || urlParams.get('token');
+const authRedirectReason = urlParams.get('reason') || '';
+const privateDestinations = new Set(['league.html', 'draft.html']);
 
 function setStatus(el, message, isError = false) {
   if (!el) return;
@@ -44,6 +46,30 @@ function setStatus(el, message, isError = false) {
 
 function canonicalEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function safeNextDestination(value, fallback = 'league.html') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+
+  try {
+    const destination = new URL(raw, window.location.href);
+    if (destination.origin !== window.location.origin) return fallback;
+    const page = destination.pathname.split('/').pop() || '';
+    if (!privateDestinations.has(page)) return fallback;
+    return `${page}${destination.search}${destination.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
+const requestedNext = safeNextDestination(urlParams.get('next'));
+
+function postAuthDestination(fallback = 'league.html') {
+  if (pendingInvite) {
+    return `league.html?invite=${encodeURIComponent(pendingInvite)}`;
+  }
+  return requestedNext || fallback;
 }
 
 function authHealthUrl() {
@@ -215,6 +241,15 @@ function updateAuthUi() {
   if (signOutBtn) signOutBtn.hidden = !storedAuth;
 }
 
+function showAuthRedirectMessage() {
+  if (!loginStatus) return;
+  if (authRedirectReason === 'session-expired') {
+    setStatus(loginStatus, 'Your session expired. Sign in again to continue where you left off.', true);
+  } else if (authRedirectReason === 'signin-required') {
+    setStatus(loginStatus, 'Sign in to continue to that page.');
+  }
+}
+
 function createLocalSession(email) {
   return {
     email,
@@ -291,9 +326,7 @@ async function submitAuthForm(path, rawEmail, password, statusEl, redirectTo, fo
 
       setStatus(statusEl, data.message || 'Success');
       if (authenticated && redirectTo) {
-        window.location.href = pendingInvite
-          ? `${redirectTo}?invite=${encodeURIComponent(pendingInvite)}`
-          : redirectTo;
+        window.location.href = postAuthDestination(redirectTo);
       }
     } catch (error) {
       if (path === '/auth/signup' && error.status === 409) {
@@ -319,7 +352,7 @@ async function submitAuthForm(path, rawEmail, password, statusEl, redirectTo, fo
       const local = createLocalSession(email);
       saveAuth(local.email, local.token);
       setStatus(statusEl, local.message);
-      if (redirectTo) window.location.href = redirectTo;
+      if (redirectTo) window.location.href = postAuthDestination(redirectTo);
     }
   } finally {
     finish();
@@ -339,7 +372,7 @@ signupForm?.addEventListener('submit', async (event) => {
 
 loginForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
-  await submitAuthForm('/auth/login', loginEmail.value, loginPassword.value, loginStatus, 'league.html', loginForm);
+  await submitAuthForm('/auth/login', loginEmail.value, loginPassword.value, loginStatus, requestedNext, loginForm);
 });
 
 verifyForm?.addEventListener('submit', async (event) => {
@@ -441,11 +474,21 @@ async function initAuthPage() {
   if (resetEmail && emailParam) resetEmail.value = emailParam;
   if (loginEmail && emailParam) loginEmail.value = emailParam;
   if (resendEmail && signupEmail?.value) resendEmail.value = canonicalEmail(signupEmail.value);
+
+  loadStoredAuth();
+  if (storedAuth && authNote) authNote.textContent = 'Checking your saved session...';
+  if (signOutBtn) signOutBtn.hidden = true;
+
+  const sessionResult = typeof validateAuthSessionResult === 'function'
+    ? await validateAuthSessionResult()
+    : { authenticated: await validateAuthSession(), unavailable: false, expired: false };
+
   loadStoredAuth();
   updateAuthUi();
-  await validateAuthSession();
-  loadStoredAuth();
-  updateAuthUi();
+  if (sessionResult.unavailable && storedAuth && authNote) {
+    authNote.textContent = 'A saved session exists, but the authentication service could not verify it yet.';
+  }
+  showAuthRedirectMessage();
   await checkAuthApiStatus();
   stripUrlParams();
 }
