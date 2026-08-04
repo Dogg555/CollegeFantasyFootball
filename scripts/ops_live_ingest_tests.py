@@ -54,32 +54,79 @@ class OpsLiveIngestTests(unittest.TestCase):
         calls, output = self.run_main({
             ("GET", "/health"): {"status": "ok", "database": "ok"},
             ("GET", "/api/health"): {"status": "ok", "database": "ok"},
-            ("POST", "/api/admin/ingest/cfbd/live"): {
-                "status": "ok",
+            ("POST", "/api/admin/live-stats/run"): {
+                "status": "succeeded",
+                "code": "ingest_started",
                 "games": 22,
                 "liveGames": 4,
                 "apiCalls": 1,
             },
-            ("GET", "/api/admin/ingest/cfbd/live/status"): {
+            ("GET", "/api/admin/live-stats/status"): {
                 "status": "ok",
-                "monthlyApiCalls": 301,
+                "runs": [],
+                "freshness": [],
             },
         })
 
         self.assertIn('"liveGames": 4', output)
-        self.assertIn(("POST", "/api/admin/ingest/cfbd/live", True, 90), calls)
-        self.assertIn(("GET", "/api/admin/ingest/cfbd/live/status", True, 30), calls)
+        self.assertIn(("POST", "/api/admin/live-stats/run", True, 90), calls)
+        self.assertIn(("GET", "/api/admin/live-stats/status", True, 30), calls)
+        self.assertNotIn(
+            ("POST", "/api/admin/ingest/cfbd/live", True, 90), calls
+        )
+
+    def test_recent_duplicate_is_a_successful_no_op(self):
+        calls, output = self.run_main({
+            ("GET", "/health"): {"status": "ok", "database": "ok"},
+            ("GET", "/api/health"): {"status": "ok", "database": "ok"},
+            ("POST", "/api/admin/live-stats/run"): {
+                "status": "duplicate",
+                "code": "duplicate_ingest",
+                "accepted": False,
+            },
+            ("GET", "/api/admin/live-stats/status"): {"status": "ok"},
+        })
+
+        self.assertIn('"duplicate_ingest"', output)
+        self.assertIn(("POST", "/api/admin/live-stats/run", True, 90), calls)
+
+    def test_already_running_is_a_successful_no_op(self):
+        calls, output = self.run_main({
+            ("GET", "/health"): {"status": "ok", "database": "ok"},
+            ("GET", "/api/health"): {"status": "ok", "database": "ok"},
+            ("POST", "/api/admin/live-stats/run"): {
+                "status": "skipped",
+                "code": "ingest_already_running",
+                "accepted": False,
+            },
+            ("GET", "/api/admin/live-stats/status"): {"status": "ok"},
+        })
+
+        self.assertIn('"ingest_already_running"', output)
+        self.assertIn(("POST", "/api/admin/live-stats/run", True, 90), calls)
 
     def test_partial_result_fails_cron(self):
         with self.assertRaisesRegex(RuntimeError, "did not complete successfully"):
             self.run_main({
                 ("GET", "/health"): {"status": "ok", "database": "ok"},
                 ("GET", "/api/health"): {"status": "ok", "database": "ok"},
-                ("POST", "/api/admin/ingest/cfbd/live"): {
+                ("POST", "/api/admin/live-stats/run"): {
                     "status": "partial",
                     "errors": ["provider timeout"],
                 },
-                ("GET", "/api/admin/ingest/cfbd/live/status"): {"status": "failed"},
+                ("GET", "/api/admin/live-stats/status"): {"status": "failed"},
+            })
+
+    def test_failed_result_fails_cron(self):
+        with self.assertRaisesRegex(RuntimeError, "did not complete successfully"):
+            self.run_main({
+                ("GET", "/health"): {"status": "ok", "database": "ok"},
+                ("GET", "/api/health"): {"status": "ok", "database": "ok"},
+                ("POST", "/api/admin/live-stats/run"): {
+                    "status": "failed",
+                    "errors": ["provider unavailable"],
+                },
+                ("GET", "/api/admin/live-stats/status"): {"status": "failed"},
             })
 
     def test_missing_admin_token_fails_before_provider_call(self):
@@ -88,9 +135,22 @@ class OpsLiveIngestTests(unittest.TestCase):
             self.run_main({
                 ("GET", "/health"): {"status": "ok", "database": "ok"},
                 ("GET", "/api/health"): {"status": "ok", "database": "ok"},
-                ("POST", "/api/admin/ingest/cfbd/live"): {"status": "ok"},
-                ("GET", "/api/admin/ingest/cfbd/live/status"): {"status": "ok"},
+                ("POST", "/api/admin/live-stats/run"): {"status": "succeeded"},
+                ("GET", "/api/admin/live-stats/status"): {"status": "ok"},
             })
+
+    def test_worker_result_classifier(self):
+        self.assertTrue(OPS_LIVE.successful_worker_result({"status": "succeeded"}))
+        self.assertTrue(OPS_LIVE.successful_worker_result({
+            "status": "duplicate",
+            "code": "duplicate_ingest",
+        }))
+        self.assertTrue(OPS_LIVE.successful_worker_result({
+            "status": "skipped",
+            "code": "ingest_already_running",
+        }))
+        self.assertFalse(OPS_LIVE.successful_worker_result({"status": "partial"}))
+        self.assertFalse(OPS_LIVE.successful_worker_result({"status": "failed"}))
 
 
 if __name__ == "__main__":
