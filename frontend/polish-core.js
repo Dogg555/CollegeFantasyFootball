@@ -4,9 +4,18 @@
   const READ_REQUEST_TIMEOUT_MS = 20000;
   const MUTATION_REQUEST_TIMEOUT_MS = 60000;
   const BUSY_TIMEOUT_MS = 62000;
+  const NOTIFICATION_DEDUP_MS = 8000;
+  const MUTATION_CONTROL_SELECTOR = [
+    'form:not([method="get"]):not([data-cff-allow-outage="true"]) button[type="submit"]',
+    'form:not([method="get"]):not([data-cff-allow-outage="true"]) input[type="submit"]',
+    '[data-cff-mutation="true"]'
+  ].join(', ');
   const nativeFetch = window.fetch.bind(window);
   const busyControls = new Set();
+  const notificationHistory = new Map();
   let activeRequests = 0;
+  let serviceUnavailable = false;
+  let outageObserver = null;
 
   function emit(name, detail = {}) {
     document.dispatchEvent(new CustomEvent(name, { detail }));
@@ -98,8 +107,9 @@
       banner.setAttribute('role', 'status');
       banner.setAttribute('aria-live', 'polite');
       const message = create('span', 'cff-network-status__message');
-      const retry = create('button', 'button button--ghost cff-network-status__retry', 'Retry');
+      const retry = create('button', 'button button--ghost cff-network-status__retry', 'Retry page');
       retry.type = 'button';
+      retry.dataset.cffAllowOutage = 'true';
       retry.addEventListener('click', () => window.location.reload());
       banner.append(message, retry);
       const topbar = document.querySelector('.topbar');
@@ -115,8 +125,23 @@
     }
   }
 
+  function notificationKey(message, type) {
+    return `${String(type || 'info').trim().toLowerCase()}::${String(message || '').trim()}`;
+  }
+
   function notify(message, type = 'info', timeout = 4200) {
     if (!message) return;
+    const key = notificationKey(message, type);
+    const now = Date.now();
+    const lastShownAt = notificationHistory.get(key) || 0;
+    if (now - lastShownAt < NOTIFICATION_DEDUP_MS) return;
+    notificationHistory.set(key, now);
+    if (notificationHistory.size > 50) {
+      for (const [historyKey, shownAt] of notificationHistory) {
+        if (now - shownAt > NOTIFICATION_DEDUP_MS) notificationHistory.delete(historyKey);
+      }
+    }
+
     ensureFeedbackUi();
     const region = document.getElementById('cff-toast-region');
     const toast = create('div', `cff-toast cff-toast--${type}`);
@@ -128,6 +153,7 @@
     close.addEventListener('click', () => toast.remove());
     toast.append(copy, close);
     region.appendChild(toast);
+    positionToastRegion();
     requestAnimationFrame(() => toast.classList.add('is-visible'));
     window.setTimeout(() => {
       toast.classList.remove('is-visible');
@@ -135,17 +161,66 @@
     }, timeout);
   }
 
+  function positionToastRegion() {
+    ensureFeedbackUi();
+    const region = document.getElementById('cff-toast-region');
+    if (!region) return;
+    if (!window.matchMedia('(max-width: 760px)').matches) {
+      region.style.removeProperty('top');
+      return;
+    }
+    const banner = document.getElementById('cff-network-status');
+    const topbar = document.querySelector('.topbar');
+    const anchor = banner && !banner.hidden ? banner : topbar;
+    const bottom = anchor?.getBoundingClientRect().bottom || 64;
+    region.style.top = `${Math.max(12, Math.ceil(bottom + 12))}px`;
+  }
+
+  function markControlUnavailable(control) {
+    if (!control || control.dataset.cffNetworkDisabled === 'true' || control.disabled) return;
+    control.dataset.cffNetworkDisabled = 'true';
+    control.dataset.cffNetworkTitle = control.getAttribute('title') || '';
+    control.disabled = true;
+    control.setAttribute('aria-disabled', 'true');
+    control.setAttribute('title', 'Unavailable while the service is offline.');
+  }
+
+  function restoreControl(control) {
+    if (!control || control.dataset.cffNetworkDisabled !== 'true') return;
+    control.disabled = false;
+    control.removeAttribute('aria-disabled');
+    const originalTitle = control.dataset.cffNetworkTitle || '';
+    if (originalTitle) control.setAttribute('title', originalTitle);
+    else control.removeAttribute('title');
+    delete control.dataset.cffNetworkDisabled;
+    delete control.dataset.cffNetworkTitle;
+  }
+
+  function setMutationControlsUnavailable(unavailable) {
+    serviceUnavailable = Boolean(unavailable);
+    document.documentElement.classList.toggle('cff-api-unavailable', serviceUnavailable);
+    document.documentElement.dataset.cffApiUnavailable = String(serviceUnavailable);
+    if (serviceUnavailable) {
+      document.querySelectorAll(MUTATION_CONTROL_SELECTOR).forEach(markControlUnavailable);
+      return;
+    }
+    document.querySelectorAll('[data-cff-network-disabled="true"]').forEach(restoreControl);
+  }
+
   function setNetworkStatus(online, message = '') {
     ensureFeedbackUi();
     const banner = document.getElementById('cff-network-status');
     const copy = banner?.querySelector('.cff-network-status__message');
     if (!banner || !copy) return;
+    const unavailable = !online;
     banner.hidden = online && !message;
-    banner.classList.toggle('is-error', !online);
+    banner.classList.toggle('is-error', unavailable);
     banner.classList.toggle('is-working', online && Boolean(message));
     copy.textContent = message || (online
       ? 'Connection restored.'
       : 'You are offline. Cached league and draft data remain available on this device.');
+    setMutationControlsUnavailable(unavailable);
+    requestAnimationFrame(positionToastRegion);
   }
 
   function setBusy(control, busy, label = 'Working...') {
@@ -167,6 +242,7 @@
     delete control.dataset.cffBusy;
     delete control.dataset.cffOriginalText;
     busyControls.delete(control);
+    if (serviceUnavailable) markControlUnavailable(control);
   }
 
   function releaseBusy() {
@@ -218,11 +294,15 @@
     });
   }
 
+  function isProtectedMutationForm(form) {
+    if (!form || form.dataset.cffAllowOutage === 'true') return false;
+    return String(form.getAttribute('method') || 'post').toLowerCase() !== 'get';
+  }
+
   function enhanceConnectivity() {
     setNetworkStatus(navigator.onLine);
     window.addEventListener('offline', () => {
-      setNetworkStatus(false);
-      notify('You are offline. Cached data remains available.', 'error', 6000);
+      setNetworkStatus(false, 'You are offline. Cached data remains available.');
     });
     window.addEventListener('online', () => {
       setNetworkStatus(true, 'Connection restored. Refreshing current data...');
@@ -230,6 +310,13 @@
       window.setTimeout(() => setNetworkStatus(true), 2200);
       window.dispatchEvent(new Event('focus'));
     });
+    window.addEventListener('resize', positionToastRegion, { passive: true });
+    document.addEventListener('submit', (event) => {
+      if (!serviceUnavailable || !isProtectedMutationForm(event.target)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setNetworkStatus(false, 'The service could not be reached. Cached data remains available.');
+    }, true);
     document.addEventListener('cff:request-start', () => document.documentElement.classList.add('cff-request-active'));
     document.addEventListener('cff:request-end', (event) => {
       if (event.detail.activeRequests === 0) {
@@ -237,21 +324,41 @@
         releaseBusy();
       }
     });
+    document.addEventListener('cff:request-response', (event) => {
+      const status = Number(event.detail.status || 0);
+      if (status >= 500) {
+        setNetworkStatus(false, 'The service is temporarily unavailable. Cached data remains available.');
+      } else if (status > 0 && navigator.onLine && serviceUnavailable) {
+        setNetworkStatus(true);
+      }
+    });
     document.addEventListener('cff:request-error', (event) => {
       const message = event.detail.message || 'The service could not be reached.';
       setNetworkStatus(false, message);
-      notify(message, 'error', 6500);
     });
+
+    outageObserver = new MutationObserver(() => {
+      if (serviceUnavailable) setMutationControlsUnavailable(true);
+      positionToastRegion();
+    });
+    outageObserver.observe(document.body, { childList: true, subtree: true });
   }
 
   function boot() {
     ensureFeedbackUi();
     enhanceNavigation();
     enhanceConnectivity();
+    positionToastRegion();
   }
 
-  window.CFF_UI = Object.freeze({ notify, setBusy, friendlyError, setNetworkStatus });
-  window.CFF_POLISH = Object.freeze({ create, emit, releaseBusy });
+  window.CFF_UI = Object.freeze({
+    notify,
+    setBusy,
+    friendlyError,
+    setNetworkStatus,
+    setMutationControlsUnavailable
+  });
+  window.CFF_POLISH = Object.freeze({ create, emit, releaseBusy, positionToastRegion });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
   else boot();
 })();
