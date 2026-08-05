@@ -44,6 +44,14 @@ def main() -> None:
             "duplicate ownership conflicts are not explicit")
     require('waiver_claim_required' in mutations and 'claimEndpoint' in mutations,
             "waiver-mode direct-add blocking is missing")
+    require("league_matchups matchup" in database and "matchup.status = 'final'" in database,
+            "finalized matchups must lock roster mutations")
+    require("scoring_week_states scoring" in database and "scoring.status = 'final'" in database,
+            "finalized scoring weeks must lock roster mutations")
+    require("lineup.status = 'finalized'" in database and "week_state.status IN ('locked', 'finalized')" in database,
+            "lineup and schedule locks must block roster mutations")
+    require("Roster changes are locked after a matchup is finalized." in mutations and "lineup_locked" in mutations,
+            "all roster mutations must reject when roster changes are locked")
     require('uq_rosters_league_player' in migration,
             "one-player-per-league database constraint is missing")
     require('ROW_NUMBER() OVER' in migration and 'ownership_rank > 1' in migration,

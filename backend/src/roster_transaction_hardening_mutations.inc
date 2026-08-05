@@ -142,6 +142,13 @@ drogon::HttpResponsePtr mutateRoster(const drogon::HttpRequestPtr &request,
                              details);
     }
 
+    if (lineupLocked(connection.get(), leagueId)) {
+        rollback(connection.get());
+        return errorResponse(drogon::k409Conflict,
+                             "Roster changes are locked after a matchup is finalized.",
+                             "lineup_locked");
+    }
+
     if ((action == RosterAction::Add || action == RosterAction::Swap)
         && !cff::roster_transaction::directAcquisitionAllowed(access.waiverRules)) {
         Json::Value details(Json::objectValue);
@@ -206,12 +213,6 @@ drogon::HttpResponsePtr mutateRoster(const drogon::HttpRequestPtr &request,
     }
 
     if (action == RosterAction::Slot) {
-        if (lineupLocked(connection.get(), leagueId)) {
-            rollback(connection.get());
-            return errorResponse(drogon::k409Conflict,
-                                 "Lineup changes are locked after a matchup is finalized.",
-                                 "lineup_locked");
-        }
         Json::Value selectedPlayer(Json::objectValue);
         for (const auto &player : roster) {
             if (cff::roster_transaction::canonicalPlayerId(player.get("id", "").asString()) == slotPlayerId) {

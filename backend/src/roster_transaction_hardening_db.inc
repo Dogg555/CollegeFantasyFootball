@@ -182,14 +182,18 @@ Json::Value unavailablePlayerIds(PGconn *connection,
 
 bool lineupLocked(PGconn *connection, const std::string &leagueId) {
     auto result = execute(connection,
-        "SELECT 1 FROM schedule_week_states week_state "
-        "WHERE week_state.league_id = $1 AND week_state.status = 'locked' "
-        "AND NOT EXISTS ("
+        "SELECT 1 WHERE EXISTS ("
+        "  SELECT 1 FROM league_matchups matchup "
+        "  WHERE matchup.league_id = $1 AND matchup.status = 'final'"
+        ") OR EXISTS ("
         "  SELECT 1 FROM scoring_week_states scoring "
-        "  WHERE scoring.league_id = week_state.league_id "
-        "    AND scoring.season = week_state.season "
-        "    AND scoring.week = week_state.week "
-        "    AND scoring.status = 'final'"
+        "  WHERE scoring.league_id = $1 AND scoring.status = 'final'"
+        ") OR EXISTS ("
+        "  SELECT 1 FROM lineup_week_states lineup "
+        "  WHERE lineup.league_id = $1 AND lineup.status = 'finalized'"
+        ") OR EXISTS ("
+        "  SELECT 1 FROM schedule_week_states week_state "
+        "  WHERE week_state.league_id = $1 AND week_state.status IN ('locked', 'finalized')"
         ") LIMIT 1",
         {leagueId});
     return tuplesOk(result) && PQntuples(result.get()) > 0;
