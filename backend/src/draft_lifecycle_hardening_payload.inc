@@ -15,7 +15,9 @@ Json::Value draftPayload(PGconn *connection,
         "COALESCE(to_char(ds.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
         "ds.version, "
         "COALESCE(to_char(ds.completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
-        "l.draft_type, l.draft_lobby_open, l.roster_rules::text "
+        "l.draft_type, "
+        "(l.draft_lobby_open OR (l.draft_date IS NOT NULL AND l.draft_date <= NOW() + INTERVAL '30 minutes')), "
+        "l.roster_rules::text "
         "FROM draft_states ds JOIN leagues l ON l.id = ds.league_id WHERE ds.league_id = $1",
         {leagueId});
     if (!tuplesOk(state) || PQntuples(state.get()) == 0) return payload;

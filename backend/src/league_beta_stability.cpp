@@ -82,6 +82,14 @@ std::string writeJson(const Json::Value &value) {
     return Json::writeString(builder, value);
 }
 
+bool draftDateAtTopOfHour(const std::string &value) {
+    if (value.empty()) return true;
+    const auto marker = value.find('T');
+    return marker != std::string::npos
+        && value.size() >= marker + 6
+        && value.substr(marker + 3, 2) == "00";
+}
+
 std::string trim(std::string value) {
     value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
         return !std::isspace(ch);
@@ -203,7 +211,7 @@ std::optional<Json::Value> leaguePayload(PGconn *connection, const std::string &
     auto result = execParams(connection,
                              "SELECT id, name, team_count, scoring, scoring_settings::text, draft_type, "
                              "COALESCE(to_char(draft_date AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI'), ''), "
-                             "draft_lobby_open, "
+                             "(draft_lobby_open OR (draft_date IS NOT NULL AND draft_date <= NOW() + INTERVAL '30 minutes')), "
                              "COALESCE(to_char(draft_lobby_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI'), ''), "
                              "roster_rules::text, waiver_rules::text, trade_rules::text, notes, "
                              "to_json(invited_emails)::text, UPPER(SUBSTRING(MD5(id), 1, 8)) "
@@ -286,6 +294,10 @@ void handleSettings(const drogon::HttpRequestPtr &request,
         || !(*body).isMember("waiverRules") || !(*body)["waiverRules"].isObject()
         || !(*body).isMember("tradeRules") || !(*body)["tradeRules"].isObject()) {
         sendJson(callback, errorPayload("One or more league settings are invalid", "INVALID_SETTINGS"), drogon::k400BadRequest);
+        return;
+    }
+    if (!draftDateAtTopOfHour(draftDate)) {
+        sendJson(callback, errorPayload("Draft time must be scheduled at the top of an hour", "DRAFT_TIME_NOT_TOP_OF_HOUR"), drogon::k400BadRequest);
         return;
     }
 

@@ -21,6 +21,11 @@ LIFECYCLE = (ROOT / "backend" / "src" / "draft_lifecycle.cpp").read_text(encodin
 CPP_TESTS = (ROOT / "backend" / "tests" / "draft_lifecycle_tests.cpp").read_text(encoding="utf-8")
 MIGRATION = (ROOT / "backend" / "db" / "migrations" / "013_draft_lifecycle_reliability.sql").read_text(encoding="utf-8")
 CLIENT = (ROOT / "frontend" / "draft-lifecycle.js").read_text(encoding="utf-8")
+STATE = (ROOT / "frontend" / "state.js").read_text(encoding="utf-8")
+AUTH_BRIDGE = (ROOT / "frontend" / "draft-auth-bridge.js").read_text(encoding="utf-8")
+DRAFT_HTML = (ROOT / "frontend" / "draft.html").read_text(encoding="utf-8")
+INDEX_HTML = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+LEAGUE_HTML = (ROOT / "frontend" / "league.html").read_text(encoding="utf-8")
 CONFIG = (ROOT / "frontend" / "config.js").read_text(encoding="utf-8")
 CMAKE = (ROOT / "backend" / "CMakeLists.txt").read_text(encoding="utf-8")
 
@@ -64,6 +69,7 @@ require(HARDENING, "recordOperation", "confirmed draft operations must be record
 require(HARDENING, "allManagersReady", "start must evaluate every active manager")
 require(HARDENING, '"/draft/readiness"', "readiness endpoint must be handled by the lifecycle boundary")
 require(HARDENING, "last_seen_at", "draft GET/readiness requests must maintain presence")
+require(HARDENING, "draft_date <= NOW() + INTERVAL '30 minutes'", "draft lobby must auto-open before scheduled draft time")
 require(HARDENING, "version = version + 1", "every authoritative draft mutation must advance revision")
 require(HARDENING, "registerSyncAdvice(draftLifecycleAdvice)", "hardening must run before legacy draft handlers")
 
@@ -84,5 +90,12 @@ require(CLIENT, "draft-ready-toggle", "draft lobby must expose manager readiness
 require(CLIENT, "visibilitychange", "visible reconnects must re-fetch authoritative draft state")
 require(CLIENT, "addEventListener?.('online'", "network recovery must re-fetch authoritative draft state")
 require(CLIENT, "await syncDraft()", "conflicts must recover by fetching the latest board")
+require(STATE, "const DRAFT_LOBBY_AUTO_OPEN_MINUTES = 30", "frontend must mirror the server auto-open window")
+require(STATE, "isTopOfHourDraftDate", "frontend must validate hourly draft times")
+require(DRAFT_HTML, '<script src="draft-lifecycle.js"></script>', "draft room must load readiness lifecycle explicitly")
+require(DRAFT_HTML, 'id="draft-scheduled-time"', "draft room must show scheduled date/time near the top")
+require(INDEX_HTML, 'id="draft-date" type="datetime-local" name="draftDate" step="3600"', "create form draft time must use hourly steps")
+require(LEAGUE_HTML, 'id="settings-draft-date" type="datetime-local" name="draftDate" step="3600"', "settings draft time must use hourly steps")
+require(AUTH_BRIDGE, "installDraftRoomAccessGate();", "mobile draft access gate must install before full page load")
 
 print("draft lifecycle source contracts passed")

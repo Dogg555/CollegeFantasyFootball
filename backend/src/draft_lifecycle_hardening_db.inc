@@ -106,7 +106,9 @@ LeagueAccess leagueAccess(PGconn *connection,
                           const std::string &email) {
     LeagueAccess access;
     auto result = execute(connection,
-        "SELECT l.account_email, l.draft_lobby_open, l.draft_type, l.roster_rules::text, "
+        "SELECT l.account_email, "
+        "(l.draft_lobby_open OR (l.draft_date IS NOT NULL AND l.draft_date <= NOW() + INTERVAL '30 minutes')), "
+        "l.draft_type, l.roster_rules::text, "
         "COALESCE(lm.role, ''), COALESCE(lm.status, '') "
         "FROM leagues l LEFT JOIN league_members lm "
         "ON lm.league_id = l.id AND lower(lm.email) = lower($2) "

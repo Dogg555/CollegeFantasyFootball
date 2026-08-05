@@ -382,7 +382,7 @@ Json::Value leagueJsonFromRow(PGresult *result, int row) {
 std::string leagueSelectSql(const std::string &whereClause) {
     return "SELECT id, name, team_count, scoring, scoring_settings::text, draft_type, "
            "COALESCE(to_char(draft_date AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
-           "draft_lobby_open, "
+           "(draft_lobby_open OR (draft_date IS NOT NULL AND draft_date <= NOW() + INTERVAL '30 minutes')), "
            "COALESCE(to_char(draft_lobby_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
            "roster_rules::text, waiver_rules::text, trade_rules::text, notes, to_json(invited_emails)::text "
            "FROM leagues " + whereClause;
@@ -528,6 +528,14 @@ Json::Value normalizeLeaguePayload(const Json::Value &body) {
         normalized["tradeRules"] = rules;
     }
     return normalized;
+}
+
+bool draftDateAtTopOfHour(const std::string &value) {
+    if (value.empty()) return true;
+    const auto marker = value.find('T');
+    return marker != std::string::npos
+        && value.size() >= marker + 6
+        && value.substr(marker + 3, 2) == "00";
 }
 
 Json::Value errorPayload(const std::string &message) {
@@ -1313,7 +1321,7 @@ bool dbDraftComplete(PGconn *conn, const std::string &leagueId) {
 
 bool dbDraftLobbyOpen(PGconn *conn, const std::string &leagueId) {
     auto result = execParams(conn,
-                             "SELECT draft_lobby_open FROM leagues WHERE id = $1",
+                             "SELECT draft_lobby_open OR (draft_date IS NOT NULL AND draft_date <= NOW() + INTERVAL '30 minutes') FROM leagues WHERE id = $1",
                              {leagueId});
     return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0 && cellBool(result.get(), 0, 0);
 }
@@ -2644,6 +2652,10 @@ void handleCreateLeague(const drogon::HttpRequestPtr &req,
     const auto body = req->getJsonObject();
     const auto normalized = normalizeLeaguePayload(body ? *body : Json::Value{});
     auto league = cff::League::fromJson(normalized);
+    if (!draftDateAtTopOfHour(league.draftDate)) {
+        sendError(callback, drogon::k400BadRequest, "Draft time must be scheduled at the top of an hour");
+        return;
+    }
 
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
@@ -2752,6 +2764,10 @@ void handleUpdateLeague(const drogon::HttpRequestPtr &req,
 
     auto updated = cff::League::fromJson(normalizeLeaguePayload(*body));
     updated.id = leagueId;
+    if (!draftDateAtTopOfHour(updated.draftDate)) {
+        sendError(callback, drogon::k400BadRequest, "Draft time must be scheduled at the top of an hour");
+        return;
+    }
 
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {

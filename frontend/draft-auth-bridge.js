@@ -24,8 +24,14 @@
     ));
   }
 
+  let accessGateAttempts = 0;
+
   function installDraftRoomAccessGate() {
-    if (typeof window.getLeagueState !== 'function' || typeof window.getAuthState !== 'function') return;
+    if (typeof window.getLeagueState !== 'function' || typeof window.getAuthState !== 'function') {
+      accessGateAttempts += 1;
+      if (accessGateAttempts < 200) window.setTimeout(installDraftRoomAccessGate, 0);
+      return;
+    }
 
     // The server already authorizes draft state by active league membership.
     // Keep the frontend aligned so every confirmed manager can enter the room
@@ -51,9 +57,5 @@
     }
   }
 
-  if (document.readyState === 'complete') {
-    installDraftRoomAccessGate();
-  } else {
-    window.addEventListener('load', installDraftRoomAccessGate, { once: true });
-  }
+  installDraftRoomAccessGate();
 })();

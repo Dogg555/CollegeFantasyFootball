@@ -286,6 +286,11 @@ form?.addEventListener('submit', async (event) => {
     draftDateInput.focus();
     return;
   }
+  if (payload.draftDate && !isTopOfHourDraftDate(payload.draftDate)) {
+    setFormStatus('Draft time must be scheduled at the top of an hour.', true);
+    draftDateInput.focus();
+    return;
+  }
 
   setFormStatus('Saving league...');
 

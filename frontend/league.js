@@ -1391,6 +1391,11 @@ settingsForm?.addEventListener('submit', async (event) => {
     waiverRules: readWaiverRules(),
     tradeRules: readTradeRules()
   });
+  if (updated.draftDate && !isTopOfHourDraftDate(updated.draftDate)) {
+    setSettingsStatus('Draft time must be scheduled at the top of an hour.', true);
+    settingsDraftDate?.focus();
+    return;
+  }
   try {
     await saveLeagueToApi(updated);
     const inviteResult = await syncInviteEmailsFromSettings(inviteEmails, existingMembers);

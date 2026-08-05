@@ -31,6 +31,7 @@ const draftLobbyBadge = document.getElementById('draft-lobby-badge');
 const draftLobbyCopy = document.getElementById('draft-lobby-copy');
 const draftStartBtn = document.getElementById('draft-start');
 const draftLobbyMembers = document.getElementById('draft-lobby-members');
+const draftScheduledTime = document.getElementById('draft-scheduled-time');
 let draftTimer = null;
 let autoPickInFlight = false;
 let draftSyncTimer = null;
@@ -73,21 +74,30 @@ function renderDraftLobbyState() {
   const activeManagers = (league?.members || []).filter((member) => String(member.status || '').toLowerCase() === 'active');
   const waiting = meta.status === 'not_started';
   const live = meta.status === 'open';
+  const lobbyOpen = Boolean(meta.lobbyOpen || window.effectiveDraftLobbyOpen?.(league));
+  const autoOpen = Boolean(!league?.draftLobbyOpen && window.draftLobbyAutoOpen?.(league));
   if (draftLobbyMembers) {
     draftLobbyMembers.textContent = `${activeManagers.length} active manager${activeManagers.length === 1 ? '' : 's'}`;
+  }
+  if (draftScheduledTime) {
+    draftScheduledTime.textContent = league?.draftDate
+      ? `Scheduled ${new Date(league.draftDate).toLocaleString()}. Lobby opens automatically ${window.DRAFT_LOBBY_AUTO_OPEN_MINUTES || 30} minutes before.`
+      : 'Draft time not scheduled.';
   }
   if (draftLobbyBadge) {
     draftLobbyBadge.textContent = meta.status === 'complete' ? 'Complete' : live ? 'Live' : 'Lobby';
   }
   if (draftLobbyCopy) {
-    if (!league?.draftLobbyOpen) {
+    if (!lobbyOpen) {
       draftLobbyCopy.textContent = commissioner
-        ? 'Open the lobby from league settings before starting the draft.'
-        : 'Waiting for the commissioner to open this draft lobby.';
+        ? 'Open the lobby from league settings, or it will open automatically before the scheduled draft time.'
+        : 'The draft room opens automatically before the scheduled draft time.';
     } else if (meta.status === 'complete') {
       draftLobbyCopy.textContent = 'The draft is complete. The commissioner can reset it for another test.';
     } else if (live) {
       draftLobbyCopy.textContent = `Draft started${meta.startedAt ? ` ${new Date(meta.startedAt).toLocaleString()}` : ''}. Picks refresh automatically for every manager.`;
+    } else if (autoOpen) {
+      draftLobbyCopy.textContent = 'The draft lobby is open automatically. Mark ready before the commissioner starts.';
     } else if (commissioner && activeManagers.length < 2) {
       draftLobbyCopy.textContent = 'At least two active managers are required before the draft can start.';
     } else if (commissioner) {
@@ -98,7 +108,7 @@ function renderDraftLobbyState() {
   }
   if (draftStartBtn) {
     draftStartBtn.hidden = !commissioner || !waiting;
-    draftStartBtn.disabled = !league?.draftLobbyOpen || activeManagers.length < 2;
+    draftStartBtn.disabled = !lobbyOpen || activeManagers.length < 2;
   }
 }
 

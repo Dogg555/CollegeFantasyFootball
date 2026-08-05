@@ -75,6 +75,9 @@
       if (!Number.isFinite(draftAt) || draftAt <= Number(now())) {
         errors.push('Choose a draft date in the future.');
       }
+      if (typeof root.isTopOfHourDraftDate === 'function' && !root.isTopOfHourDraftDate(payload.draftDate)) {
+        errors.push('Draft time must be scheduled at the top of an hour.');
+      }
     }
 
     return {

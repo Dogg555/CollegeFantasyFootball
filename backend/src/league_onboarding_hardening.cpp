@@ -245,6 +245,14 @@ std::string statusForUi(const std::string &status) {
     return "Invited";
 }
 
+bool draftDateAtTopOfHour(const std::string &value) {
+    if (value.empty()) return true;
+    const auto marker = value.find('T');
+    return marker != std::string::npos
+        && value.size() >= marker + 6
+        && value.substr(marker + 3, 2) == "00";
+}
+
 Json::Value membersForLeague(PGconn *connection, const std::string &leagueId) {
     auto result = execute(connection,
                           "SELECT email, role, status, COALESCE(invited_by_email, ''), "
@@ -273,7 +281,7 @@ std::optional<Json::Value> leaguePayload(PGconn *connection,
     auto result = execute(connection,
                           "SELECT id, name, team_count, scoring, scoring_settings::text, draft_type, "
                           "COALESCE(to_char(draft_date AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
-                          "draft_lobby_open, "
+                          "(draft_lobby_open OR (draft_date IS NOT NULL AND draft_date <= NOW() + INTERVAL '30 minutes')), "
                           "COALESCE(to_char(draft_lobby_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
                           "roster_rules::text, waiver_rules::text, trade_rules::text, notes, "
                           "to_json(invited_emails)::text "
@@ -388,6 +396,11 @@ std::optional<Json::Value> createLeague(const drogon::HttpRequestPtr &request,
     normalized["invitedEmails"] = Json::Value{Json::arrayValue};
     for (const auto &invite : invites) normalized["invitedEmails"].append(invite);
     auto league = cff::League::fromJson(normalized);
+    if (!draftDateAtTopOfHour(league.draftDate)) {
+        rollback(connection.get());
+        status = drogon::k400BadRequest;
+        return errorPayload("Draft time must be scheduled at the top of an hour.", "draft_time_not_top_of_hour");
+    }
     const auto leagueJson = league.toJson();
 
     auto inserted = execute(connection.get(),

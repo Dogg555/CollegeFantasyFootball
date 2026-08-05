@@ -468,6 +468,38 @@ function normalizeLeague(league = {}) {
   };
 }
 
+const DRAFT_LOBBY_AUTO_OPEN_MINUTES = 30;
+
+function draftDateTime(value = '') {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isTopOfHourDraftDate(value = '') {
+  if (!value) return true;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    && date.getMinutes() === 0
+    && date.getSeconds() === 0
+    && date.getMilliseconds() === 0;
+}
+
+function draftLobbyAutoOpen(league = getLeagueState(), now = Date.now()) {
+  const draftAt = draftDateTime(league?.draftDate);
+  if (!draftAt) return false;
+  const opensAt = draftAt - DRAFT_LOBBY_AUTO_OPEN_MINUTES * 60 * 1000;
+  return Number(now) >= opensAt;
+}
+
+function effectiveDraftLobbyOpen(league = getLeagueState(), now = Date.now()) {
+  return Boolean(league?.draftLobbyOpen || draftLobbyAutoOpen(league, now));
+}
+
+window.DRAFT_LOBBY_AUTO_OPEN_MINUTES = DRAFT_LOBBY_AUTO_OPEN_MINUTES;
+window.isTopOfHourDraftDate = isTopOfHourDraftDate;
+window.draftLobbyAutoOpen = draftLobbyAutoOpen;
+window.effectiveDraftLobbyOpen = effectiveDraftLobbyOpen;
+
 function normalizeMembers(members = [], invitedEmails = []) {
   const auth = getAuthState();
   const byEmail = new Map();
