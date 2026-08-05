@@ -167,7 +167,8 @@ Json::Value readinessPayload(PGconn *connection, const std::string &leagueId) {
         "SELECT lower(lm.email), lm.role, COALESCE(lm.team_name, ''), "
         "COALESCE(dr.ready, FALSE), "
         "COALESCE(dr.last_seen_at >= NOW() - ($2::integer * INTERVAL '1 second'), FALSE), "
-        "COALESCE(to_char(dr.last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+        "COALESCE(to_char(dr.last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
+        "COALESCE(dr.auto_draft_enabled, FALSE), COALESCE(dr.consecutive_missed_picks, 0) "
         "FROM league_members lm LEFT JOIN draft_readiness dr "
         "ON dr.league_id = lm.league_id AND lower(dr.manager_email) = lower(lm.email) "
         "WHERE lm.league_id = $1 AND lm.status = 'active' ORDER BY lower(lm.email)",
@@ -182,6 +183,8 @@ Json::Value readinessPayload(PGconn *connection, const std::string &leagueId) {
         entry["ready"] = cell(result.get(), row, 3) == "t";
         entry["connected"] = cell(result.get(), row, 4) == "t";
         entry["lastSeenAt"] = cell(result.get(), row, 5);
+        entry["autoDraftEnabled"] = cell(result.get(), row, 6) == "t";
+        entry["consecutiveMissedPicks"] = cellInt(result.get(), row, 7, 0);
         readiness.append(entry);
     }
     return readiness;

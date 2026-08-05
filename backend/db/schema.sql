@@ -258,6 +258,29 @@ CREATE TABLE IF NOT EXISTS draft_queues (
   PRIMARY KEY (league_id, manager_email)
 );
 
+CREATE TABLE IF NOT EXISTS draft_readiness (
+  league_id TEXT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
+  manager_email TEXT NOT NULL,
+  ready BOOLEAN NOT NULL DEFAULT FALSE,
+  auto_draft_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  consecutive_missed_picks INTEGER NOT NULL DEFAULT 0,
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (league_id, manager_email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_draft_readiness_presence
+  ON draft_readiness (league_id, last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS draft_operations (
+  league_id TEXT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
+  operation_key TEXT NOT NULL,
+  operation_type TEXT NOT NULL,
+  resulting_version BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (league_id, operation_key)
+);
+
 CREATE TABLE IF NOT EXISTS draft_picks (
   id TEXT PRIMARY KEY,
   league_id TEXT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
@@ -265,10 +288,30 @@ CREATE TABLE IF NOT EXISTS draft_picks (
   pick_number INTEGER NOT NULL,
   player_id TEXT NOT NULL,
   player_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  selection_source TEXT NOT NULL DEFAULT 'manual',
+  idempotency_key TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (league_id, pick_number),
   UNIQUE (league_id, player_id)
 );
+
+ALTER TABLE draft_picks ADD COLUMN IF NOT EXISTS selection_source TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE draft_picks ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+
+CREATE TABLE IF NOT EXISTS draft_activity_log (
+  id BIGSERIAL PRIMARY KEY,
+  league_id TEXT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
+  manager_email TEXT,
+  event_type TEXT NOT NULL,
+  message TEXT NOT NULL,
+  pick_number INTEGER,
+  player_id TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_draft_activity_log_league_created
+  ON draft_activity_log (league_id, created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS waiver_claims (
   id TEXT PRIMARY KEY,

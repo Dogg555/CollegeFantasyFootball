@@ -319,9 +319,14 @@
           </label>
           <label class="field">
             <span>Draft date</span>
-            <input id="settings-draft-date" type="datetime-local" name="draftDate" step="3600" />
+            <input id="settings-draft-date" type="date" name="draftDate" />
+          </label>
+          <label class="field">
+            <span>Draft time</span>
+            <select id="settings-draft-time" name="draftTime"></select>
           </label>
         </div>
+        <div class="muted small" id="settings-draft-timezone">Timezone: local</div>
         <div class="field-group">
           <label class="field">
             <span>Scoring preset</span>

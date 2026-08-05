@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HARDENING_PATHS = [
     "draft_lifecycle_hardening.cpp",
     "draft_lifecycle_hardening_db.inc",
+    "draft_lifecycle_hardening_auto.inc",
     "draft_lifecycle_hardening_payload.inc",
     "draft_lifecycle_hardening_commissioner.inc",
     "draft_lifecycle_hardening_pick.inc",
@@ -52,6 +53,11 @@ require(MIGRATION, "ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ", "complet
 require(MIGRATION, "CREATE TABLE IF NOT EXISTS draft_readiness", "manager readiness must be persisted")
 require(MIGRATION, "CREATE TABLE IF NOT EXISTS draft_operations", "draft mutations need replay protection")
 require(MIGRATION, "PRIMARY KEY (league_id, operation_key)", "operation keys must be unique within a league")
+AUTO_MIGRATION = (ROOT / "backend" / "db" / "migrations" / "021_draft_room_auto_draft_reliability.sql").read_text(encoding="utf-8")
+require(AUTO_MIGRATION, "auto_draft_enabled", "participants need persisted auto-draft mode")
+require(AUTO_MIGRATION, "consecutive_missed_picks", "participants need persisted missed-pick counts")
+require(AUTO_MIGRATION, "selection_source", "picks need a source for manual versus auto selections")
+require(AUTO_MIGRATION, "CREATE TABLE IF NOT EXISTS draft_activity_log", "draft activity log must be persistent")
 
 require(HARDENING, '"draft:" + leagueId', "all draft mutations must serialize per league")
 require(HARDENING, "pg_advisory_xact_lock", "database advisory locking must guard simultaneous picks")
@@ -66,6 +72,13 @@ require(HARDENING, "INSERT INTO rosters", "accepted picks and roster state must 
 require(HARDENING, "draftCompleteAfterPick", "draft completion must use league size and roster rules")
 require(HARDENING, "operationReplay", "commissioner and pick retries must replay safely")
 require(HARDENING, "recordOperation", "confirmed draft operations must be recorded")
+require(HARDENING, "resolveDueAutoDrafts", "server sync must resolve expired and auto-draft picks")
+require(HARDENING, "selectAutoDraftCandidate", "server must choose auto-draft selections")
+require(HARDENING, '"personal_queue"', "auto-draft must prefer manager queue entries")
+require(HARDENING, '"system_ranking"', "auto-draft must fall back to system rankings")
+require(HARDENING, "kAutoDraftMissThreshold = 2", "missed picks must enable auto-draft after the configured threshold")
+require(HARDENING, '"/draft/auto-draft"', "managers need an endpoint to enable or disable auto-draft")
+require(HARDENING, "logDraftActivity", "draft lifecycle events must be logged")
 require(HARDENING, "allManagersReady", "start must evaluate every active manager")
 require(HARDENING, '"/draft/readiness"', "readiness endpoint must be handled by the lifecycle boundary")
 require(HARDENING, "last_seen_at", "draft GET/readiness requests must maintain presence")
@@ -90,12 +103,20 @@ require(CLIENT, "draft-ready-toggle", "draft lobby must expose manager readiness
 require(CLIENT, "visibilitychange", "visible reconnects must re-fetch authoritative draft state")
 require(CLIENT, "addEventListener?.('online'", "network recovery must re-fetch authoritative draft state")
 require(CLIENT, "await syncDraft()", "conflicts must recover by fetching the latest board")
+require(CLIENT, "draft-auto-toggle", "draft room must expose auto-draft controls")
+require(CLIENT, "/draft/auto-draft", "client auto-draft toggles must call the backend")
+require(CLIENT, "autoDraftEnabled", "client must render returning-manager auto-draft warnings")
 require(STATE, "const DRAFT_LOBBY_AUTO_OPEN_MINUTES = 30", "frontend must mirror the server auto-open window")
 require(STATE, "isTopOfHourDraftDate", "frontend must validate hourly draft times")
+require(STATE, "combineDraftDateAndHour", "split draft date and hour controls must store one safe timestamp")
+require(STATE, "populateDraftTimeSelect", "draft time dropdown must contain top-of-hour options")
 require(DRAFT_HTML, '<script src="draft-lifecycle.js"></script>', "draft room must load readiness lifecycle explicitly")
 require(DRAFT_HTML, 'id="draft-scheduled-time"', "draft room must show scheduled date/time near the top")
-require(INDEX_HTML, 'id="draft-date" type="datetime-local" name="draftDate" step="3600"', "create form draft time must use hourly steps")
-require(LEAGUE_HTML, 'id="settings-draft-date" type="datetime-local" name="draftDate" step="3600"', "settings draft time must use hourly steps")
+require(DRAFT_HTML, 'id="draft-activity-log"', "draft room must show a persistent activity log")
+require(INDEX_HTML, 'id="draft-date" type="date" name="draftDate"', "create form draft date must be date-only")
+require(INDEX_HTML, 'id="draft-time" name="draftTime"', "create form draft time must be a separate hourly dropdown")
+require(LEAGUE_HTML, 'id="settings-draft-date" type="date" name="draftDate"', "settings draft date must be date-only")
+require(LEAGUE_HTML, 'id="settings-draft-time" name="draftTime"', "settings draft time must be a separate hourly dropdown")
 require(AUTH_BRIDGE, "installDraftRoomAccessGate();", "mobile draft access gate must install before full page load")
 
 print("draft lifecycle source contracts passed")

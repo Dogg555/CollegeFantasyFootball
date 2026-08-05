@@ -50,7 +50,8 @@ Json::Value draftPayload(PGconn *connection,
     Json::Value picks(Json::arrayValue);
     auto pickResult = execute(connection,
         "SELECT pick_number, lower(manager_email), player_id, player_snapshot::text, "
-        "COALESCE(to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+        "COALESCE(to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
+        "COALESCE(selection_source, 'manual') "
         "FROM draft_picks WHERE league_id = $1 ORDER BY pick_number",
         {leagueId});
     if (tuplesOk(pickResult)) {
@@ -61,6 +62,8 @@ Json::Value draftPayload(PGconn *connection,
             pick["playerId"] = cell(pickResult.get(), row, 2);
             pick["player"] = jsonFromString(cell(pickResult.get(), row, 3));
             pick["createdAt"] = cell(pickResult.get(), row, 4);
+            pick["selectionSource"] = cell(pickResult.get(), row, 5);
+            pick["automatic"] = cell(pickResult.get(), row, 5) != "manual";
             picks.append(pick);
         }
     }
@@ -86,6 +89,27 @@ Json::Value draftPayload(PGconn *connection,
     payload["readyCount"] = readyCount;
     payload["connectedCount"] = connectedCount;
     payload["allReady"] = cff::draft_lifecycle::allManagersReady(managers, readiness);
+    Json::Value activity(Json::arrayValue);
+    auto activityResult = execute(connection,
+        "SELECT event_type, COALESCE(manager_email, ''), message, COALESCE(pick_number, 0), "
+        "COALESCE(player_id, ''), metadata::text, "
+        "COALESCE(to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+        "FROM draft_activity_log WHERE league_id = $1 ORDER BY created_at DESC, id DESC LIMIT 100",
+        {leagueId});
+    if (tuplesOk(activityResult)) {
+        for (int row = 0; row < PQntuples(activityResult.get()); ++row) {
+            Json::Value entry(Json::objectValue);
+            entry["eventType"] = cell(activityResult.get(), row, 0);
+            entry["managerEmail"] = cell(activityResult.get(), row, 1);
+            entry["message"] = cell(activityResult.get(), row, 2);
+            entry["pickNumber"] = cellInt(activityResult.get(), row, 3, 0);
+            entry["playerId"] = cell(activityResult.get(), row, 4);
+            entry["metadata"] = jsonFromString(cell(activityResult.get(), row, 5));
+            entry["createdAt"] = cell(activityResult.get(), row, 6);
+            activity.append(entry);
+        }
+    }
+    payload["activity"] = activity;
     auto serverTime = execute(connection,
         "SELECT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
         {});
@@ -157,9 +181,16 @@ drogon::HttpResponsePtr getDraft(const std::string &leagueId,
                                  const std::string &email) {
     auto connection = connectDb();
     if (!connection) return unavailable();
+    if (!begin(connection.get()) || !lockDraft(connection.get(), leagueId)) return unavailable();
     const auto access = leagueAccess(connection.get(), leagueId, email);
-    if (auto response = requireAccessResponse(access)) return response;
-    return jsonResponse(draftPayload(connection.get(), leagueId, email));
+    if (auto response = requireAccessResponse(access)) {
+        rollback(connection.get());
+        return response;
+    }
+    (void)resolveDueAutoDrafts(connection.get(), leagueId);
+    auto payload = draftPayload(connection.get(), leagueId, email);
+    if (!commit(connection.get())) return unavailable();
+    return jsonResponse(payload);
 }
 
 drogon::HttpResponsePtr setReadiness(const drogon::HttpRequestPtr &request,
@@ -180,5 +211,41 @@ drogon::HttpResponsePtr setReadiness(const drogon::HttpRequestPtr &request,
     if (!commandOk(result)) return unavailable();
     auto payload = draftPayload(connection.get(), leagueId, email, false);
     payload["message"] = ready ? "Manager is ready." : "Manager is not ready.";
+    return jsonResponse(payload);
+}
+
+drogon::HttpResponsePtr setAutoDraft(const drogon::HttpRequestPtr &request,
+                                     const std::string &leagueId,
+                                     const std::string &email) {
+    auto connection = connectDb();
+    if (!connection || !begin(connection.get()) || !lockDraft(connection.get(), leagueId)) return unavailable();
+    const auto access = leagueAccess(connection.get(), leagueId, email);
+    if (auto response = requireAccessResponse(access)) {
+        rollback(connection.get());
+        return response;
+    }
+    const auto body = request->getJsonObject();
+    const bool enabled = body && body->isObject() && body->get("enabled", false).asBool();
+    auto result = execute(connection.get(),
+        "INSERT INTO draft_readiness "
+        "(league_id, manager_email, ready, auto_draft_enabled, consecutive_missed_picks, last_seen_at, updated_at) "
+        "VALUES ($1, $2, FALSE, $3::boolean, 0, NOW(), NOW()) "
+        "ON CONFLICT (league_id, manager_email) DO UPDATE "
+        "SET auto_draft_enabled = EXCLUDED.auto_draft_enabled, last_seen_at = NOW(), updated_at = NOW()",
+        {leagueId, email, enabled ? "true" : "false"});
+    if (!commandOk(result)) {
+        rollback(connection.get());
+        return unavailable();
+    }
+    (void)logDraftActivity(
+        connection.get(),
+        leagueId,
+        email,
+        enabled ? "auto_draft_enabled" : "auto_draft_disabled",
+        enabled ? "Auto-draft enabled." : "Auto-draft disabled.");
+    (void)resolveDueAutoDrafts(connection.get(), leagueId);
+    auto payload = draftPayload(connection.get(), leagueId, email, false);
+    payload["message"] = enabled ? "Auto-draft enabled." : "Auto-draft disabled.";
+    if (!commit(connection.get())) return unavailable();
     return jsonResponse(payload);
 }

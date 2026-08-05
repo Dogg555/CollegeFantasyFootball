@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #ifdef CFF_HAS_POSTGRES
@@ -104,6 +105,10 @@ std::string pathLeagueId(const std::string &path, const std::string &suffix) {
 
 #ifdef CFF_HAS_POSTGRES
 #include "draft_lifecycle_hardening_db.inc"
+std::unordered_map<std::string, int> rosterCounts(PGconn *connection,
+                                                   const std::string &leagueId,
+                                                   const std::string &email);
+#include "draft_lifecycle_hardening_auto.inc"
 #include "draft_lifecycle_hardening_payload.inc"
 #include "draft_lifecycle_hardening_commissioner.inc"
 #include "draft_lifecycle_hardening_pick.inc"

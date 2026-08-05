@@ -222,8 +222,12 @@
         <div>
           <strong>Manager readiness</strong>
           <div class="muted small" id="draft-readiness-summary">Waiting for manager status.</div>
+          <div class="muted small" id="draft-auto-warning"></div>
         </div>
-        <button class="button" id="draft-ready-toggle" type="button">Mark ready</button>
+        <div class="actions">
+          <button class="button" id="draft-auto-toggle" type="button">Enable auto-draft</button>
+          <button class="button" id="draft-ready-toggle" type="button">Mark ready</button>
+        </div>
       </div>
       <div id="draft-readiness-list" class="list"></div>
     `;
@@ -249,6 +253,27 @@
         if (button) button.disabled = false;
       }
     });
+    root.document.getElementById('draft-auto-toggle')?.addEventListener('click', async () => {
+      const league = currentLeague();
+      if (!league?.id) return;
+      const me = currentEmail();
+      const current = (latestSnapshot?.readiness || []).find((entry) => String(entry.email || '').toLowerCase() === me);
+      const button = root.document.getElementById('draft-auto-toggle');
+      if (button) button.disabled = true;
+      try {
+        const snapshot = await root.apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/auto-draft`, {
+          method: 'POST',
+          body: JSON.stringify({ enabled: !Boolean(current?.autoDraftEnabled) })
+        });
+        applySnapshot(snapshot);
+        root.renderAll?.();
+      } catch (error) {
+        const warning = root.document.getElementById('draft-auto-warning');
+        if (warning) warning.textContent = draftErrorMessage(error, 'Could not update auto-draft mode.');
+      } finally {
+        if (button) button.disabled = false;
+      }
+    });
   }
 
   function renderReadiness(snapshot = latestSnapshot) {
@@ -257,6 +282,8 @@
     const summary = root.document?.getElementById?.('draft-readiness-summary');
     const list = root.document?.getElementById?.('draft-readiness-list');
     const toggle = root.document?.getElementById?.('draft-ready-toggle');
+    const autoToggle = root.document?.getElementById?.('draft-auto-toggle');
+    const autoWarning = root.document?.getElementById?.('draft-auto-warning');
     const active = Number(snapshot?.activeManagerCount || readiness.length || 0);
     const ready = Number(snapshot?.readyCount ?? readiness.filter((entry) => entry.ready).length);
     const connected = Number(snapshot?.connectedCount ?? readiness.filter((entry) => entry.connected).length);
@@ -272,6 +299,7 @@
             <div class="actions">
               <span class="pill ${entry.connected ? '' : 'pill--muted'}">${entry.connected ? 'Connected' : 'Reconnecting'}</span>
               <span class="pill ${entry.ready ? '' : 'pill--muted'}">${entry.ready ? 'Ready' : 'Not ready'}</span>
+              <span class="pill ${entry.autoDraftEnabled ? '' : 'pill--muted'}">${entry.autoDraftEnabled ? 'Auto-draft' : `${Number(entry.consecutiveMissedPicks || 0)} missed`}</span>
             </div>
           </div>
         `).join('')
@@ -281,6 +309,18 @@
       const mine = readiness.find((entry) => String(entry.email || '').toLowerCase() === currentEmail());
       toggle.textContent = mine?.ready ? 'Mark not ready' : 'Mark ready';
       toggle.hidden = snapshot?.status !== 'not_started';
+    }
+    if (autoToggle || autoWarning) {
+      const mine = readiness.find((entry) => String(entry.email || '').toLowerCase() === currentEmail());
+      if (autoToggle) {
+        autoToggle.textContent = mine?.autoDraftEnabled ? 'Disable auto-draft' : 'Enable auto-draft';
+        autoToggle.hidden = snapshot?.status === 'complete';
+      }
+      if (autoWarning) {
+        autoWarning.textContent = mine?.autoDraftEnabled
+          ? 'Auto-draft mode is active for your team. Future picks may be made automatically until you disable it.'
+          : '';
+      }
     }
     const start = root.document?.getElementById?.('draft-start');
     if (start && !start.hidden && snapshot?.status === 'not_started') {

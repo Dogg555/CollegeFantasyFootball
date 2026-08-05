@@ -470,6 +470,57 @@ function normalizeLeague(league = {}) {
 
 const DRAFT_LOBBY_AUTO_OPEN_MINUTES = 30;
 
+function draftTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local time';
+}
+
+function draftHourOptions() {
+  return Array.from({ length: 24 }, (_, hour) => {
+    const date = new Date(2000, 0, 1, hour, 0, 0, 0);
+    return {
+      value: String(hour).padStart(2, '0'),
+      label: date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    };
+  });
+}
+
+function populateDraftTimeSelect(select, selectedHour = '19') {
+  if (!select) return;
+  const safeHour = String(selectedHour || '19').padStart(2, '0');
+  select.innerHTML = draftHourOptions()
+    .map((option) => `<option value="${option.value}">${option.label}</option>`)
+    .join('');
+  select.value = /^\d{2}$/.test(safeHour) ? safeHour : '19';
+}
+
+function draftDatePart(value = '') {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value).slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function draftHourPart(value = '', fallback = '19') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    const match = String(value).match(/T(\d{2}):/);
+    return match ? match[1] : fallback;
+  }
+  return String(date.getHours()).padStart(2, '0');
+}
+
+function combineDraftDateAndHour(dateValue = '', hourValue = '19') {
+  if (!dateValue) return '';
+  const [year, month, day] = String(dateValue).split('-').map(Number);
+  const hour = Number(hourValue);
+  if (!year || !month || !day || !Number.isInteger(hour) || hour < 0 || hour > 23) return '';
+  return new Date(year, month - 1, day, hour, 0, 0, 0).toISOString();
+}
+
 function draftDateTime(value = '') {
   const timestamp = new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : null;
@@ -496,6 +547,12 @@ function effectiveDraftLobbyOpen(league = getLeagueState(), now = Date.now()) {
 }
 
 window.DRAFT_LOBBY_AUTO_OPEN_MINUTES = DRAFT_LOBBY_AUTO_OPEN_MINUTES;
+window.draftTimezone = draftTimezone;
+window.draftHourOptions = draftHourOptions;
+window.populateDraftTimeSelect = populateDraftTimeSelect;
+window.draftDatePart = draftDatePart;
+window.draftHourPart = draftHourPart;
+window.combineDraftDateAndHour = combineDraftDateAndHour;
 window.isTopOfHourDraftDate = isTopOfHourDraftDate;
 window.draftLobbyAutoOpen = draftLobbyAutoOpen;
 window.effectiveDraftLobbyOpen = effectiveDraftLobbyOpen;
@@ -914,6 +971,13 @@ function saveDraftMeta(meta = {}) {
     pickClockSeconds: Number(meta.pickClockSeconds || 90),
     pickDeadline: meta.pickDeadline || '',
     startedAt: meta.startedAt || '',
+    completedAt: meta.completedAt || '',
+    version: Number(meta.version || meta.revision || 0),
+    revision: Number(meta.revision || meta.version || 0),
+    totalPicks: Number(meta.totalPicks || 0),
+    picksRemaining: Number(meta.picksRemaining || 0),
+    readiness: Array.isArray(meta.readiness) ? meta.readiness : [],
+    activity: Array.isArray(meta.activity) ? meta.activity : [],
     lobbyOpen: typeof meta.lobbyOpen === 'boolean' ? meta.lobbyOpen : Boolean(league.draftLobbyOpen)
   };
   writeJson(CFF_DRAFT_META_KEY, store);

@@ -108,50 +108,31 @@ drogon::HttpResponsePtr makePick(const drogon::HttpRequestPtr &request,
                              "This manager's roster is full.",
                              "draft_roster_full");
     }
-    const auto pickId = leagueId + "-pick-" + std::to_string(currentPick);
-    auto insertedPick = execute(connection.get(),
-        "INSERT INTO draft_picks (id, league_id, manager_email, pick_number, player_id, player_snapshot) "
-        "VALUES ($1, $2, $3, $4::integer, $5, $6::jsonb)",
-        {pickId, leagueId, email, std::to_string(currentPick), playerId, jsonToString(player)});
-    if (!commandOk(insertedPick)) {
+    AutoDraftCandidate candidate;
+    candidate.player = player;
+    candidate.playerId = playerId;
+    candidate.rosterSlot = *slot;
+    candidate.source = "manual";
+    const auto newVersion = persistDraftSelection(
+        connection.get(),
+        leagueId,
+        email,
+        currentPick,
+        clockSeconds,
+        rules,
+        static_cast<int>(managers.size()),
+        candidate,
+        "manual",
+        key,
+        false);
+    if (!newVersion) {
         rollback(connection.get());
         return errorResponse(drogon::k409Conflict,
                              "This draft pick was already claimed by another request.",
                              "draft_pick_conflict",
                              true);
     }
-    auto insertedRoster = execute(connection.get(),
-        "INSERT INTO rosters (league_id, manager_email, player_id, player_snapshot, roster_slot, acquired_via) "
-        "VALUES ($1, $2, $3, $4::jsonb, $5, 'draft')",
-        {leagueId, email, playerId, jsonToString(player), *slot});
-    if (!commandOk(insertedRoster)) {
-        rollback(connection.get());
-        return errorResponse(drogon::k409Conflict,
-                             "The player could not be added to the confirmed roster.",
-                             "draft_roster_conflict",
-                             true);
-    }
-
-    const bool complete = cff::draft_lifecycle::draftCompleteAfterPick(
-        currentPick,
-        static_cast<int>(managers.size()),
-        rules);
-    auto updated = execute(connection.get(),
-        "UPDATE draft_states SET status = $2, current_pick = $3::integer, "
-        "pick_deadline = CASE WHEN $2 = 'complete' THEN NULL "
-        "ELSE NOW() + ($4::integer * INTERVAL '1 second') END, "
-        "completed_at = CASE WHEN $2 = 'complete' THEN NOW() ELSE NULL END, "
-        "version = version + 1, updated_at = NOW() WHERE league_id = $1 RETURNING version",
-        {leagueId,
-         complete ? "complete" : "open",
-         std::to_string(currentPick + 1),
-         std::to_string(clockSeconds)});
-    if (!tuplesOk(updated) || PQntuples(updated.get()) == 0) {
-        rollback(connection.get());
-        return unavailable();
-    }
-    const auto newVersion = cellInt64(updated.get(), 0, 0, version + 1);
-    if (!recordOperation(connection.get(), leagueId, key, "pick", newVersion) || !commit(connection.get())) {
+    if (!recordOperation(connection.get(), leagueId, key, "pick", *newVersion) || !commit(connection.get())) {
         rollback(connection.get());
         return unavailable();
     }

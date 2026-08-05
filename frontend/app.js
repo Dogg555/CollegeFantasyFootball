@@ -12,6 +12,8 @@ const leagueSizeInput = document.getElementById('league-size');
 const leagueScoringInput = document.getElementById('league-scoring');
 const draftTypeInput = document.getElementById('draft-type');
 const draftDateInput = document.getElementById('draft-date');
+const draftTimeInput = document.getElementById('draft-time');
+const draftTimezoneEl = document.getElementById('draft-timezone');
 const notesInput = document.getElementById('league-notes');
 const inviteEmailsInput = document.getElementById('invite-emails');
 const formStatus = document.getElementById('form-status');
@@ -146,6 +148,9 @@ function setFormStatus(message, isError = false) {
   formStatus.style.color = isError ? 'var(--danger)' : 'var(--muted)';
 }
 
+populateDraftTimeSelect(draftTimeInput);
+if (draftTimezoneEl) draftTimezoneEl.textContent = `Timezone: ${draftTimezone()}`;
+
 async function fetchLiveScores() {
   if (!liveScoresEl) return;
   liveScoresEl.textContent = 'Loading live scores...';
@@ -275,7 +280,7 @@ form?.addEventListener('submit', async (event) => {
     scoring: leagueScoringInput.value,
     scoringSettings: normalizeScoringSettings(leagueScoringInput.value),
     draftType: draftTypeInput.value,
-    draftDate: draftDateInput.value,
+    draftDate: combineDraftDateAndHour(draftDateInput.value, draftTimeInput?.value || '19'),
     notes: notesInput.value.trim(),
     invitedEmails,
     rosterRules: defaultRosterRules,

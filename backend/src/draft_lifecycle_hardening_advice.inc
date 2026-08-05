@@ -5,12 +5,14 @@ drogon::HttpResponsePtr draftLifecycleAdvice(const drogon::HttpRequestPtr &reque
     const auto method = request->getMethod();
 
     std::string leagueId;
-    enum class Action { None, Get, ReadinessGet, ReadinessSet, Order, Start, Pick, Reset, Undo } action = Action::None;
+    enum class Action { None, Get, ReadinessGet, ReadinessSet, AutoDraftSet, Order, Start, Pick, Reset, Undo } action = Action::None;
 
     if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/draft/readiness")).empty()) {
         action = Action::ReadinessGet;
     } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/readiness")).empty()) {
         action = Action::ReadinessSet;
+    } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/auto-draft")).empty()) {
+        action = Action::AutoDraftSet;
     } else if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/draft")).empty()) {
         action = Action::Get;
     } else if ((method == drogon::Put || method == drogon::Post)
@@ -43,6 +45,8 @@ drogon::HttpResponsePtr draftLifecycleAdvice(const drogon::HttpRequestPtr &reque
             return respond(getDraft(leagueId, *email));
         case Action::ReadinessSet:
             return respond(setReadiness(request, leagueId, *email));
+        case Action::AutoDraftSet:
+            return respond(setAutoDraft(request, leagueId, *email));
         case Action::Order:
             return respond(saveOrder(request, leagueId, *email));
         case Action::Start:

@@ -169,6 +169,7 @@ drogon::HttpResponsePtr startDraft(const drogon::HttpRequestPtr &request,
         return unavailable();
     }
     const auto version = cellInt64(updated.get(), 0, 0, 0);
+    (void)logDraftActivity(connection.get(), leagueId, email, "draft_started", "Draft started by commissioner.");
     if (!recordOperation(connection.get(), leagueId, key, "start", version) || !commit(connection.get())) {
         rollback(connection.get());
         return unavailable();

@@ -51,6 +51,8 @@ const commissionerLocked = document.getElementById('commissioner-locked');
 const settingsForm = document.getElementById('league-settings-form');
 const settingsName = document.getElementById('settings-name');
 const settingsDraftDate = document.getElementById('settings-draft-date');
+const settingsDraftTime = document.getElementById('settings-draft-time');
+const settingsDraftTimezone = document.getElementById('settings-draft-timezone');
 const settingsScoring = document.getElementById('settings-scoring');
 const settingsTeams = document.getElementById('settings-teams');
 const settingsInvites = document.getElementById('settings-invites');
@@ -960,7 +962,9 @@ function currentLeagueTab() {
 function populateSettings(leagueState) {
   if (!settingsForm || !leagueState) return;
   settingsName.value = leagueState.name || '';
-  settingsDraftDate.value = leagueState.draftDate || '';
+  settingsDraftDate.value = draftDatePart(leagueState.draftDate || '');
+  populateDraftTimeSelect(settingsDraftTime, draftHourPart(leagueState.draftDate || ''));
+  if (settingsDraftTimezone) settingsDraftTimezone.textContent = `Timezone: ${draftTimezone()}`;
   settingsScoring.value = leagueState.scoring || 'ppr';
   settingsTeams.value = String(leagueState.teams || 10);
   settingsInvites.value = (leagueState.invitedEmails || []).join(', ');
@@ -1380,7 +1384,7 @@ settingsForm?.addEventListener('submit', async (event) => {
   const updated = normalizeLeague({
     ...current,
     name: settingsName.value.trim() || current.name,
-    draftDate: settingsDraftDate.value,
+    draftDate: combineDraftDateAndHour(settingsDraftDate.value, settingsDraftTime?.value || '19'),
     scoring: settingsScoring.value,
     scoringLabel: scoringLabel(settingsScoring.value),
     scoringSettings: readScoringSettings(),

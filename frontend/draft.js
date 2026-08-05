@@ -32,6 +32,7 @@ const draftLobbyCopy = document.getElementById('draft-lobby-copy');
 const draftStartBtn = document.getElementById('draft-start');
 const draftLobbyMembers = document.getElementById('draft-lobby-members');
 const draftScheduledTime = document.getElementById('draft-scheduled-time');
+const draftActivityLog = document.getElementById('draft-activity-log');
 let draftTimer = null;
 let autoPickInFlight = false;
 let draftSyncTimer = null;
@@ -300,6 +301,14 @@ function renderDraftPicks() {
   draftPickList.innerHTML = picks.map((pick) => {
     const player = pick.player || {};
     const last = Number(pick.pickNumber) === Number(picks[picks.length - 1]?.pickNumber);
+    const automatic = Boolean(pick.automatic || (pick.selectionSource && pick.selectionSource !== 'manual'));
+    const sourceLabel = pick.selectionSource === 'personal_queue'
+      ? 'Queue auto-pick'
+      : pick.selectionSource === 'system_ranking'
+        ? 'System auto-pick'
+        : automatic
+          ? 'Auto-pick'
+          : 'Manual';
     return `
       <div class="row">
         <div>
@@ -308,8 +317,31 @@ function renderDraftPicks() {
         </div>
         <div class="actions">
           ${last ? '<span class="pill pill--muted">Last pick</span>' : ''}
+          <span class="pill ${automatic ? '' : 'pill--muted'}">${sourceLabel}</span>
           <span class="badge">${Number(player.projection || 0).toFixed(1)}</span>
         </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderDraftActivityLog() {
+  if (!draftActivityLog) return;
+  const activity = Array.isArray(getDraftMeta()?.activity) ? getDraftMeta().activity : [];
+  if (!activity.length) {
+    draftActivityLog.textContent = 'Draft activity will appear here.';
+    return;
+  }
+  draftActivityLog.innerHTML = activity.slice(0, 30).map((entry) => {
+    const time = entry.createdAt ? new Date(entry.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '';
+    const manager = entry.managerEmail ? ` / ${escapeHtml(managerDisplayName(entry.managerEmail))}` : '';
+    return `
+      <div class="row">
+        <div>
+          <strong>${escapeHtml(time || 'Draft event')}</strong>
+          <div class="muted">${escapeHtml(entry.message || entry.eventType || 'Draft event')}${manager}</div>
+        </div>
+        ${entry.pickNumber ? `<span class="badge">Pick ${Number(entry.pickNumber)}</span>` : '<span class="pill pill--muted">Log</span>'}
       </div>
     `;
   }).join('');
@@ -418,17 +450,12 @@ function renderDraftClock() {
 async function maybeAutoPick() {
   if (!canEnterDraftRoom()) return;
   const meta = getDraftMeta();
-  if (autoPickInFlight || meta.status !== 'open' || !isMyDraftTurn(meta) || draftClockRemaining(meta) > 0) return;
+  if (autoPickInFlight || meta.status !== 'open' || draftClockRemaining(meta) > 0) return;
   autoPickInFlight = true;
   try {
-    await autoPickFromQueueApi();
     await refreshDraftFromApi();
   } catch {
-    try {
-      await autoPickFromQueueApi();
-    } catch {
-      // No available auto-pick target.
-    }
+    // Keep the last confirmed state; mutation controls are disabled by outage handling.
   } finally {
     autoPickInFlight = false;
     renderAll();
@@ -494,6 +521,7 @@ function renderAll() {
   renderDraftPicks();
   renderUpcomingPicks();
   renderRecommended();
+  renderDraftActivityLog();
   renderDraftOutageState();
 }
 

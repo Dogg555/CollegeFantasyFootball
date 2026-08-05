@@ -234,7 +234,9 @@
         ? root.normalizeScoringSettings(scoring)
         : {},
       draftType: value('draft-type', 'snake'),
-      draftDate: value('draft-date', ''),
+      draftDate: typeof root.combineDraftDateAndHour === 'function'
+        ? root.combineDraftDateAndHour(value('draft-date', ''), value('draft-time', '19'))
+        : value('draft-date', ''),
       notes: value('league-notes', ''),
       invitedEmails: parseInviteText(value('invite-emails', '')),
       rosterRules: { ...DEFAULT_ROSTER_RULES }

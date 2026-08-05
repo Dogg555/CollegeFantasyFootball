@@ -76,6 +76,14 @@ drogon::HttpResponsePtr undoPick(const drogon::HttpRequestPtr &request,
         return unavailable();
     }
     const auto version = cellInt64(updated.get(), 0, 0, 0);
+    (void)logDraftActivity(
+        connection.get(),
+        leagueId,
+        email,
+        "pick_undone",
+        "Commissioner undid the last draft pick.",
+        pickNumber,
+        playerId);
     if (!recordOperation(connection.get(), leagueId, key, "undo", version) || !commit(connection.get())) {
         rollback(connection.get());
         return unavailable();
@@ -155,6 +163,7 @@ drogon::HttpResponsePtr resetDraft(const drogon::HttpRequestPtr &request,
         return unavailable();
     }
     const auto version = cellInt64(updated.get(), 0, 0, 0);
+    (void)logDraftActivity(connection.get(), leagueId, email, "draft_reset", "Draft reset by commissioner.");
     if (!recordOperation(connection.get(), leagueId, key, "reset", version) || !commit(connection.get())) {
         rollback(connection.get());
         return unavailable();
