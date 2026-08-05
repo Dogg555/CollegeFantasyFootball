@@ -57,5 +57,6 @@
     }
   }
 
+  window.addEventListener('load', installDraftRoomAccessGate, { once: true });
   installDraftRoomAccessGate();
 })();
