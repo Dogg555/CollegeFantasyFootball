@@ -51,6 +51,8 @@ const commissionerLocked = document.getElementById('commissioner-locked');
 const settingsForm = document.getElementById('league-settings-form');
 const settingsName = document.getElementById('settings-name');
 const settingsDraftDate = document.getElementById('settings-draft-date');
+const settingsDraftTime = document.getElementById('settings-draft-time');
+const settingsDraftTimezone = document.getElementById('settings-draft-timezone');
 const settingsScoring = document.getElementById('settings-scoring');
 const settingsTeams = document.getElementById('settings-teams');
 const settingsInvites = document.getElementById('settings-invites');
@@ -94,6 +96,11 @@ const stepRules = document.getElementById('step-rules');
 const stepLobby = document.getElementById('step-lobby');
 const draftLobbyStatus = document.getElementById('draft-lobby-status');
 const draftLobbyLink = document.getElementById('draft-lobby-link');
+const draftLobbyOverviewStatus = document.getElementById('draft-lobby-overview-status');
+const draftLobbyOverviewLink = document.getElementById('draft-lobby-overview-link');
+const draftLobbyOverviewBadge = document.getElementById('draft-lobby-overview-badge');
+const leagueDraftTabLink = document.getElementById('league-draft-tab-link');
+const teamDraftLink = document.getElementById('team-draft-link');
 const leagueTabs = document.querySelectorAll('[data-league-tab]');
 const leaguePanels = document.querySelectorAll('[data-league-panel]');
 let activeScoreboardWeek = 1;
@@ -955,7 +962,9 @@ function currentLeagueTab() {
 function populateSettings(leagueState) {
   if (!settingsForm || !leagueState) return;
   settingsName.value = leagueState.name || '';
-  settingsDraftDate.value = leagueState.draftDate || '';
+  settingsDraftDate.value = draftDatePart(leagueState.draftDate || '');
+  populateDraftTimeSelect(settingsDraftTime, draftHourPart(leagueState.draftDate || ''));
+  if (settingsDraftTimezone) settingsDraftTimezone.textContent = `Timezone: ${draftTimezone()}`;
   settingsScoring.value = leagueState.scoring || 'ppr';
   settingsTeams.value = String(leagueState.teams || 10);
   settingsInvites.value = (leagueState.invitedEmails || []).join(', ');
@@ -1072,22 +1081,45 @@ function renderManagers(leagueState) {
 }
 
 function renderLobbyStatus(leagueState) {
-  if (!draftLobbyStatus) return;
+  const commissioner = isCurrentCommissioner(leagueState);
+  const links = [draftLobbyLink, draftLobbyOverviewLink, leagueDraftTabLink, teamDraftLink].filter(Boolean);
   if (!leagueState) {
-    draftLobbyStatus.textContent = 'Create a league before opening the draft lobby.';
+    if (draftLobbyStatus) draftLobbyStatus.textContent = 'Create a league before opening the draft lobby.';
+    if (draftLobbyOverviewStatus) draftLobbyOverviewStatus.textContent = 'No league selected.';
+    links.forEach((link) => {
+      link.href = 'league.html';
+      link.setAttribute('aria-disabled', 'true');
+    });
     return;
   }
+  const href = `draft.html?league=${encodeURIComponent(leagueState.id)}`;
+  links.forEach((link) => {
+    link.href = href;
+    link.removeAttribute('aria-disabled');
+  });
   if (!leagueState.draftLobbyOpen) {
-    draftLobbyStatus.textContent = 'Not opened yet.';
+    if (draftLobbyStatus) draftLobbyStatus.textContent = 'Not opened yet.';
+    if (draftLobbyOverviewStatus) {
+      draftLobbyOverviewStatus.textContent = commissioner
+        ? 'Open the lobby when active managers are ready to enter.'
+        : 'Waiting for the commissioner to open the room.';
+    }
+    if (draftLobbyOverviewBadge) draftLobbyOverviewBadge.textContent = 'Closed';
+    if (draftLobbyOverviewLink) draftLobbyOverviewLink.hidden = !commissioner;
+    if (draftLobbyLink) draftLobbyLink.hidden = !commissioner;
+    if (stepLobby) stepLobby.textContent = 'Open lobby';
     return;
   }
   const opened = leagueState.draftLobbyStartedAt
     ? `Opened ${new Date(leagueState.draftLobbyStartedAt).toLocaleString()}.`
     : 'Open now.';
-  draftLobbyStatus.textContent = `${opened} Managers can enter the draft room.`;
-  if (draftLobbyLink) {
-    draftLobbyLink.href = `draft.html?league=${encodeURIComponent(leagueState.id)}`;
-  }
+  const message = `${opened} Active managers can enter and wait for the commissioner to start.`;
+  if (draftLobbyStatus) draftLobbyStatus.textContent = message;
+  if (draftLobbyOverviewStatus) draftLobbyOverviewStatus.textContent = message;
+  if (draftLobbyOverviewBadge) draftLobbyOverviewBadge.textContent = 'Open';
+  if (draftLobbyOverviewLink) draftLobbyOverviewLink.hidden = false;
+  if (draftLobbyLink) draftLobbyLink.hidden = false;
+  if (stepLobby) stepLobby.textContent = 'Enter lobby';
 }
 
 function setSettingsStatus(message, isError = false) {
@@ -1352,7 +1384,7 @@ settingsForm?.addEventListener('submit', async (event) => {
   const updated = normalizeLeague({
     ...current,
     name: settingsName.value.trim() || current.name,
-    draftDate: settingsDraftDate.value,
+    draftDate: combineDraftDateAndHour(settingsDraftDate.value, settingsDraftTime?.value || '19'),
     scoring: settingsScoring.value,
     scoringLabel: scoringLabel(settingsScoring.value),
     scoringSettings: readScoringSettings(),
@@ -1363,6 +1395,11 @@ settingsForm?.addEventListener('submit', async (event) => {
     waiverRules: readWaiverRules(),
     tradeRules: readTradeRules()
   });
+  if (updated.draftDate && !isTopOfHourDraftDate(updated.draftDate)) {
+    setSettingsStatus('Draft time must be scheduled at the top of an hour.', true);
+    settingsDraftDate?.focus();
+    return;
+  }
   try {
     await saveLeagueToApi(updated);
     const inviteResult = await syncInviteEmailsFromSettings(inviteEmails, existingMembers);
@@ -1508,6 +1545,10 @@ stepLobby?.addEventListener('click', async () => {
     setSettingsStatus('Create a league before opening the draft lobby.', true);
     return;
   }
+  if (current.draftLobbyOpen) {
+    window.location.href = `draft.html?league=${encodeURIComponent(current.id)}`;
+    return;
+  }
   const updated = normalizeLeague({
     ...current,
     draftLobbyOpen: true,
@@ -1515,6 +1556,7 @@ stepLobby?.addEventListener('click', async () => {
   });
   try {
     await saveLeagueToApi(updated);
+    await refreshLeagueFromApi();
   } catch (error) {
     setSettingsStatus(mutationErrorMessage(error, 'Could not open draft lobby. No local changes were made.'), true);
     renderLeague();

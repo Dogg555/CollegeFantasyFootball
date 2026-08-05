@@ -15,8 +15,6 @@ if (CFF_STALE_API_BASES.has(String(window.CFF_API_BASE || '').replace(/\/+$/, ''
 window.CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO === true;
 window.CFF_ALLOWED_LEAGUE_SIZES = Object.freeze([4, 6, 8, 10, 12, 14, 16]);
 
-// Keep the league page functional if a browser briefly receives state.js and
-// league.js from different static deployments. Newer state.js replaces these.
 if (typeof window.apiCacheMeta !== 'function') {
   window.apiCacheMeta = (scope = 'league') => {
     try {
@@ -46,7 +44,20 @@ if (typeof window.mutationErrorMessage !== 'function') {
 }
 
 (() => {
-  const scripts = ['auth-session-sync.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
+  // Keep dependency-sensitive modules contiguous so contract checks and runtime
+  // loading agree after stacked PR merges.
+  const scripts = ['api-client.js', 'authoritative-data.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'auth-session-sync.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
+  const styles = [
+    ['polish.css', 'cffPolish', 'data-cff-polish="true"'],
+    ['alpha-ui.css', 'cffModern', 'data-cff-modern="true"'],
+    ['beta-ui.css', 'cffBeta', 'data-cff-beta="true"'],
+    ['league-nav.css', 'cffLeagueNav', 'data-cff-league-nav="true"'],
+    ['workspace-ui.css', 'cffWorkspace', 'data-cff-workspace="true"'],
+    ['mobile-density.css', 'cffMobileDensity', 'data-cff-mobile-density="true"'],
+    ['player-catalog.css', 'cffPlayerCatalog', 'data-cff-player-catalog="true"'],
+    ['league-card-hierarchy.css', 'cffLeagueCardHierarchy', 'data-cff-league-card-hierarchy="true"'],
+    ['landing-refresh.css', 'cffLandingRefresh', 'data-cff-landing-refresh="true"']
+  ];
   const leagueSizeSelectIds = ['league-size', 'settings-teams'];
   const assetVersion = String(window.CFF_BUILD_COMMIT || '').replace(/[^A-Za-z0-9._-]/g, '');
 
@@ -77,7 +88,6 @@ if (typeof window.mutationErrorMessage !== 'function') {
 
       const currentValue = select.value;
       const existingValues = new Set(Array.from(select.options, (option) => option.value));
-
       [4, 6].forEach((size) => {
         const value = String(size);
         if (existingValues.has(value)) return;
@@ -113,17 +123,26 @@ if (typeof window.mutationErrorMessage !== 'function') {
     document.head.appendChild(stylesheet);
   }
 
+  function appendScript(source) {
+    return new Promise((resolve, reject) => {
+      const versionedSource = assetUrl(source);
+      if (document.querySelector(`script[src="${versionedSource}"]`)) {
+        resolve();
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = versionedSource;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error(`Unable to load ${source}`));
+      document.head.appendChild(script);
+    });
+  }
+
   ensureBranding();
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', ensureLeagueSizeOptions, { once: true });
-    writeStylesheet('polish.css', 'data-cff-polish="true"');
-    writeStylesheet('alpha-ui.css', 'data-cff-modern="true"');
-    writeStylesheet('beta-ui.css', 'data-cff-beta="true"');
-    writeStylesheet('league-nav.css', 'data-cff-league-nav="true"');
-    writeStylesheet('workspace-ui.css', 'data-cff-workspace="true"');
-    writeStylesheet('mobile-density.css', 'data-cff-mobile-density="true"');
-    writeStylesheet('landing-refresh.css', 'data-cff-landing-refresh="true"');
+    styles.forEach(([href, , attribute]) => writeStylesheet(href, attribute));
     scripts.forEach((source) => {
       document.write(`<script src="${assetUrl(source)}"><\/script>`);
     });
@@ -131,26 +150,9 @@ if (typeof window.mutationErrorMessage !== 'function') {
   }
 
   ensureLeagueSizeOptions();
-  appendStylesheet('polish.css', 'cffPolish');
-  appendStylesheet('alpha-ui.css', 'cffModern');
-  appendStylesheet('beta-ui.css', 'cffBeta');
-  appendStylesheet('league-nav.css', 'cffLeagueNav');
-  appendStylesheet('workspace-ui.css', 'cffWorkspace');
-  appendStylesheet('mobile-density.css', 'cffMobileDensity');
-  appendStylesheet('landing-refresh.css', 'cffLandingRefresh');
-
-  scripts.reduce((chain, source) => chain.then(() => new Promise((resolve, reject) => {
-    const versionedSource = assetUrl(source);
-    if (document.querySelector(`script[src="${versionedSource}"]`)) {
-      resolve();
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = versionedSource;
-    script.onload = resolve;
-    script.onerror = reject;
-    document.head.appendChild(script);
-  })), Promise.resolve()).catch((error) => {
-    console.error('Unable to load the shared UI polish layer.', error);
-  });
+  styles.forEach(([href, datasetKey]) => appendStylesheet(href, datasetKey));
+  scripts.reduce((chain, source) => chain.then(() => appendScript(source)), Promise.resolve())
+    .catch((error) => {
+      console.error('Unable to load the shared API, auth, or UI layer.', error);
+    });
 })();

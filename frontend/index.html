@@ -329,10 +329,17 @@
           </label>
         </div>
 
-        <label class="field">
-          <span>Draft date</span>
-          <input id="draft-date" type="datetime-local" name="draftDate" />
-        </label>
+        <div class="field-group">
+          <label class="field">
+            <span>Draft date</span>
+            <input id="draft-date" type="date" name="draftDate" />
+          </label>
+          <label class="field">
+            <span>Draft time</span>
+            <select id="draft-time" name="draftTime"></select>
+          </label>
+        </div>
+        <div class="muted small" id="draft-timezone">Timezone: local</div>
 
         <label class="field">
           <span>Draft type</span>

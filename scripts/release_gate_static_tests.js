@@ -4,15 +4,28 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const main = read('backend/src/main.cpp');
-assert.match(main, /bool dbPersistToken\(/, 'dbPersistToken must return success/failure');
-assert.match(main, /if \(!dbPersistToken\(token, email\)\) \{\s*return std::nullopt;/s, 'token issuance must fail if DB token persistence fails');
-assert.match(main, /healthStatusCode\(payload\)/, 'health handler must derive HTTP status from health payload');
-assert.doesNotMatch(main, /struct RateLimitBucket/, 'main.cpp must not retain duplicate local rate limiter');
+const sessionStore = read('backend/src/auth_session_store.cpp');
+const healthRoutes = read('backend/src/health_routes.cpp');
+const securityHardening = read('backend/src/security_hardening.cpp');
+assert.match(sessionStore, /bool persistDatabaseToken\(/, 'persistent token storage must return success/failure');
+assert.match(sessionStore, /if \(!persistDatabaseToken\(token, email\)\) \{\s*return std::nullopt;/s, 'token issuance must fail if DB token persistence fails');
+assert.match(healthRoutes, /healthStatusCode\(payload\)/, 'health handler must derive HTTP status from health payload');
+assert.doesNotMatch(main, /struct RateBucket|struct RateLimitBucket/, 'main.cpp must not retain duplicate local rate limiter');
+assert.match(securityHardening, /struct RateBucket/, 'security hardening module must own rate limiter state');
+
+const config = read('frontend/config.js');
+assert.doesNotThrow(() => new vm.Script(config, { filename: 'frontend/config.js' }), 'shared frontend config must be valid JavaScript');
+assert.match(config, /'api-client\.js'/, 'shared loader must retain the API client');
+assert.match(config, /'auth-session-sync\.js'/, 'shared loader must retain auth session synchronization');
+assert.match(config, /'league-onboarding\.js'/, 'shared loader must retain league onboarding reliability');
+assert.match(config, /'landing-refresh\.js'/, 'shared loader must retain the landing-page refresh');
+assert.match(config, /'landing-refresh\.css'/, 'shared loader must retain the landing-page stylesheet');
 
 const state = read('frontend/state.js');
 assert.match(state, /window\.CFF_ALLOW_LOCAL_DEMO === true/, 'local demo must default fail-closed');

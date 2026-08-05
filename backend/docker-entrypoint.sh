@@ -15,6 +15,14 @@ else
   echo "[startup] migrations skipped; deployment lifecycle owns migrations"
 fi
 
+if is_enabled "${CFF_SEED_STAGING_DRAFT_PLAYERS:-false}"; then
+  echo "[startup] loading idempotent staging draft-player seed"
+  psql "$DB_URL" -v ON_ERROR_STOP=1 \
+    -f /srv/db/seeds/seed_staging_draft_players.sql
+else
+  echo "[startup] staging draft-player seed disabled"
+fi
+
 if is_enabled "${ESPN_ROSTER_AUTO_ONCE:-false}"; then
   (
     echo "[espn-bootstrap] starting explicit guarded startup check"

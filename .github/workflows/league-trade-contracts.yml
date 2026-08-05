@@ -1,0 +1,62 @@
+name: League trade policy contracts
+
+on:
+  pull_request:
+    branches: [Test]
+    paths:
+      - "backend/src/handlers/league_handler.cpp"
+      - "backend/src/league_trade.h"
+      - "backend/src/league_trade.cpp"
+      - "backend/tests/league_trade_tests.cpp"
+      - "backend/tests/league_trade_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/league-trade-contracts.yml"
+  push:
+    branches: [Test]
+    paths:
+      - "backend/src/handlers/league_handler.cpp"
+      - "backend/src/league_trade.h"
+      - "backend/src/league_trade.cpp"
+      - "backend/tests/league_trade_tests.cpp"
+      - "backend/tests/league_trade_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/league-trade-contracts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  trade-policy-contracts:
+    name: Trade policy contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install JsonCpp development library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjsoncpp-dev pkg-config
+
+      - name: Verify league trade ownership boundary
+        run: python backend/tests/league_trade_boundary_tests.py
+
+      - name: Compile deterministic trade policy tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -Ibackend/src \
+            backend/src/json_utils.cpp \
+            backend/src/league_trade.cpp \
+            backend/tests/league_trade_tests.cpp \
+            $(pkg-config --cflags --libs jsoncpp) \
+            -o /tmp/league_trade_tests
+
+      - name: Run trade policy tests
+        run: /tmp/league_trade_tests
+
+      - name: Reject whitespace errors
+        run: git diff --check

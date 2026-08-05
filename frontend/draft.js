@@ -27,8 +27,16 @@ const draftLocked = document.getElementById('draft-locked');
 const draftLockedMessage = document.getElementById('draft-locked-message');
 const draftLockedPrimary = document.getElementById('draft-locked-primary');
 const draftRoomContent = document.getElementById('draft-room-content');
+const draftLobbyBadge = document.getElementById('draft-lobby-badge');
+const draftLobbyCopy = document.getElementById('draft-lobby-copy');
+const draftStartBtn = document.getElementById('draft-start');
+const draftLobbyMembers = document.getElementById('draft-lobby-members');
+const draftScheduledTime = document.getElementById('draft-scheduled-time');
+const draftActivityLog = document.getElementById('draft-activity-log');
 let draftTimer = null;
 let autoPickInFlight = false;
+let draftSyncTimer = null;
+let draftRefreshInFlight = false;
 
 function canEnterDraftRoom(league = getLeagueState()) {
   return Boolean(league && (league.draftLobbyOpen || isCurrentCommissioner(league)));
@@ -54,10 +62,55 @@ function renderDraftAccess() {
   const commissioner = isCurrentCommissioner(league);
   if (clearDraftBtn) clearDraftBtn.disabled = !commissioner;
   if (undoLastPickBtn) undoLastPickBtn.disabled = !commissioner || !getDraftPicks().length;
-  const orderLocked = getDraftPicks().length > 0 || getDraftMeta().status === 'complete';
+  const orderLocked = getDraftPicks().length > 0 || getDraftMeta().status !== 'not_started';
   if (randomizeDraftOrderBtn) randomizeDraftOrderBtn.disabled = !commissioner || orderLocked;
   if (resetDraftOrderBtn) resetDraftOrderBtn.disabled = !commissioner || orderLocked;
   return canEnter;
+}
+
+function renderDraftLobbyState() {
+  const league = getLeagueState();
+  const meta = getDraftMeta();
+  const commissioner = isCurrentCommissioner(league);
+  const activeManagers = (league?.members || []).filter((member) => String(member.status || '').toLowerCase() === 'active');
+  const waiting = meta.status === 'not_started';
+  const live = meta.status === 'open';
+  const lobbyOpen = Boolean(meta.lobbyOpen || window.effectiveDraftLobbyOpen?.(league));
+  const autoOpen = Boolean(!league?.draftLobbyOpen && window.draftLobbyAutoOpen?.(league));
+  if (draftLobbyMembers) {
+    draftLobbyMembers.textContent = `${activeManagers.length} active manager${activeManagers.length === 1 ? '' : 's'}`;
+  }
+  if (draftScheduledTime) {
+    draftScheduledTime.textContent = league?.draftDate
+      ? `Scheduled ${new Date(league.draftDate).toLocaleString()}. Lobby opens automatically ${window.DRAFT_LOBBY_AUTO_OPEN_MINUTES || 30} minutes before.`
+      : 'Draft time not scheduled.';
+  }
+  if (draftLobbyBadge) {
+    draftLobbyBadge.textContent = meta.status === 'complete' ? 'Complete' : live ? 'Live' : 'Lobby';
+  }
+  if (draftLobbyCopy) {
+    if (!lobbyOpen) {
+      draftLobbyCopy.textContent = commissioner
+        ? 'Open the lobby from league settings, or it will open automatically before the scheduled draft time.'
+        : 'The draft room opens automatically before the scheduled draft time.';
+    } else if (meta.status === 'complete') {
+      draftLobbyCopy.textContent = 'The draft is complete. The commissioner can reset it for another test.';
+    } else if (live) {
+      draftLobbyCopy.textContent = `Draft started${meta.startedAt ? ` ${new Date(meta.startedAt).toLocaleString()}` : ''}. Picks refresh automatically for every manager.`;
+    } else if (autoOpen) {
+      draftLobbyCopy.textContent = 'The draft lobby is open automatically. Mark ready before the commissioner starts.';
+    } else if (commissioner && activeManagers.length < 2) {
+      draftLobbyCopy.textContent = 'At least two active managers are required before the draft can start.';
+    } else if (commissioner) {
+      draftLobbyCopy.textContent = 'Managers may enter now. Start the draft when everyone is ready.';
+    } else {
+      draftLobbyCopy.textContent = 'You are in the lobby. Waiting for the commissioner to start the draft.';
+    }
+  }
+  if (draftStartBtn) {
+    draftStartBtn.hidden = !commissioner || !waiting;
+    draftStartBtn.disabled = !lobbyOpen || activeManagers.length < 2;
+  }
 }
 
 function renderLeagueHeader() {
@@ -72,6 +125,7 @@ function renderQueue() {
   const meta = getDraftMeta();
   const myTurn = isMyDraftTurn(meta);
   const complete = meta.status === 'complete';
+  const live = meta.status === 'open';
   if (queueCount) queueCount.textContent = `${queue.length} queued`;
   if (!draftQueue) return;
   if (!queue.length) {
@@ -93,7 +147,7 @@ function renderQueue() {
         <div class="muted">${player.team} ${player.position} / ${Number(player.projection).toFixed(1)} proj</div>
       </div>
       <div class="actions">
-        <button class="button button--primary" data-draft="${player.id}" type="button" ${myTurn && !complete ? '' : 'disabled'}>${complete ? 'Complete' : myTurn ? 'Draft' : 'Waiting'}</button>
+        <button class="button button--primary" data-draft="${player.id}" type="button" ${live && myTurn && !complete ? '' : 'disabled'}>${complete ? 'Complete' : !live ? 'Not started' : myTurn ? 'Draft' : 'Waiting'}</button>
         <button class="button button--ghost" data-remove="${player.id}" type="button">Remove</button>
       </div>
     </div>
@@ -222,13 +276,22 @@ function renderDraftPicks() {
   const order = draftOrderFromLeague();
   const currentPick = Number(meta.currentPick || picks.length + 1);
   const round = order.length ? Math.floor((Math.max(1, currentPick) - 1) / order.length) + 1 : 1;
+  const waiting = meta.status === 'not_started';
   if (draftCurrentPick) {
-    draftCurrentPick.textContent = meta.status === 'complete' ? 'Complete' : `Pick ${currentPick}`;
+    draftCurrentPick.textContent = meta.status === 'complete' ? 'Complete' : waiting ? 'Waiting' : `Pick ${currentPick}`;
   }
-  if (draftCurrentManager) draftCurrentManager.textContent = meta.status === 'complete' ? 'Draft complete' : managerDisplayName(manager) || 'Manager TBD';
-  if (draftStatus) draftStatus.textContent = meta.status === 'complete' ? 'Complete' : isMyDraftTurn(meta) ? 'Your pick' : 'Waiting';
-  if (draftRoundLabel) draftRoundLabel.textContent = meta.status === 'complete' ? 'Complete' : `Round ${round}`;
-  if (draftNextPickLabel) draftNextPickLabel.textContent = meta.status === 'complete' ? 'Done' : `Pick ${currentPick}`;
+  if (draftCurrentManager) draftCurrentManager.textContent = meta.status === 'complete'
+    ? 'Draft complete'
+    : waiting
+      ? 'Commissioner starts draft'
+      : managerDisplayName(manager) || 'Manager TBD';
+  if (draftStatus) draftStatus.textContent = meta.status === 'complete'
+    ? 'Complete'
+    : waiting
+      ? 'Lobby'
+      : isMyDraftTurn(meta) ? 'Your pick' : 'Waiting';
+  if (draftRoundLabel) draftRoundLabel.textContent = meta.status === 'complete' ? 'Complete' : waiting ? 'Lobby' : `Round ${round}`;
+  if (draftNextPickLabel) draftNextPickLabel.textContent = meta.status === 'complete' ? 'Done' : waiting ? 'Not started' : `Pick ${currentPick}`;
   renderDraftClock();
   if (!draftPickList) return;
   if (!picks.length) {
@@ -238,6 +301,14 @@ function renderDraftPicks() {
   draftPickList.innerHTML = picks.map((pick) => {
     const player = pick.player || {};
     const last = Number(pick.pickNumber) === Number(picks[picks.length - 1]?.pickNumber);
+    const automatic = Boolean(pick.automatic || (pick.selectionSource && pick.selectionSource !== 'manual'));
+    const sourceLabel = pick.selectionSource === 'personal_queue'
+      ? 'Queue auto-pick'
+      : pick.selectionSource === 'system_ranking'
+        ? 'System auto-pick'
+        : automatic
+          ? 'Auto-pick'
+          : 'Manual';
     return `
       <div class="row">
         <div>
@@ -246,8 +317,31 @@ function renderDraftPicks() {
         </div>
         <div class="actions">
           ${last ? '<span class="pill pill--muted">Last pick</span>' : ''}
+          <span class="pill ${automatic ? '' : 'pill--muted'}">${sourceLabel}</span>
           <span class="badge">${Number(player.projection || 0).toFixed(1)}</span>
         </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderDraftActivityLog() {
+  if (!draftActivityLog) return;
+  const activity = Array.isArray(getDraftMeta()?.activity) ? getDraftMeta().activity : [];
+  if (!activity.length) {
+    draftActivityLog.textContent = 'Draft activity will appear here.';
+    return;
+  }
+  draftActivityLog.innerHTML = activity.slice(0, 30).map((entry) => {
+    const time = entry.createdAt ? new Date(entry.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '';
+    const manager = entry.managerEmail ? ` / ${escapeHtml(managerDisplayName(entry.managerEmail))}` : '';
+    return `
+      <div class="row">
+        <div>
+          <strong>${escapeHtml(time || 'Draft event')}</strong>
+          <div class="muted">${escapeHtml(entry.message || entry.eventType || 'Draft event')}${manager}</div>
+        </div>
+        ${entry.pickNumber ? `<span class="badge">Pick ${Number(entry.pickNumber)}</span>` : '<span class="pill pill--muted">Log</span>'}
       </div>
     `;
   }).join('');
@@ -290,14 +384,14 @@ function draftOrderFromLeague(league = getLeagueState()) {
   const meta = getDraftMeta();
   if (Array.isArray(meta.draftOrder) && meta.draftOrder.length) return meta.draftOrder;
   return (league?.members || [])
-    .filter((member) => String(member.status || '').toLowerCase() !== 'removed')
+    .filter((member) => String(member.status || '').toLowerCase() === 'active')
     .map((member) => member.email)
     .filter(Boolean);
 }
 
 function memberOrderFromLeague(league = getLeagueState()) {
   return (league?.members || [])
-    .filter((member) => String(member.status || '').toLowerCase() !== 'removed')
+    .filter((member) => String(member.status || '').toLowerCase() === 'active')
     .map((member) => member.email)
     .filter(Boolean);
 }
@@ -349,24 +443,19 @@ function renderDraftClock() {
   const meta = getDraftMeta();
   const remaining = draftClockRemaining(meta);
   if (draftClock) {
-    draftClock.textContent = meta.status === 'complete' ? 'Done' : `${remaining}s`;
+    draftClock.textContent = meta.status === 'complete' ? 'Done' : meta.status !== 'open' ? 'Waiting' : `${remaining}s`;
   }
 }
 
 async function maybeAutoPick() {
   if (!canEnterDraftRoom()) return;
   const meta = getDraftMeta();
-  if (autoPickInFlight || meta.status === 'complete' || !isMyDraftTurn(meta) || draftClockRemaining(meta) > 0) return;
+  if (autoPickInFlight || meta.status !== 'open' || draftClockRemaining(meta) > 0) return;
   autoPickInFlight = true;
   try {
-    await autoPickFromQueueApi();
     await refreshDraftFromApi();
   } catch {
-    try {
-      await autoPickFromQueueApi();
-    } catch {
-      // No available auto-pick target.
-    }
+    // Keep the last confirmed state; mutation controls are disabled by outage handling.
   } finally {
     autoPickInFlight = false;
     renderAll();
@@ -382,15 +471,27 @@ function startDraftTimer() {
 }
 
 async function refreshDraftFromApi() {
-  if (!canEnterDraftRoom()) return;
   if (!getAuthState()?.token) return;
+  if (draftRefreshInFlight) return;
+  draftRefreshInFlight = true;
   try {
     await syncLeaguesFromApi();
     await syncActiveLeagueCollectionsFromApi();
     await syncDraftFromApi();
   } catch {
-    // Keep local draft controls responsive when the API is offline.
+    // Keep the last authoritative draft snapshot visible during an outage.
+  } finally {
+    draftRefreshInFlight = false;
   }
+}
+
+function startDraftSyncPolling() {
+  if (draftSyncTimer) clearInterval(draftSyncTimer);
+  draftSyncTimer = setInterval(async () => {
+    if (document.visibilityState !== 'visible' || !getAuthState()?.token) return;
+    await refreshDraftFromApi();
+    renderAll();
+  }, 2000);
 }
 
 async function refreshDraftLeagueShell() {
@@ -413,12 +514,14 @@ function renderAll() {
   updateSharedNav('league');
   if (!renderDraftAccess()) return;
   renderLeagueHeader();
+  renderDraftLobbyState();
   renderQueue();
   renderRoster();
   renderDraftOrder();
   renderDraftPicks();
   renderUpcomingPicks();
   renderRecommended();
+  renderDraftActivityLog();
   renderDraftOutageState();
 }
 
@@ -448,6 +551,18 @@ function renderDraftOutageState() {
     button.dataset.cffOutageDisabled = 'true';
   });
 }
+
+draftStartBtn?.addEventListener('click', async () => {
+  if (!isCurrentCommissioner()) return;
+  draftStartBtn.disabled = true;
+  try {
+    await startDraftApi();
+    await refreshDraftFromApi();
+  } catch (error) {
+    if (draftLobbyCopy) draftLobbyCopy.textContent = mutationErrorMessage(error, 'Could not start the draft.');
+  }
+  renderAll();
+});
 
 refreshDraftBtn?.addEventListener('click', async () => {
   await refreshDraftFromApi();
@@ -515,6 +630,7 @@ async function initDraftPage() {
   await refreshDraftFromApi();
   renderAll();
   startDraftTimer();
+  startDraftSyncPolling();
 }
 
 initDraftPage();

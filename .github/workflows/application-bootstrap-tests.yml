@@ -1,0 +1,79 @@
+name: Application bootstrap contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/main.cpp"
+      - "backend/src/application_bootstrap.h"
+      - "backend/src/application_bootstrap.cpp"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/server_runtime.cpp"
+      - "backend/src/ingest_runtime.cpp"
+      - "backend/tests/application_bootstrap_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/application-bootstrap-tests.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/main.cpp"
+      - "backend/src/application_bootstrap.h"
+      - "backend/src/application_bootstrap.cpp"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/server_runtime.cpp"
+      - "backend/src/ingest_runtime.cpp"
+      - "backend/tests/application_bootstrap_boundary_tests.py"
+      - "backend/CMakeLists.txt"
+      - ".github/workflows/application-bootstrap-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  application-bootstrap:
+    name: Entry point, startup order, and stub contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify application bootstrap ownership and order
+        run: python backend/tests/application_bootstrap_boundary_tests.py
+
+      - name: Configure and build the non-Drogon stub
+        run: |
+          cmake -S backend -B /tmp/cff-stub \
+            -DENABLE_DROGON=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/cff-stub --parallel 2
+
+      - name: Verify exact non-Drogon stub behavior
+        run: |
+          python - <<'PY'
+          import subprocess
+
+          expected = (
+              "College Fantasy Football backend scaffold (Drogon not linked).\n"
+              "Build with -DDROGON_FOUND=ON and link Drogon to run the HTTP server.\n"
+          )
+          completed = subprocess.run(
+              ["/tmp/cff-stub/college_ff_server"],
+              check=False,
+              capture_output=True,
+              text=True,
+          )
+          if completed.returncode != 0:
+              raise SystemExit(f"stub returned {completed.returncode}: {completed.stderr}")
+          if completed.stdout != expected:
+              raise SystemExit(
+                  f"stub output changed\nexpected={expected!r}\nactual={completed.stdout!r}"
+              )
+          if completed.stderr:
+              raise SystemExit(f"stub wrote unexpected stderr: {completed.stderr!r}")
+          print("application bootstrap stub contracts passed")
+          PY

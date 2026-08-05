@@ -468,6 +468,95 @@ function normalizeLeague(league = {}) {
   };
 }
 
+const DRAFT_LOBBY_AUTO_OPEN_MINUTES = 30;
+
+function draftTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local time';
+}
+
+function draftHourOptions() {
+  return Array.from({ length: 24 }, (_, hour) => {
+    const date = new Date(2000, 0, 1, hour, 0, 0, 0);
+    return {
+      value: String(hour).padStart(2, '0'),
+      label: date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    };
+  });
+}
+
+function populateDraftTimeSelect(select, selectedHour = '19') {
+  if (!select) return;
+  const safeHour = String(selectedHour || '19').padStart(2, '0');
+  select.innerHTML = draftHourOptions()
+    .map((option) => `<option value="${option.value}">${option.label}</option>`)
+    .join('');
+  select.value = /^\d{2}$/.test(safeHour) ? safeHour : '19';
+}
+
+function draftDatePart(value = '') {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value).slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function draftHourPart(value = '', fallback = '19') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    const match = String(value).match(/T(\d{2}):/);
+    return match ? match[1] : fallback;
+  }
+  return String(date.getHours()).padStart(2, '0');
+}
+
+function combineDraftDateAndHour(dateValue = '', hourValue = '19') {
+  if (!dateValue) return '';
+  const [year, month, day] = String(dateValue).split('-').map(Number);
+  const hour = Number(hourValue);
+  if (!year || !month || !day || !Number.isInteger(hour) || hour < 0 || hour > 23) return '';
+  return new Date(year, month - 1, day, hour, 0, 0, 0).toISOString();
+}
+
+function draftDateTime(value = '') {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isTopOfHourDraftDate(value = '') {
+  if (!value) return true;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    && date.getMinutes() === 0
+    && date.getSeconds() === 0
+    && date.getMilliseconds() === 0;
+}
+
+function draftLobbyAutoOpen(league = getLeagueState(), now = Date.now()) {
+  const draftAt = draftDateTime(league?.draftDate);
+  if (!draftAt) return false;
+  const opensAt = draftAt - DRAFT_LOBBY_AUTO_OPEN_MINUTES * 60 * 1000;
+  return Number(now) >= opensAt;
+}
+
+function effectiveDraftLobbyOpen(league = getLeagueState(), now = Date.now()) {
+  return Boolean(league?.draftLobbyOpen || draftLobbyAutoOpen(league, now));
+}
+
+window.DRAFT_LOBBY_AUTO_OPEN_MINUTES = DRAFT_LOBBY_AUTO_OPEN_MINUTES;
+window.draftTimezone = draftTimezone;
+window.draftHourOptions = draftHourOptions;
+window.populateDraftTimeSelect = populateDraftTimeSelect;
+window.draftDatePart = draftDatePart;
+window.draftHourPart = draftHourPart;
+window.combineDraftDateAndHour = combineDraftDateAndHour;
+window.isTopOfHourDraftDate = isTopOfHourDraftDate;
+window.draftLobbyAutoOpen = draftLobbyAutoOpen;
+window.effectiveDraftLobbyOpen = effectiveDraftLobbyOpen;
+
 function normalizeMembers(members = [], invitedEmails = []) {
   const auth = getAuthState();
   const byEmail = new Map();
@@ -733,7 +822,7 @@ function draftPlayer(player) {
   const normalized = normalizePlayer(player);
   const roster = getRoster();
   const meta = getDraftMeta();
-  if (meta.status === 'complete') return roster;
+  if (meta.status !== 'open') return roster;
   if (!roster.some((item) => item.id === normalized.id)) {
     const slot = assignRosterSlot(normalized, roster);
     if (!slot) return roster;
@@ -858,7 +947,7 @@ function getDraftMeta() {
   const store = readJson(CFF_DRAFT_META_KEY, {});
   return league?.id
     ? store[league.id] || {
-      status: 'open',
+      status: 'not_started',
       currentPick: 1,
       draftOrder: [],
       draftType: league.draftType || 'snake',
@@ -866,7 +955,7 @@ function getDraftMeta() {
       pickClockSeconds: 90,
       pickDeadline: new Date(Date.now() + 90000).toISOString()
     }
-    : { status: 'open', currentPick: 1, draftOrder: [], draftType: 'snake', pickClockSeconds: 90, pickDeadline: new Date(Date.now() + 90000).toISOString() };
+    : { status: 'not_started', currentPick: 1, draftOrder: [], draftType: 'snake', pickClockSeconds: 90, pickDeadline: new Date(Date.now() + 90000).toISOString() };
 }
 
 function saveDraftMeta(meta = {}) {
@@ -874,13 +963,22 @@ function saveDraftMeta(meta = {}) {
   if (!league?.id) return;
   const store = readJson(CFF_DRAFT_META_KEY, {});
   store[league.id] = {
-    status: meta.status || 'open',
+    status: meta.status || 'not_started',
     currentPick: Number(meta.currentPick || 1),
     draftOrder: Array.isArray(meta.draftOrder) ? meta.draftOrder : [],
     draftType: meta.draftType || league.draftType || 'snake',
     currentManager: meta.currentManager || '',
     pickClockSeconds: Number(meta.pickClockSeconds || 90),
-    pickDeadline: meta.pickDeadline || ''
+    pickDeadline: meta.pickDeadline || '',
+    startedAt: meta.startedAt || '',
+    completedAt: meta.completedAt || '',
+    version: Number(meta.version || meta.revision || 0),
+    revision: Number(meta.revision || meta.version || 0),
+    totalPicks: Number(meta.totalPicks || 0),
+    picksRemaining: Number(meta.picksRemaining || 0),
+    readiness: Array.isArray(meta.readiness) ? meta.readiness : [],
+    activity: Array.isArray(meta.activity) ? meta.activity : [],
+    lobbyOpen: typeof meta.lobbyOpen === 'boolean' ? meta.lobbyOpen : Boolean(league.draftLobbyOpen)
   };
   writeJson(CFF_DRAFT_META_KEY, store);
 }
@@ -890,12 +988,38 @@ function saveDraftOrder(draftOrder = []) {
   const currentPick = Number(meta.currentPick || 1);
   saveDraftMeta({
     ...meta,
-    status: meta.status || 'open',
+    status: meta.status || 'not_started',
     currentPick,
     draftOrder,
     currentManager: draftManagerForPick(draftOrder, currentPick, meta.draftType || getLeagueState()?.draftType || 'snake'),
-    pickDeadline: meta.pickDeadline || new Date(Date.now() + Number(meta.pickClockSeconds || 90) * 1000).toISOString()
+    pickDeadline: meta.status === 'open'
+      ? meta.pickDeadline || new Date(Date.now() + Number(meta.pickClockSeconds || 90) * 1000).toISOString()
+      : ''
   });
+}
+
+function startDraft() {
+  const league = getLeagueState();
+  const activeManagers = (league?.members || []).filter((member) => String(member.status || '').toLowerCase() === 'active');
+  if (!isCurrentCommissioner(league) || !league?.draftLobbyOpen || activeManagers.length < 2) return null;
+  const meta = getDraftMeta();
+  if (meta.status === 'open') return meta;
+  const draftOrder = Array.isArray(meta.draftOrder) && meta.draftOrder.length
+    ? meta.draftOrder
+    : activeManagers.map((member) => member.email).filter(Boolean);
+  const startedAt = new Date().toISOString();
+  const next = {
+    ...meta,
+    status: 'open',
+    currentPick: 1,
+    draftOrder,
+    currentManager: draftManagerForPick(draftOrder, 1, meta.draftType || league.draftType || 'snake'),
+    startedAt,
+    pickDeadline: new Date(Date.now() + Number(meta.pickClockSeconds || 90) * 1000).toISOString(),
+    lobbyOpen: true
+  };
+  saveDraftMeta(next);
+  return next;
 }
 
 function draftManagerForPick(order = [], currentPick = 1, draftType = 'snake') {
@@ -921,6 +1045,7 @@ function isMyDraftTurn(meta = getDraftMeta()) {
 }
 
 function draftClockRemaining(meta = getDraftMeta()) {
+  if (meta.status !== 'open') return 0;
   if (!meta.pickDeadline) return Number(meta.pickClockSeconds || 90);
   return Math.max(0, Math.ceil((new Date(meta.pickDeadline).getTime() - Date.now()) / 1000));
 }
@@ -1148,6 +1273,14 @@ function applyDraftState(state = {}) {
   if (Array.isArray(state.picks)) {
     saveDraftPicks(state.picks);
   }
+  const league = getLeagueState();
+  if (league && typeof state.lobbyOpen === 'boolean') {
+    saveLeagueForAccount({
+      ...league,
+      draftLobbyOpen: state.lobbyOpen,
+      draftLobbyStartedAt: league.draftLobbyStartedAt || ''
+    });
+  }
   saveDraftMeta(state);
 }
 
@@ -1184,6 +1317,19 @@ async function saveDraftOrderApi(draftOrder = []) {
   const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/order`, {
     method: 'PUT',
     body: JSON.stringify({ draftOrder })
+  });
+  applyDraftState(state);
+  return state;
+}
+
+async function startDraftApi() {
+  const league = getLeagueState();
+  if (!getAuthState()?.token || isLocalDemoSession()) {
+    return startDraft();
+  }
+  if (!league?.id) throw new Error('No server league selected');
+  const state = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/draft/start`, {
+    method: 'POST'
   });
   applyDraftState(state);
   return state;

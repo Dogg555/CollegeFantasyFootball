@@ -98,6 +98,11 @@ void handleSaveDraftOrder(const drogon::HttpRequestPtr &req,
                           const std::string &accountEmail,
                           const std::string &leagueId);
 
+void handleStartDraft(const drogon::HttpRequestPtr &req,
+                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                      const std::string &accountEmail,
+                      const std::string &leagueId);
+
 void handleMakeDraftPick(const drogon::HttpRequestPtr &req,
                          std::function<void (const drogon::HttpResponsePtr &)> &&callback,
                          const std::string &accountEmail,

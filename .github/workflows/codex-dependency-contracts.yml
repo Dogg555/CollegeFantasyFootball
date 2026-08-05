@@ -1,0 +1,106 @@
+name: Dependency-aware backend contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/application_bootstrap.h"
+      - "backend/src/application_bootstrap.cpp"
+      - "backend/src/json_utils.h"
+      - "backend/src/json_utils.cpp"
+      - "backend/src/league_schedule.h"
+      - "backend/src/league_schedule.cpp"
+      - "backend/tests/**"
+      - ".github/workflows/codex-dependency-contracts.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/application_bootstrap.h"
+      - "backend/src/application_bootstrap.cpp"
+      - "backend/src/json_utils.h"
+      - "backend/src/json_utils.cpp"
+      - "backend/src/league_schedule.h"
+      - "backend/src/league_schedule.cpp"
+      - "backend/tests/**"
+      - ".github/workflows/codex-dependency-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-aware-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap-boundaries:
+    name: Bootstrap-dependent boundaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run every bootstrap-aware boundary test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          root = Path.cwd()
+          tests = [
+              path for path in (root / "backend/tests").glob("*.py")
+              if "application_bootstrap.cpp" in path.read_text(encoding="utf-8")
+          ]
+          if not tests:
+              raise SystemExit("No application-bootstrap boundary tests were discovered")
+          for test in sorted(tests):
+              print(f"running {test.relative_to(root)}")
+              subprocess.run([sys.executable, str(test)], check=True)
+          PY
+
+  waiver-contracts:
+    name: JSON helper and waiver contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install JsonCpp
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjsoncpp-dev pkg-config
+      - name: Run waiver structural and compiled contracts
+        run: |
+          python backend/tests/league_waiver_boundary_tests.py
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -Ibackend/src \
+            backend/src/json_utils.cpp \
+            backend/src/league_waiver.cpp \
+            backend/tests/league_waiver_tests.cpp \
+            $(pkg-config --cflags --libs jsoncpp) \
+            -o /tmp/league_waiver_tests
+          /tmp/league_waiver_tests
+
+  draft-schedule-contracts:
+    name: League schedule and multiplayer draft contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run schedule-sensitive draft boundaries
+        run: |
+          python -m py_compile \
+            backend/tests/draft_lobby_multiplayer_boundary_tests.py \
+            backend/tests/draft_room_active_member_entry_tests.py \
+            backend/tests/private_page_auth_recovery_tests.py
+          python backend/tests/draft_lobby_multiplayer_boundary_tests.py
+          python backend/tests/draft_room_active_member_entry_tests.py
+          python backend/tests/private_page_auth_recovery_tests.py

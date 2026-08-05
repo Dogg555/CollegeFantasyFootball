@@ -1,0 +1,196 @@
+# College Fantasy Football - isolated Render staging environment
+# Blueprint branch: Test
+#
+# This staging stack intentionally excludes production cron jobs:
+# - scheduled CFBD roster ingestion
+# - live score ingestion
+# - production database backups
+#
+# Add those only when you specifically need to validate their Render behavior.
+
+services:
+  - type: web
+    name: college-ff-staging-api
+    runtime: docker
+    branch: Test
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+
+    # Use the Dockerfile CMD. The entrypoint handles migrations and the
+    # idempotent staging-only player seed on free Render instances.
+    envVars:
+      - key: DB_URL
+        fromDatabase:
+          name: college-ff-staging-db
+          property: connectionString
+
+      - key: JWT_SECRET
+        generateValue: true
+
+      - key: ALLOWED_ORIGINS
+        value: https://college-ff-staging-frontend.onrender.com,http://localhost:3000,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5500,http://127.0.0.1:5500
+
+      # External API key must be entered in the Render dashboard.
+      - key: CFBD_API_KEY
+        sync: false
+
+      - key: CFBD_ROSTER_SEASON
+        value: "2025"
+
+      - key: CFF_RUN_MIGRATIONS_ON_STARTUP
+        value: "true"
+
+      - key: CFF_SEED_STAGING_DRAFT_PLAYERS
+        value: "true"
+
+      # Keep the external ESPN bootstrap disabled for this small deterministic
+      # staging draft pool. Enable it separately when validating ingestion.
+      - key: ESPN_ROSTER_AUTO_ONCE
+        value: "false"
+
+      - key: ESPN_ROSTER_SEASON
+        value: "2026"
+
+      - key: ESPN_ROSTER_ALLOW_PARTIAL
+        value: "false"
+
+      - key: CFF_ADMIN_API_TOKEN
+        generateValue: true
+
+      - key: CFF_ADMIN_EMAILS
+        sync: false
+
+      # Avoid background ingestion inside the API process.
+      - key: CFBD_INGEST_ON_STARTUP
+        value: "false"
+
+      - key: CFBD_INGEST_INTERVAL_HOURS
+        value: "0"
+
+      # Keep verification disabled initially so staging accounts are easy to create.
+      # Change this to "true" after staging email delivery is configured.
+      - key: CFF_REQUIRE_EMAIL_VERIFICATION
+        value: "false"
+
+      # Staging email credentials are intentionally separate from production.
+      - key: CFF_EMAIL_PROVIDER
+        value: resend
+
+      - key: RESEND_API_KEY
+        sync: false
+
+      - key: CFF_SMTP_HOST
+        sync: false
+
+      - key: CFF_SMTP_PORT
+        value: "587"
+
+      - key: CFF_SMTP_SECURITY
+        value: starttls
+
+      - key: CFF_SMTP_USERNAME
+        sync: false
+
+      - key: CFF_SMTP_PASSWORD
+        sync: false
+
+      - key: CFF_EMAIL_FROM
+        sync: false
+
+      - key: CFF_FRONTEND_BASE_URL
+        value: https://college-ff-staging-frontend.onrender.com
+
+      - key: CFF_REQUIRE_DB
+        value: "true"
+
+      - key: CFF_ALLOW_SHARED_SECRET_AUTH
+        value: "false"
+
+      - key: CFF_EXPOSE_AUTH_TOKENS
+        value: "false"
+
+      - key: CFF_LOG_AUTH_TOKENS
+        value: "false"
+
+      - key: CFF_SECURITY_ENFORCE_PRODUCTION
+        value: "true"
+
+      - key: CFF_TRUST_PROXY_HEADERS
+        value: "true"
+
+      - key: CFF_TRUSTED_CLIENT_IP_HEADER
+        value: x-forwarded-for
+
+      - key: CFF_MIN_PASSWORD_LENGTH
+        value: "12"
+
+      - key: CFF_MAX_REQUEST_BODY_BYTES
+        value: "262144"
+
+      - key: CFF_AUTH_REQUEST_BODY_BYTES
+        value: "8192"
+
+  - type: web
+    name: college-ff-staging-frontend
+    runtime: static
+    branch: Test
+    buildCommand: sh scripts/render-build-frontend.sh
+    staticPublishPath: ./frontend-dist
+
+    envVars:
+      - key: CFF_API_BASE
+        value: https://college-ff-staging-api.onrender.com/api
+
+      - key: CFF_ALLOW_LOCAL_DEMO
+        value: "false"
+
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; script-src-elem 'self' 'sha256-7AcVsEOyOE8yFFMDWrYQoomjBEFOMdd7BAy3FH3i5nc=' 'sha256-bRpuxJz7fdOtTBBwB3N9O3Gmm0xZnOK0MA85FbZofe4='; connect-src 'self' https:; upgrade-insecure-requests"
+
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000; includeSubDomains"
+
+      - path: /config.js
+        name: Cache-Control
+        value: "no-store, max-age=0"
+
+      - path: /*.html
+        name: Cache-Control
+        value: "no-store, max-age=0"
+
+      - path: /*.js
+        name: Cache-Control
+        value: "no-cache, no-store, must-revalidate"
+
+      - path: /*.css
+        name: Cache-Control
+        value: "no-cache, no-store, must-revalidate"
+
+      - path: /assets/*
+        name: Cache-Control
+        value: "no-cache, must-revalidate"
+
+databases:
+  - name: college-ff-staging-db
+    databaseName: college_ff_staging
+    user: college_ff_staging

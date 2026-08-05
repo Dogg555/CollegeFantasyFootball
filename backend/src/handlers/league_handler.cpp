@@ -25,6 +25,10 @@
 #endif
 #include "../json_utils.h"
 #include "../league_models.h"
+#include "../league_schedule.h"
+#include "../league_roster.h"
+#include "../league_waiver.h"
+#include "../league_trade.h"
 
 namespace cff::handlers {
 
@@ -58,6 +62,7 @@ std::unordered_map<std::string, Json::Value> membersByLeague;
 std::unordered_map<std::string, Json::Value> draftPicksByLeague;
 std::unordered_map<std::string, Json::Value> draftOrdersByLeague;
 std::unordered_map<std::string, Json::Value> draftQueuesByLeagueManager;
+std::unordered_map<std::string, Json::Value> draftStateByLeague;
 
 std::string lowerString(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
@@ -76,78 +81,6 @@ std::string canonicalEmail(std::string value) {
     return lowerString(std::move(value));
 }
 
-std::string upperString(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::toupper(ch));
-    });
-    return value;
-}
-
-bool flexEligible(const std::string &position) {
-    const auto pos = lowerString(position);
-    return pos == "rb" || pos == "wr" || pos == "te";
-}
-
-int slotLimit(const Json::Value &rules, const std::string &slot) {
-    return cff::getIntOrDefault(rules, slot, 0);
-}
-
-bool playerEligibleForSlot(const Json::Value &player, const std::string &slot) {
-    const auto position = lowerString(jsonString(player, "position", "bench"));
-    if (slot == "bench") return true;
-    if (slot == "flex") return flexEligible(position);
-    return slot == position;
-}
-
-bool validateRosterSlotMove(const Json::Value &player,
-                            const Json::Value &roster,
-                            const Json::Value &rules,
-                            const std::string &playerId,
-                            const std::string &slot) {
-    if (slot != "qb" && slot != "rb" && slot != "wr" && slot != "te" && slot != "flex" && slot != "bench") {
-        return false;
-    }
-    if (!playerEligibleForSlot(player, slot)) {
-        return false;
-    }
-    int occupied = 0;
-    for (const auto &item : roster) {
-        if (jsonString(item, "id") == playerId) {
-            continue;
-        }
-        if (lowerString(jsonString(item, "rosterSlot", "bench")) == slot) {
-            ++occupied;
-        }
-    }
-    return occupied < slotLimit(rules, slot);
-}
-
-Json::Value lineupErrorsFromCounts(const std::string &managerEmail,
-                                   const Json::Value &rules,
-                                   const std::unordered_map<std::string, int> &counts) {
-    Json::Value errors(Json::arrayValue);
-    for (const auto &slot : {"qb", "rb", "wr", "te", "flex"}) {
-        const auto required = slotLimit(rules, slot);
-        const auto filledIt = counts.find(slot);
-        const auto filled = filledIt == counts.end() ? 0 : filledIt->second;
-        if (filled < required) {
-            Json::Value error;
-            error["managerEmail"] = managerEmail;
-            error["slot"] = slot;
-            error["message"] = "Missing " + std::to_string(required - filled) + " " + upperString(slot) + " starter(s)";
-            errors.append(error);
-        }
-        if (filled > required) {
-            Json::Value error;
-            error["managerEmail"] = managerEmail;
-            error["slot"] = slot;
-            error["message"] = "Too many " + upperString(slot) + " starter(s)";
-            errors.append(error);
-        }
-    }
-    return errors;
-}
-
 double projectionForPlayer(const Json::Value &player) {
     if (player.isMember("projection") && player["projection"].isNumeric()) {
         return player["projection"].asDouble();
@@ -158,36 +91,25 @@ double projectionForPlayer(const Json::Value &player) {
     return 0.0;
 }
 
-std::string isoNow() {
-    const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+std::string draftIsoTimestamp(std::chrono::system_clock::time_point value) {
+    const auto raw = std::chrono::system_clock::to_time_t(value);
     std::tm timeInfo{};
 #ifdef _WIN32
-    gmtime_s(&timeInfo, &now);
+    gmtime_s(&timeInfo, &raw);
 #else
-    gmtime_r(&now, &timeInfo);
+    gmtime_r(&raw, &timeInfo);
 #endif
     std::ostringstream out;
-    out << std::put_time(&timeInfo, "%Y-%m-%dT%H:%M");
+    out << std::put_time(&timeInfo, "%Y-%m-%dT%H:%M:%SZ");
     return out.str();
 }
 
-bool waiverModeActive(const Json::Value &rules) {
-    return cff::getStringOrDefault(rules, "mode", "free_agency") == "waivers"
-        || (rules.isMember("freeAgencyLocked") && rules["freeAgencyLocked"].asBool());
+std::string draftIsoNow() {
+    return draftIsoTimestamp(std::chrono::system_clock::now());
 }
 
-bool waiverDeadlinePassed(const Json::Value &rules) {
-    const auto deadline = cff::getStringOrDefault(rules, "claimDeadline");
-    if (deadline.empty()) return true;
-    return deadline <= isoNow();
-}
-
-bool tradeApprovalRequired(const Json::Value &rules) {
-    return rules.isMember("commissionerApproval") && rules["commissionerApproval"].asBool();
-}
-
-int tradeExpirationHours(const Json::Value &rules) {
-    return std::clamp(cff::getIntOrDefault(rules, "expirationHours", 48), 1, 336);
+std::string draftDeadlineFromNow(int seconds) {
+    return draftIsoTimestamp(std::chrono::system_clock::now() + std::chrono::seconds(std::max(1, seconds)));
 }
 
 Json::Value waiverRulesForLeagueLocked(const std::string &leagueId) {
@@ -213,21 +135,66 @@ Json::Value tradeRulesForLeagueLocked(const std::string &leagueId) {
     return rules;
 }
 
-bool playerLockedInTradeLocked(const std::string &leagueId,
-                               const std::string &managerEmail,
-                               const std::string &playerId) {
-    auto &offers = arrayForLeague(tradesByLeague, leagueId);
-    for (const auto &offer : offers) {
-        const auto status = jsonString(offer, "status");
-        if (status != "Pending" && status != "Accepted") continue;
-        if (jsonString(offer, "offeredByEmail") == managerEmail && jsonString(offer["offerPlayer"], "id") == playerId) {
-            return true;
-        }
-        if (jsonString(offer, "offeredToEmail") == managerEmail && jsonString(offer["requestPlayer"], "id") == playerId) {
-            return true;
+Json::Value activeDraftOrderLocked(const std::string &leagueId) {
+    Json::Value order(Json::arrayValue);
+    for (const auto &member : arrayForLeague(membersByLeague, leagueId)) {
+        if (lowerString(jsonString(member, "status")) != "active") continue;
+        const auto email = canonicalEmail(jsonString(member, "email"));
+        if (!email.empty()) order.append(email);
+    }
+    return order;
+}
+
+bool localDraftOrderMatchesActiveMembers(const std::string &leagueId,
+                                         const Json::Value &order) {
+    const auto active = activeDraftOrderLocked(leagueId);
+    if (!order.isArray() || order.empty() || order.size() != active.size()) return false;
+    std::unordered_set<std::string> activeEmails;
+    for (const auto &email : active) activeEmails.insert(canonicalEmail(email.asString()));
+    std::unordered_set<std::string> seen;
+    for (const auto &value : order) {
+        if (!value.isString()) return false;
+        const auto email = canonicalEmail(value.asString());
+        if (email.empty() || activeEmails.find(email) == activeEmails.end() || !seen.insert(email).second) {
+            return false;
         }
     }
-    return false;
+    return true;
+}
+
+Json::Value &localDraftStateLocked(const std::string &leagueId) {
+    auto &state = draftStateByLeague[leagueId];
+    if (!state.isObject()) {
+        state = Json::Value{Json::objectValue};
+        state["status"] = "not_started";
+        state["currentPick"] = 1;
+        state["pickClockSeconds"] = 90;
+        state["pickDeadline"] = "";
+        state["startedAt"] = "";
+        state["draftOrder"] = activeDraftOrderLocked(leagueId);
+    }
+    if (!state["draftOrder"].isArray() || state["draftOrder"].empty()) {
+        state["draftOrder"] = activeDraftOrderLocked(leagueId);
+    }
+    const auto leagueIt = leaguesById.find(leagueId);
+    state["lobbyOpen"] = leagueIt != leaguesById.end() && leagueIt->second.league.draftLobbyOpen;
+    state["draftType"] = leagueIt != leaguesById.end()
+        ? leagueIt->second.league.draft.type
+        : "snake";
+    return state;
+}
+
+Json::Value localDraftPayloadLocked(const std::string &accountEmail,
+                                    const std::string &leagueId) {
+    auto &state = localDraftStateLocked(leagueId);
+    Json::Value payload = state;
+    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
+    payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(
+        payload["draftOrder"],
+        payload.get("currentPick", 1).asInt(),
+        payload.get("draftType", "snake").asString());
+    return payload;
 }
 
 bool lineupLockedLocked(const std::string &leagueId) {
@@ -237,78 +204,6 @@ bool lineupLockedLocked(const std::string &leagueId) {
         }
     }
     return false;
-}
-
-Json::Value activeMembers(const Json::Value &members) {
-    Json::Value active(Json::arrayValue);
-    for (const auto &member : members) {
-        const auto status = cff::getStringOrDefault(member, "status", "Active");
-        if (status != "Removed" && status != "removed") {
-            active.append(member);
-        }
-    }
-    return active;
-}
-
-Json::Value buildMatchups(const Json::Value &members,
-                          const std::string &leagueId,
-                          int week,
-                          const std::function<double(const std::string&)> &scoreForManager) {
-    Json::Value matchups(Json::arrayValue);
-    const auto managers = activeMembers(members);
-    std::vector<std::string> emails;
-    emails.reserve(managers.size());
-    for (const auto &manager : managers) {
-        const auto email = cff::getStringOrDefault(manager, "email");
-        if (!email.empty()) {
-            emails.push_back(email);
-        }
-    }
-    if (emails.empty()) return matchups;
-    const bool hasBye = emails.size() % 2 == 1;
-    if (hasBye) {
-        emails.push_back("");
-    }
-    const auto teamCount = emails.size();
-    const auto roundCount = teamCount > 1 ? teamCount - 1 : 1;
-    const auto round = (std::max(1, week) - 1) % roundCount;
-    std::vector<std::string> rotated = emails;
-    if (teamCount > 2) {
-        std::rotate(rotated.begin() + 1, rotated.begin() + 1 + round, rotated.end());
-    }
-    for (std::size_t i = 0; i < teamCount / 2; ++i) {
-        auto home = rotated[i];
-        auto away = rotated[teamCount - 1 - i];
-        if (home.empty() && away.empty()) continue;
-        if (home.empty()) std::swap(home, away);
-        if (week % 2 == 0 && !away.empty()) std::swap(home, away);
-        Json::Value matchup;
-        matchup["id"] = leagueId + "-week-" + std::to_string(week) + "-" + std::to_string(i + 1);
-        matchup["leagueId"] = leagueId;
-        matchup["week"] = week;
-        matchup["homeManager"] = home;
-        matchup["awayManager"] = away;
-        matchup["homeScore"] = scoreForManager(home);
-        matchup["awayScore"] = away.empty() ? 0.0 : scoreForManager(away);
-        matchup["status"] = "scheduled";
-        matchup["createdAt"] = "";
-        matchups.append(matchup);
-    }
-    return matchups;
-}
-
-Json::Value buildSeasonSchedule(const Json::Value &members,
-                                const std::string &leagueId,
-                                int weeks,
-                                const std::function<double(const std::string&)> &scoreForManager) {
-    Json::Value schedule(Json::arrayValue);
-    for (int week = 1; week <= weeks; ++week) {
-        const auto weekly = buildMatchups(members, leagueId, week, scoreForManager);
-        for (const auto &matchup : weekly) {
-            schedule.append(matchup);
-        }
-    }
-    return schedule;
 }
 
 #ifdef CFF_HAS_POSTGRES
@@ -330,6 +225,10 @@ struct PgResultDeleter {
 
 using PgConnPtr = std::unique_ptr<PGconn, PgConnDeleter>;
 using PgResultPtr = std::unique_ptr<PGresult, PgResultDeleter>;
+
+bool draftOrderMatchesMembers(PGconn *conn,
+const std::string &leagueId,
+const Json::Value &draftOrder);
 
 bool dbConfigured() {
     const auto *url = std::getenv("DB_URL");
@@ -483,7 +382,7 @@ Json::Value leagueJsonFromRow(PGresult *result, int row) {
 std::string leagueSelectSql(const std::string &whereClause) {
     return "SELECT id, name, team_count, scoring, scoring_settings::text, draft_type, "
            "COALESCE(to_char(draft_date AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
-           "draft_lobby_open, "
+           "(draft_lobby_open OR (draft_date IS NOT NULL AND draft_date <= NOW() + INTERVAL '30 minutes')), "
            "COALESCE(to_char(draft_lobby_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
            "roster_rules::text, waiver_rules::text, trade_rules::text, notes, to_json(invited_emails)::text "
            "FROM leagues " + whereClause;
@@ -629,6 +528,14 @@ Json::Value normalizeLeaguePayload(const Json::Value &body) {
         normalized["tradeRules"] = rules;
     }
     return normalized;
+}
+
+bool draftDateAtTopOfHour(const std::string &value) {
+    if (value.empty()) return true;
+    const auto marker = value.find('T');
+    return marker != std::string::npos
+        && value.size() >= marker + 6
+        && value.substr(marker + 3, 2) == "00";
 }
 
 Json::Value errorPayload(const std::string &message) {
@@ -1188,18 +1095,6 @@ Json::Value snapshotPlayer(const Json::Value &player, const std::string &playerI
     return snapshot;
 }
 
-int rosterLimitFromRules(const Json::Value &rules) {
-    if (!rules.isObject()) {
-        return 14;
-    }
-    return cff::getIntOrDefault(rules, "qb", 1)
-        + cff::getIntOrDefault(rules, "rb", 2)
-        + cff::getIntOrDefault(rules, "wr", 2)
-        + cff::getIntOrDefault(rules, "te", 1)
-        + cff::getIntOrDefault(rules, "flex", 2)
-        + cff::getIntOrDefault(rules, "bench", 6);
-}
-
 std::optional<int> dbRosterLimit(const std::string &leagueId) {
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
@@ -1209,7 +1104,7 @@ std::optional<int> dbRosterLimit(const std::string &leagueId) {
     if (!resultOk(result.get(), PGRES_TUPLES_OK) || PQntuples(result.get()) == 0) {
         return std::nullopt;
     }
-    return rosterLimitFromRules(jsonFromString(cell(result.get(), 0, 0)));
+    return cff::league_roster::rosterLimitFromRules(jsonFromString(cell(result.get(), 0, 0)));
 }
 
 bool dbRosterHasRoom(PGconn *conn, const std::string &leagueId, const std::string &managerEmail, int offset = 0) {
@@ -1328,18 +1223,7 @@ std::optional<std::string> dbAssignRosterSlot(PGconn *conn,
             counts[lowerString(cell(countsResult.get(), row, 0))] = cellInt(countsResult.get(), row, 1, 0);
         }
     }
-    const auto position = lowerString(jsonString(player, "position", "flex"));
-    const auto naturalLimit = cff::getIntOrDefault(rules, position, 0);
-    if (naturalLimit > 0 && counts[position] + offset < naturalLimit) {
-        return position;
-    }
-    if (flexEligible(position) && counts["flex"] + offset < cff::getIntOrDefault(rules, "flex", 0)) {
-        return "flex";
-    }
-    if (counts["bench"] + offset < cff::getIntOrDefault(rules, "bench", 0)) {
-        return "bench";
-    }
-    return std::nullopt;
+    return cff::league_roster::preferredRosterSlot(player, rules, counts, offset);
 }
 
 Json::Value draftPicksForLeague(PGconn *conn, const std::string &leagueId) {
@@ -1364,21 +1248,26 @@ Json::Value draftPicksForLeague(PGconn *conn, const std::string &leagueId) {
     return picks;
 }
 
+Json::Value activeDraftOrderForLeague(PGconn *conn, const std::string &leagueId) {
+    auto members = membersForLeague(conn, leagueId);
+    Json::Value order(Json::arrayValue);
+    for (const auto &member : members) {
+        if (lowerString(jsonString(member, "status")) != "active") continue;
+        const auto email = canonicalEmail(jsonString(member, "email"));
+        if (!email.empty()) order.append(email);
+    }
+    return order;
+}
+
 Json::Value draftOrderForLeague(PGconn *conn, const std::string &leagueId) {
     auto result = execParams(conn,
                              "SELECT to_json(draft_order)::text FROM draft_states WHERE league_id = $1",
                              {leagueId});
     if (resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0) {
-        return jsonFromString(cell(result.get(), 0, 0), Json::Value{Json::arrayValue});
+        const auto stored = jsonFromString(cell(result.get(), 0, 0), Json::Value{Json::arrayValue});
+        if (stored.isArray() && !stored.empty()) return stored;
     }
-    auto members = membersForLeague(conn, leagueId);
-    Json::Value order(Json::arrayValue);
-    for (const auto &member : members) {
-        if (lowerString(jsonString(member, "status")) == "active") {
-            order.append(jsonString(member, "email"));
-        }
-    }
-    return order;
+    return activeDraftOrderForLeague(conn, leagueId);
 }
 
 bool draftOrderMatchesMembers(PGconn *conn, const std::string &leagueId, const Json::Value &draftOrder) {
@@ -1411,25 +1300,15 @@ std::string draftTypeForLeague(PGconn *conn, const std::string &leagueId) {
     return "snake";
 }
 
-std::string currentDraftManager(const Json::Value &draftOrder, int currentPick, const std::string &draftType = "snake") {
-    if (!draftOrder.isArray() || draftOrder.empty()) return "";
-    const auto orderSize = static_cast<int>(draftOrder.size());
-    const auto zeroBasedPick = std::max(1, currentPick) - 1;
-    const auto round = zeroBasedPick / orderSize;
-    auto offset = zeroBasedPick % orderSize;
-    if (lowerString(draftType) == "snake" && round % 2 == 1) {
-        offset = orderSize - 1 - offset;
-    }
-    const auto index = static_cast<Json::ArrayIndex>(offset);
-    return draftOrder[index].isString() ? draftOrder[index].asString() : "";
-}
-
 bool dbDraftComplete(PGconn *conn, const std::string &leagueId) {
     const auto limit = dbRosterLimit(leagueId).value_or(14);
     auto members = membersForLeague(conn, leagueId);
+    int activeMembers = 0;
     for (const auto &member : members) {
+        if (lowerString(jsonString(member, "status")) != "active") continue;
         const auto email = jsonString(member, "email");
-        if (email.empty() || jsonString(member, "status") == "Removed") continue;
+        if (email.empty()) continue;
+        ++activeMembers;
         auto result = execParams(conn,
                                  "SELECT COUNT(*) FROM rosters WHERE league_id = $1 AND manager_email = $2",
                                  {leagueId, email});
@@ -1437,12 +1316,12 @@ bool dbDraftComplete(PGconn *conn, const std::string &leagueId) {
             return false;
         }
     }
-    return members.size() > 0;
+    return activeMembers > 0;
 }
 
 bool dbDraftLobbyOpen(PGconn *conn, const std::string &leagueId) {
     auto result = execParams(conn,
-                             "SELECT draft_lobby_open FROM leagues WHERE id = $1",
+                             "SELECT draft_lobby_open OR (draft_date IS NOT NULL AND draft_date <= NOW() + INTERVAL '30 minutes') FROM leagues WHERE id = $1",
                              {leagueId});
     return resultOk(result.get(), PGRES_TUPLES_OK) && PQntuples(result.get()) > 0 && cellBool(result.get(), 0, 0);
 }
@@ -1458,10 +1337,9 @@ std::optional<Json::Value> dbGetDraftState(const std::string &accountEmail, cons
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
     if (!conn) return std::nullopt;
-    if (!dbDraftLobbyOpen(conn.get(), leagueId) && !dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
     auto state = execParams(conn.get(),
                             "INSERT INTO draft_states (league_id, status, current_pick, draft_order, pick_deadline, started_at) "
-                            "VALUES ($1, 'open', 1, ARRAY(SELECT email FROM league_members WHERE league_id = $1 AND status <> 'removed' ORDER BY role, created_at), NOW() + INTERVAL '90 seconds', NOW()) "
+                            "VALUES ($1, 'not_started', 1, ARRAY(SELECT email FROM league_members WHERE league_id = $1 AND status = 'active' ORDER BY role, created_at), NULL, NULL) "
                             "ON CONFLICT (league_id) DO NOTHING",
                             {leagueId});
     (void)state;
@@ -1475,27 +1353,71 @@ std::optional<Json::Value> dbGetDraftState(const std::string &accountEmail, cons
     }
     auto stateResult = execParams(conn.get(),
                                   "SELECT status, current_pick, pick_clock_seconds, "
-                                  "COALESCE(to_char(pick_deadline AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
+                                  "COALESCE(to_char(pick_deadline AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
+                                  "COALESCE(to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') "
                                   "FROM draft_states WHERE league_id = $1",
                                   {leagueId});
-    payload["status"] = "open";
+    payload["status"] = "not_started";
     payload["currentPick"] = 1;
     payload["pickClockSeconds"] = 90;
     payload["pickDeadline"] = "";
+    payload["startedAt"] = "";
     if (resultOk(stateResult.get(), PGRES_TUPLES_OK) && PQntuples(stateResult.get()) > 0) {
         payload["status"] = cell(stateResult.get(), 0, 0);
         payload["currentPick"] = cellInt(stateResult.get(), 0, 1, 1);
         payload["pickClockSeconds"] = cellInt(stateResult.get(), 0, 2, 90);
         payload["pickDeadline"] = cell(stateResult.get(), 0, 3);
+        payload["startedAt"] = cell(stateResult.get(), 0, 4);
     }
+    payload["lobbyOpen"] = dbDraftLobbyOpen(conn.get(), leagueId);
     payload["draftType"] = draftTypeForLeague(conn.get(), leagueId);
     payload["draftOrder"] = draftOrderForLeague(conn.get(), leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt(), payload["draftType"].asString());
+    payload["currentManager"] = cff::league_schedule::currentDraftManager(
+        payload["draftOrder"], payload["currentPick"].asInt(), payload["draftType"].asString());
     payload["picks"] = draftPicksForLeague(conn.get(), leagueId);
-    if (dbDraftComplete(conn.get(), leagueId)) {
+    if (payload["status"].asString() != "not_started" && dbDraftComplete(conn.get(), leagueId)) {
         payload["status"] = "complete";
     }
     return payload;
+}
+
+std::optional<Json::Value> dbStartDraft(const std::string &accountEmail,
+                                          const std::string &leagueId) {
+    if (!dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
+    auto conn = connectToDb();
+    if (!conn || !dbDraftLobbyOpen(conn.get(), leagueId)) return std::nullopt;
+    auto insertState = execParams(conn.get(),
+                                  "INSERT INTO draft_states (league_id, status, current_pick, draft_order, pick_deadline, started_at) "
+                                  "VALUES ($1, 'not_started', 1, ARRAY(SELECT email FROM league_members WHERE league_id = $1 AND status = 'active' ORDER BY role, created_at), NULL, NULL) "
+                                  "ON CONFLICT (league_id) DO NOTHING",
+                                  {leagueId});
+    (void)insertState;
+    auto current = execParams(conn.get(),
+                              "SELECT status FROM draft_states WHERE league_id = $1",
+                              {leagueId});
+    if (!resultOk(current.get(), PGRES_TUPLES_OK) || PQntuples(current.get()) == 0) return std::nullopt;
+    const auto currentStatus = cell(current.get(), 0, 0);
+    if (currentStatus == "open") return dbGetDraftState(accountEmail, leagueId);
+    if (currentStatus != "not_started") return std::nullopt;
+    auto order = draftOrderForLeague(conn.get(), leagueId);
+    if (!draftOrderMatchesMembers(conn.get(), leagueId, order)) {
+        order = activeDraftOrderForLeague(conn.get(), leagueId);
+    }
+    if (activeMemberCountForLeague(conn.get(), leagueId) < 2
+    || order.size() < 2
+    || !draftOrderMatchesMembers(conn.get(), leagueId, order)) return std::nullopt;
+    auto picks = execParams(conn.get(),
+                            "SELECT COUNT(*) FROM draft_picks WHERE league_id = $1",
+                            {leagueId});
+    if (!resultOk(picks.get(), PGRES_TUPLES_OK) || cellInt(picks.get(), 0, 0, 0) > 0) return std::nullopt;
+    auto update = execParams(conn.get(),
+                             "UPDATE draft_states SET status = 'open', current_pick = 1, "
+                             "draft_order = ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), "
+                             "started_at = NOW(), pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), "
+                             "updated_at = NOW() WHERE league_id = $1 AND status = 'not_started'",
+                             {leagueId, jsonToString(order)});
+    if (!resultOk(update.get(), PGRES_COMMAND_OK) || std::string{PQcmdTuples(update.get())} == "0") return std::nullopt;
+    return dbGetDraftState(accountEmail, leagueId);
 }
 
 std::optional<Json::Value> dbSaveDraftQueue(const std::string &accountEmail,
@@ -1526,16 +1448,16 @@ std::optional<Json::Value> dbSaveDraftOrder(const std::string &accountEmail,
     if (!resultOk(picks.get(), PGRES_TUPLES_OK) || cellInt(picks.get(), 0, 0, 0) > 0) return std::nullopt;
     auto insertState = execParams(conn.get(),
                                   "INSERT INTO draft_states (league_id, status, current_pick, draft_order, pick_deadline, started_at) "
-                                  "VALUES ($1, 'open', 1, ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), NOW() + INTERVAL '90 seconds', NOW()) "
+                                  "VALUES ($1, 'not_started', 1, ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), NULL, NULL) "
                                   "ON CONFLICT (league_id) DO NOTHING",
                                   {leagueId, jsonToString(draftOrder)});
     auto updateState = execParams(conn.get(),
                                   "UPDATE draft_states SET draft_order = ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), "
-                                  "current_pick = 1, status = 'open', pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), updated_at = NOW() "
-                                  "WHERE league_id = $1",
+                                  "current_pick = 1, pick_deadline = NULL, started_at = NULL, updated_at = NOW() "
+                                  "WHERE league_id = $1 AND status = 'not_started'",
                                   {leagueId, jsonToString(draftOrder)});
     (void)insertState;
-    if (!resultOk(updateState.get(), PGRES_COMMAND_OK)) return std::nullopt;
+    if (!resultOk(updateState.get(), PGRES_COMMAND_OK) || std::string{PQcmdTuples(updateState.get())} == "0") return std::nullopt;
     return dbGetDraftState(accountEmail, leagueId);
 }
 
@@ -1544,9 +1466,15 @@ std::optional<Json::Value> dbMakeDraftPick(const std::string &accountEmail,
                                            const Json::Value &player) {
     if (!dbCanAccessLeague(accountEmail, leagueId)) return std::nullopt;
     auto conn = connectToDb();
-    if (!conn) return std::nullopt;
-    if (!dbDraftLobbyOpen(conn.get(), leagueId) && !dbIsCommissioner(accountEmail, leagueId)) return std::nullopt;
+    if (!conn || !dbDraftLobbyOpen(conn.get(), leagueId)) return std::nullopt;
+    auto state = execParams(conn.get(),
+                            "SELECT status FROM draft_states WHERE league_id = $1",
+                            {leagueId});
+    if (!resultOk(state.get(), PGRES_TUPLES_OK) || PQntuples(state.get()) == 0) return std::nullopt;
+    const auto currentStatus = cell(state.get(), 0, 0);
+    if (currentStatus != "open") return std::nullopt;
     const auto normalized = normalizePlayerJson(player);
+    if (jsonString(normalized, "id").empty()) return std::nullopt;
     auto order = draftOrderForLeague(conn.get(), leagueId);
     const auto draftType = draftTypeForLeague(conn.get(), leagueId);
     auto pickNumberResult = execParams(conn.get(),
@@ -1555,8 +1483,8 @@ std::optional<Json::Value> dbMakeDraftPick(const std::string &accountEmail,
     const auto pickNumber = resultOk(pickNumberResult.get(), PGRES_TUPLES_OK) && PQntuples(pickNumberResult.get()) > 0
                                 ? cellInt(pickNumberResult.get(), 0, 0, 1)
                                 : 1;
-    const auto expectedManager = currentDraftManager(order, pickNumber, draftType);
-    if (!expectedManager.empty() && expectedManager != accountEmail) return std::nullopt;
+    const auto expectedManager = cff::league_schedule::currentDraftManager(order, pickNumber, draftType);
+    if (!expectedManager.empty() && canonicalEmail(expectedManager) != canonicalEmail(accountEmail)) return std::nullopt;
     auto pickResult = execParams(conn.get(),
                                  "INSERT INTO draft_picks (id, league_id, manager_email, pick_number, player_id, player_snapshot) "
                                  "VALUES ($1, $2, $3, $4::int, $5, $6::jsonb)",
@@ -1577,7 +1505,7 @@ std::optional<Json::Value> dbMakeDraftPick(const std::string &accountEmail,
                                   "UPDATE draft_states SET current_pick = $2::int + 1, "
                                   "status = CASE WHEN $3 = 'true' THEN 'complete' ELSE status END, "
                                   "pick_deadline = CASE WHEN $3 = 'true' THEN NULL ELSE NOW() + (pick_clock_seconds * INTERVAL '1 second') END, "
-                                  "updated_at = NOW() WHERE league_id = $1",
+                                  "updated_at = NOW() WHERE league_id = $1 AND status = 'open'",
                                   {leagueId, std::to_string(pickNumber), dbDraftComplete(conn.get(), leagueId) ? "true" : "false"});
     (void)queueResult;
     (void)stateResult;
@@ -1592,12 +1520,19 @@ std::optional<Json::Value> dbResetDraft(const std::string &accountEmail, const s
     if (!conn) return std::nullopt;
     auto picks = execParams(conn.get(), "DELETE FROM draft_picks WHERE league_id = $1", {leagueId});
     auto rosters = execParams(conn.get(), "DELETE FROM rosters WHERE league_id = $1 AND acquired_via = 'draft'", {leagueId});
+    auto insertState = execParams(conn.get(),
+                                  "INSERT INTO draft_states (league_id, status, current_pick, draft_order, pick_deadline, started_at) "
+                                  "VALUES ($1, 'not_started', 1, ARRAY(SELECT email FROM league_members WHERE league_id = $1 AND status = 'active' ORDER BY role, created_at), NULL, NULL) "
+                                  "ON CONFLICT (league_id) DO NOTHING",
+                                  {leagueId});
     auto state = execParams(conn.get(),
-                            "UPDATE draft_states SET current_pick = 1, status = 'open', pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), updated_at = NOW() WHERE league_id = $1",
+                            "UPDATE draft_states SET current_pick = 1, status = 'not_started', "
+                            "pick_deadline = NULL, started_at = NULL, updated_at = NOW() WHERE league_id = $1",
                             {leagueId});
     (void)picks;
     (void)rosters;
-    (void)state;
+    (void)insertState;
+    if (!resultOk(state.get(), PGRES_COMMAND_OK)) return std::nullopt;
     return dbGetDraftState(accountEmail, leagueId);
 }
 
@@ -1702,7 +1637,7 @@ std::optional<Json::Value> dbAddRosterPlayer(const std::string &accountEmail,
     const auto playerId = jsonString(normalized, "id");
     if (dbPlayerRosteredInLeague(conn.get(), leagueId, playerId)) return std::nullopt;
     const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-    if (waiverModeActive(waiverRules)) return std::nullopt;
+    if (cff::league_waiver::modeActive(waiverRules)) return std::nullopt;
     if (!dbRosterHasRoom(conn.get(), leagueId, accountEmail)) return std::nullopt;
     const auto slot = dbAssignRosterSlot(conn.get(), leagueId, accountEmail, normalized);
     if (!slot) return std::nullopt;
@@ -1766,7 +1701,7 @@ std::optional<Json::Value> dbUpdateRosterSlot(const std::string &accountEmail,
     if (!target.isObject()) return std::nullopt;
     const auto rules = dbRosterRules(leagueId).value_or(Json::Value{Json::objectValue});
     const auto slot = lowerString(requestedSlot);
-    if (!validateRosterSlotMove(target, roster, rules, playerId, slot)) {
+    if (!cff::league_roster::validateRosterSlotMove(target, roster, rules, playerId, slot)) {
         Json::Value error;
         error["error"] = "Invalid roster slot";
         return error;
@@ -1895,7 +1830,7 @@ std::optional<Json::Value> dbResetWaiverPriority(const std::string &accountEmail
                            "FROM league_members WHERE league_id = $1 AND status <> 'removed'",
                            {leagueId});
     if (!resultOk(seed.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Waiver Priority", "Reset waiver priority order", accountEmail, Json::Value{Json::objectValue});
+    dbAddTransaction(conn.get(), leagueId, "Waiver Priority", cff::league_waiver::resetPriorityTransactionSummary(), accountEmail, Json::Value{Json::objectValue});
     return dbListWaiverPriority(conn.get(), leagueId);
 }
 
@@ -1925,7 +1860,7 @@ std::optional<Json::Value> dbCreateWaiver(const std::string &accountEmail,
                              "VALUES ($1, $2, $3, $4, $5::jsonb, NULLIF($6, ''), $7::int, $8::int)",
                              {claimId, leagueId, accountEmail, jsonString(player, "id"), jsonToString(player), dropPlayerId, std::to_string(priority), std::to_string(claimOrder)});
     if (!resultOk(result.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Waiver Claim", "Claimed " + jsonString(player, "name"), accountEmail, player);
+    dbAddTransaction(conn.get(), leagueId, "Waiver Claim", cff::league_waiver::claimTransactionSummary(player), accountEmail, player);
     auto claims = dbListWaivers(accountEmail, leagueId);
     if (claims && claims->size() > 0) {
         return (*claims)[0];
@@ -1941,7 +1876,7 @@ std::optional<Json::Value> dbProcessWaiver(const std::string &accountEmail,
     if (!conn) return std::nullopt;
     if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-    if (!waiverDeadlinePassed(waiverRules)) return std::nullopt;
+    if (!cff::league_waiver::deadlinePassed(waiverRules)) return std::nullopt;
     auto claim = execParams(conn.get(),
                             "SELECT add_player_id, add_player_snapshot::text, COALESCE(drop_player_id, '') "
                             "FROM waiver_claims WHERE league_id = $1 AND manager_email = $2 AND id = $3",
@@ -1976,7 +1911,7 @@ std::optional<Json::Value> dbProcessWaiver(const std::string &accountEmail,
                                   "WHERE league_id = $1 AND manager_email = $2 AND id = $3",
                                   {leagueId, accountEmail, claimId});
     if (!resultOk(rosterInsert.get(), PGRES_COMMAND_OK) || !resultOk(claimUpdate.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Waiver Processed", "Added " + jsonString(player, "name"), accountEmail, player);
+    dbAddTransaction(conn.get(), leagueId, "Waiver Processed", cff::league_waiver::processedTransactionSummary(player), accountEmail, player);
     Json::Value response;
     response["id"] = claimId;
     response["addPlayer"] = player;
@@ -1999,7 +1934,7 @@ std::optional<Json::Value> dbUpdateWaiverStatus(const std::string &accountEmail,
                              "WHERE league_id = $1 AND id = $2 AND status = 'pending' AND ($4 = 'true' OR manager_email = $3)",
                              {leagueId, claimId, accountEmail, commissioner ? "true" : "false"});
     if (!resultOk(update.get(), PGRES_COMMAND_OK) || std::string{PQcmdTuples(update.get())} == "0") return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Waiver Cancelled", "Cancelled waiver claim", accountEmail, Json::Value{Json::objectValue});
+    dbAddTransaction(conn.get(), leagueId, "Waiver Cancelled", cff::league_waiver::cancelledTransactionSummary(), accountEmail, Json::Value{Json::objectValue});
     return dbListWaivers(accountEmail, leagueId);
 }
 
@@ -2027,7 +1962,7 @@ std::optional<Json::Value> dbProcessWaivers(const std::string &accountEmail, con
     if (!conn) return std::nullopt;
     if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
     const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-    if (!waiverDeadlinePassed(waiverRules)) return std::nullopt;
+    if (!cff::league_waiver::deadlinePassed(waiverRules)) return std::nullopt;
     auto claims = execParams(conn.get(),
                              "SELECT id, manager_email, add_player_id, add_player_snapshot::text, COALESCE(drop_player_id, '') "
                              "FROM waiver_claims WHERE league_id = $1 AND status = 'pending' "
@@ -2087,7 +2022,7 @@ std::optional<Json::Value> dbProcessWaivers(const std::string &accountEmail, con
             return std::nullopt;
         }
         dbMoveManagerToBackOfWaivers(conn.get(), leagueId, managerEmail);
-        dbAddTransaction(conn.get(), leagueId, "Waiver Processed", "Added " + jsonString(player, "name"), managerEmail, player);
+        dbAddTransaction(conn.get(), leagueId, "Waiver Processed", cff::league_waiver::processedTransactionSummary(player), managerEmail, player);
         processed.append(claimId);
     }
 
@@ -2148,9 +2083,9 @@ std::optional<Json::Value> dbCreateTrade(const std::string &accountEmail,
                                  ? jsonString(body["requestPlayer"], "id")
                                  : "";
     const auto rules = dbTradeRules(leagueId).value_or(Json::Value{Json::objectValue});
-    const auto requiresApproval = tradeApprovalRequired(rules);
-    const auto expirationHours = tradeExpirationHours(rules);
-    if (target.empty() || target == accountEmail) return std::nullopt;
+    const auto requiresApproval = cff::league_trade::approvalRequired(rules);
+    const auto expirationHours = cff::league_trade::expirationHours(rules);
+    if (!cff::league_trade::validTarget(accountEmail, target)) return std::nullopt;
     if (!dbIsActiveMember(conn.get(), leagueId, accountEmail) || !dbIsActiveMember(conn.get(), leagueId, target)) return std::nullopt;
     auto offer = dbRosterPlayer(conn.get(), leagueId, accountEmail, offerId);
     auto requestPlayer = dbRosterPlayer(conn.get(), leagueId, target, requestedId);
@@ -2167,7 +2102,7 @@ std::optional<Json::Value> dbCreateTrade(const std::string &accountEmail,
                               jsonToString(*offer), jsonToString(*requestPlayer), jsonString(body, "requestPlayerName"), target,
                               jsonString(body, "note"), requiresApproval ? "true" : "false", std::to_string(expirationHours)});
     if (!resultOk(result.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Trade Offer", "Offered " + jsonString(*offer, "name"), accountEmail, *offer);
+    dbAddTransaction(conn.get(), leagueId, "Trade Offer", cff::league_trade::offerTransactionSummary(*offer), accountEmail, *offer);
     auto trades = dbListTrades(accountEmail, leagueId);
     if (trades && trades->size() > 0) {
         return (*trades)[0];
@@ -2195,23 +2130,14 @@ std::optional<Json::Value> dbUpdateTradeStatus(const std::string &accountEmail,
     const auto offer = normalizePlayerJson(jsonFromString(cell(result.get(), 0, 2)));
     const auto requestPlayer = normalizePlayerJson(jsonFromString(cell(result.get(), 0, 3)));
     const auto currentStatus = cell(result.get(), 0, 7);
-    if (currentStatus != "pending" && currentStatus != "accepted") return std::nullopt;
+    if (!cff::league_trade::openStatus(currentStatus)) return std::nullopt;
     const bool involved = accountEmail == offeredBy || accountEmail == offeredTo;
     const bool requiresApproval = cellBool(result.get(), 0, 6);
-    auto nextStatus = statusForDb(status);
-    bool executeTrade = false;
-    if (nextStatus == "accepted") {
-        if (!involved) return std::nullopt;
-        executeTrade = !requiresApproval;
-        if (executeTrade) nextStatus = "approved";
-    } else if (nextStatus == "approved" || nextStatus == "vetoed") {
-        if (!commissioner) return std::nullopt;
-        executeTrade = nextStatus == "approved";
-    } else if (nextStatus == "declined" || nextStatus == "cancelled") {
-        if (!involved && !commissioner) return std::nullopt;
-    } else {
-        return std::nullopt;
-    }
+    const auto decision = cff::league_trade::decideStatus(
+        status, requiresApproval, involved, commissioner, true);
+    if (!decision.allowed) return std::nullopt;
+    const auto &nextStatus = decision.databaseStatus;
+    const bool executeTrade = decision.execute;
     if (executeTrade) {
         if (dbLineupLocked(conn.get(), leagueId)) return std::nullopt;
         if (jsonString(requestPlayer, "id").empty()) {
@@ -2253,7 +2179,7 @@ std::optional<Json::Value> dbUpdateTradeStatus(const std::string &accountEmail,
                              "WHERE league_id = $1 AND id = $2 AND status IN ('pending', 'accepted')",
                              {leagueId, tradeId, nextStatus});
     if (!resultOk(update.get(), PGRES_COMMAND_OK)) return std::nullopt;
-    dbAddTransaction(conn.get(), leagueId, "Trade", statusForUi(nextStatus) + ": " + jsonString(offer, "name"), accountEmail, offer);
+    dbAddTransaction(conn.get(), leagueId, "Trade", cff::league_trade::statusTransactionSummary(decision.displayStatus, offer), accountEmail, offer);
     Json::Value trade;
     trade["id"] = tradeId;
     trade["offerPlayer"] = offer;
@@ -2263,7 +2189,7 @@ std::optional<Json::Value> dbUpdateTradeStatus(const std::string &accountEmail,
     trade["offeredByEmail"] = offeredBy;
     trade["offeredToEmail"] = offeredTo;
     trade["requiresApproval"] = requiresApproval;
-    trade["status"] = statusForUi(nextStatus);
+    trade["status"] = decision.displayStatus;
     trade["note"] = cell(result.get(), 0, 8);
     return trade;
 }
@@ -2498,7 +2424,7 @@ std::optional<Json::Value> dbGenerateMatchups(const std::string &accountEmail, c
     if (!conn) return std::nullopt;
     if (dbWeekFinalized(conn.get(), leagueId, week)) return std::nullopt;
     auto members = membersForLeague(conn.get(), leagueId);
-    auto matchups = buildMatchups(members, leagueId, week, [conn = conn.get(), &leagueId](const std::string &managerEmail) {
+    auto matchups = cff::league_schedule::buildMatchups(members, leagueId, week, [conn = conn.get(), &leagueId](const std::string &managerEmail) {
         return dbProjectedScore(conn, leagueId, managerEmail);
     });
     int matchupIndex = 1;
@@ -2524,7 +2450,7 @@ std::optional<Json::Value> dbGenerateSeasonSchedule(const std::string &accountEm
         return std::nullopt;
     }
     auto members = membersForLeague(conn.get(), leagueId);
-    auto schedule = buildSeasonSchedule(members, leagueId, weeks, [conn = conn.get(), &leagueId](const std::string &managerEmail) {
+    auto schedule = cff::league_schedule::buildSeasonSchedule(members, leagueId, weeks, [conn = conn.get(), &leagueId](const std::string &managerEmail) {
         return dbProjectedScore(conn, leagueId, managerEmail);
     });
     auto clear = execParams(conn.get(), "DELETE FROM league_matchups WHERE league_id = $1", {leagueId});
@@ -2574,7 +2500,7 @@ std::optional<Json::Value> dbLineupErrors(PGconn *conn, const std::string &leagu
         for (int row = 0; row < PQntuples(result.get()); ++row) {
             counts[lowerString(cell(result.get(), row, 0))] = cellInt(result.get(), row, 1, 0);
         }
-        const auto managerErrors = lineupErrorsFromCounts(managerEmail, rules, counts);
+        const auto managerErrors = cff::league_roster::lineupErrorsFromCounts(managerEmail, rules, counts);
         for (const auto &error : managerErrors) {
             errors.append(error);
         }
@@ -2664,7 +2590,7 @@ std::optional<Json::Value> dbScoreWeek(const std::string &accountEmail,
     }
 
     auto members = membersForLeague(conn.get(), leagueId);
-    auto matchups = buildMatchups(members, leagueId, week, [&managerTotals](const std::string &managerEmail) {
+    auto matchups = cff::league_schedule::buildMatchups(members, leagueId, week, [&managerTotals](const std::string &managerEmail) {
         return managerTotals[managerEmail];
     });
     int matchupIndex = 1;
@@ -2726,6 +2652,10 @@ void handleCreateLeague(const drogon::HttpRequestPtr &req,
     const auto body = req->getJsonObject();
     const auto normalized = normalizeLeaguePayload(body ? *body : Json::Value{});
     auto league = cff::League::fromJson(normalized);
+    if (!draftDateAtTopOfHour(league.draftDate)) {
+        sendError(callback, drogon::k400BadRequest, "Draft time must be scheduled at the top of an hour");
+        return;
+    }
 
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
@@ -2834,6 +2764,10 @@ void handleUpdateLeague(const drogon::HttpRequestPtr &req,
 
     auto updated = cff::League::fromJson(normalizeLeaguePayload(*body));
     updated.id = leagueId;
+    if (!draftDateAtTopOfHour(updated.draftDate)) {
+        sendError(callback, drogon::k400BadRequest, "Draft time must be scheduled at the top of an hour");
+        return;
+    }
 
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
@@ -3155,7 +3089,7 @@ void handleAddRosterPlayer(const drogon::HttpRequestPtr &req,
             return;
         }
         const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-        if (waiverModeActive(waiverRules)) {
+        if (cff::league_waiver::modeActive(waiverRules)) {
             sendError(callback, drogon::k409Conflict, "Free agency is locked. Submit a waiver claim.");
             return;
         }
@@ -3177,7 +3111,7 @@ void handleAddRosterPlayer(const drogon::HttpRequestPtr &req,
         sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
         return;
     }
-    if (waiverModeActive(waiverRulesForLeagueLocked(leagueId))) {
+    if (cff::league_waiver::modeActive(waiverRulesForLeagueLocked(leagueId))) {
         sendError(callback, drogon::k409Conflict, "Free agency is locked. Submit a waiver claim.");
         return;
     }
@@ -3228,7 +3162,8 @@ void handleDropRosterPlayer(const drogon::HttpRequestPtr &req,
         sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
         return;
     }
-    if (playerLockedInTradeLocked(leagueId, accountEmail, playerId)) {
+    if (cff::league_trade::playerLockedInOpenOffer(
+            arrayForLeague(tradesByLeague, leagueId), accountEmail, playerId)) {
         sendError(callback, drogon::k409Conflict, "Player is locked in a pending trade");
         return;
     }
@@ -3280,7 +3215,7 @@ void handleUpdateRosterSlot(const drogon::HttpRequestPtr &req,
         sendError(callback, drogon::k409Conflict, "Lineups are locked after finalized matchups");
         return;
     }
-    if (waiverModeActive(waiverRulesForLeagueLocked(leagueId))) {
+    if (cff::league_waiver::modeActive(waiverRulesForLeagueLocked(leagueId))) {
         sendError(callback, drogon::k409Conflict, "Free agency is locked. Submit a waiver claim.");
         return;
     }
@@ -3294,7 +3229,7 @@ void handleUpdateRosterSlot(const drogon::HttpRequestPtr &req,
     const auto rules = leagueIt != leaguesById.end()
                            ? leagueIt->second.league.rosterRules.toJson()
                            : cff::RosterRules{}.toJson();
-    if (!validateRosterSlotMove(roster[playerIndex], roster, rules, playerId, requestedSlot)) {
+    if (!cff::league_roster::validateRosterSlotMove(roster[playerIndex], roster, rules, playerId, requestedSlot)) {
         sendError(callback, drogon::k400BadRequest, "Invalid roster slot");
         return;
     }
@@ -3349,23 +3284,8 @@ void handleGetDraftState(const drogon::HttpRequestPtr&,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
-    const auto leagueIt = leaguesById.find(leagueId);
-    const bool lobbyOpen = leagueIt != leaguesById.end() && leagueIt->second.league.draftLobbyOpen;
-    if (!lobbyOpen && !isCommissionerLocked(accountEmail, leagueId)) {
-        sendError(callback, drogon::k403Forbidden, "Draft lobby is not open");
-        return;
-    }
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = static_cast<int>(arrayForLeague(draftPicksByLeague, leagueId).size()) + 1;
-    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
-    callback(jsonResponse(payload, drogon::k200OK));
+    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) return;
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleSaveDraftQueue(const drogon::HttpRequestPtr &req,
@@ -3387,18 +3307,9 @@ void handleSaveDraftQueue(const drogon::HttpRequestPtr &req,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
+    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) return;
     draftQueuesByLeagueManager[leagueId + ":" + accountEmail] = queue;
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = static_cast<int>(arrayForLeague(draftPicksByLeague, leagueId).size()) + 1;
-    payload["queue"] = queue;
-    payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
-    callback(jsonResponse(payload, drogon::k200OK));
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleSaveDraftOrder(const drogon::HttpRequestPtr &req,
@@ -3422,35 +3333,63 @@ void handleSaveDraftOrder(const drogon::HttpRequestPtr &req,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
-    if (!arrayForLeague(draftPicksByLeague, leagueId).empty() || !order.isArray() || order.empty()) {
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) return;
+    auto &state = localDraftStateLocked(leagueId);
+    if (state["status"].asString() != "not_started"
+        || !arrayForLeague(draftPicksByLeague, leagueId).empty()
+        || !localDraftOrderMatchesActiveMembers(leagueId, order)) {
         sendError(callback, drogon::k409Conflict, "Unable to save draft order");
         return;
     }
-    std::unordered_set<std::string> seenOrderEmails;
-    for (const auto &emailValue : order) {
-        if (!emailValue.isString() || emailValue.asString().empty()) {
-            sendError(callback, drogon::k409Conflict, "Unable to save draft order");
+    state["draftOrder"] = order;
+    state["currentPick"] = 1;
+    state["pickDeadline"] = "";
+    state["startedAt"] = "";
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
+}
+
+void handleStartDraft(const drogon::HttpRequestPtr&,
+                      std::function<void (const drogon::HttpResponsePtr &)> &&callback,
+                      const std::string &accountEmail,
+                      const std::string &leagueId) {
+#ifdef CFF_HAS_POSTGRES
+    if (dbConfigured()) {
+        auto state = dbStartDraft(accountEmail, leagueId);
+        if (!state) {
+            sendError(callback, drogon::k403Forbidden, "Commissioner access and an open lobby with at least two active managers are required");
             return;
         }
-        const auto email = lowerString(emailValue.asString());
-        if (seenOrderEmails.find(email) != seenOrderEmails.end()) {
-            sendError(callback, drogon::k409Conflict, "Unable to save draft order");
-            return;
-        }
-        seenOrderEmails.insert(email);
+        callback(jsonResponse(*state, drogon::k200OK));
+        return;
     }
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = 1;
-    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    payload["picks"] = arrayForLeague(draftPicksByLeague, leagueId);
-    payload["draftOrder"] = order;
-    payload["currentManager"] = order[0].asString();
-    draftOrdersByLeague[leagueId] = order;
-    callback(jsonResponse(payload, drogon::k200OK));
+#endif
+
+    std::lock_guard<std::mutex> lock(storeMutex);
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) return;
+    auto &state = localDraftStateLocked(leagueId);
+    if (!state["lobbyOpen"].asBool()) {
+        sendError(callback, drogon::k403Forbidden, "Draft lobby is not open");
+        return;
+    }
+    if (state["status"].asString() == "open") {
+        callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
+        return;
+    }
+    auto order = state["draftOrder"];
+    if (!localDraftOrderMatchesActiveMembers(leagueId, order)) {
+        order = activeDraftOrderLocked(leagueId);
+    }
+    if (order.size() < 2 || !localDraftOrderMatchesActiveMembers(leagueId, order)
+        || !arrayForLeague(draftPicksByLeague, leagueId).empty()) {
+        sendError(callback, drogon::k409Conflict, "At least two active managers and a valid draft order are required");
+        return;
+    }
+    state["status"] = "open";
+    state["currentPick"] = 1;
+    state["draftOrder"] = order;
+    state["startedAt"] = draftIsoNow();
+    state["pickDeadline"] = draftDeadlineFromNow(state.get("pickClockSeconds", 90).asInt());
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleMakeDraftPick(const drogon::HttpRequestPtr &req,
@@ -3475,39 +3414,46 @@ void handleMakeDraftPick(const drogon::HttpRequestPtr &req,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
+    if (!ensureLeagueAccess(callback, accountEmail, leagueId)) return;
+    auto &state = localDraftStateLocked(leagueId);
+    if (!state["lobbyOpen"].asBool() || state["status"].asString() != "open") {
+        sendError(callback, drogon::k409Conflict, "Draft has not started");
         return;
     }
-    const auto leagueIt = leaguesById.find(leagueId);
-    const bool lobbyOpen = leagueIt != leaguesById.end() && leagueIt->second.league.draftLobbyOpen;
-    if (!lobbyOpen && !isCommissionerLocked(accountEmail, leagueId)) {
-        sendError(callback, drogon::k403Forbidden, "Draft lobby is not open");
+    const auto expectedManager = cff::league_schedule::currentDraftManager(
+        state["draftOrder"], state.get("currentPick", 1).asInt(), state.get("draftType", "snake").asString());
+    if (!expectedManager.empty() && canonicalEmail(expectedManager) != canonicalEmail(accountEmail)) {
+        sendError(callback, drogon::k409Conflict, "It is not this manager's turn");
         return;
     }
     auto player = normalizePlayerJson((*body)["player"]);
+    const auto playerId = jsonString(player, "id");
+    if (playerId.empty()) {
+        sendError(callback, drogon::k400BadRequest, "player id is required");
+        return;
+    }
     auto &picks = arrayForLeague(draftPicksByLeague, leagueId);
+    for (const auto &existing : picks) {
+        if (jsonString(existing["player"], "id") == playerId) {
+            sendError(callback, drogon::k409Conflict, "Player has already been drafted");
+            return;
+        }
+    }
     Json::Value pick;
     pick["id"] = timestampId("pick");
     pick["managerEmail"] = accountEmail;
     pick["pickNumber"] = static_cast<int>(picks.size()) + 1;
     pick["player"] = player;
-    pick["createdAt"] = timestampId("at");
+    pick["createdAt"] = draftIsoNow();
     picks.append(pick);
     auto &roster = arrayForLeague(rostersByLeague, leagueId);
-    if (indexOfPlayer(roster, jsonString(player, "id")) < 0) {
-        roster.append(player);
-    }
+    if (indexOfPlayer(roster, playerId) < 0) roster.append(player);
     auto &queue = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    removePlayer(queue, jsonString(player, "id"));
+    removePlayer(queue, playerId);
     addTransactionLocked(leagueId, "Draft Pick", "Drafted " + jsonString(player, "name"), accountEmail);
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = static_cast<int>(picks.size()) + 1;
-    payload["queue"] = queue;
-    payload["picks"] = picks;
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
-    callback(jsonResponse(payload, drogon::k201Created));
+    state["currentPick"] = static_cast<int>(picks.size()) + 1;
+    state["pickDeadline"] = draftDeadlineFromNow(state.get("pickClockSeconds", 90).asInt());
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k201Created));
 }
 
 void handleResetDraft(const drogon::HttpRequestPtr&,
@@ -3527,19 +3473,15 @@ void handleResetDraft(const drogon::HttpRequestPtr&,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) return;
     draftPicksByLeague[leagueId] = Json::Value{Json::arrayValue};
     rostersByLeague[leagueId] = Json::Value{Json::arrayValue};
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = 1;
-    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    payload["picks"] = draftPicksByLeague[leagueId];
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], 1);
-    callback(jsonResponse(payload, drogon::k200OK));
+    auto &state = localDraftStateLocked(leagueId);
+    state["status"] = "not_started";
+    state["currentPick"] = 1;
+    state["pickDeadline"] = "";
+    state["startedAt"] = "";
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleUndoDraftPick(const drogon::HttpRequestPtr&,
@@ -3559,10 +3501,9 @@ void handleUndoDraftPick(const drogon::HttpRequestPtr&,
 #endif
 
     std::lock_guard<std::mutex> lock(storeMutex);
-    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
-        return;
-    }
+    if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) return;
     auto &picks = arrayForLeague(draftPicksByLeague, leagueId);
+    auto &state = localDraftStateLocked(leagueId);
     if (!picks.empty()) {
         Json::Value removed;
         picks.removeIndex(static_cast<Json::ArrayIndex>(picks.size() - 1), &removed);
@@ -3572,18 +3513,12 @@ void handleUndoDraftPick(const drogon::HttpRequestPtr&,
         auto &roster = arrayForLeague(rostersByLeague, leagueId);
         removePlayer(roster, playerId);
         auto &queue = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + managerEmail);
-        if (indexOfPlayer(queue, playerId) < 0) {
-            queue.append(player);
-        }
+        if (indexOfPlayer(queue, playerId) < 0) queue.append(player);
+        state["status"] = "open";
+        state["currentPick"] = static_cast<int>(picks.size()) + 1;
+        state["pickDeadline"] = draftDeadlineFromNow(state.get("pickClockSeconds", 90).asInt());
     }
-    Json::Value payload;
-    payload["status"] = "open";
-    payload["currentPick"] = static_cast<int>(picks.size()) + 1;
-    payload["queue"] = arrayForLeague(draftQueuesByLeagueManager, leagueId + ":" + accountEmail);
-    payload["picks"] = picks;
-    payload["draftOrder"] = arrayForLeague(draftOrdersByLeague, leagueId);
-    payload["currentManager"] = currentDraftManager(payload["draftOrder"], payload["currentPick"].asInt());
-    callback(jsonResponse(payload, drogon::k200OK));
+    callback(jsonResponse(localDraftPayloadLocked(accountEmail, leagueId), drogon::k200OK));
 }
 
 void handleListWaivers(const drogon::HttpRequestPtr&,
@@ -3662,16 +3597,11 @@ void handleCreateWaiver(const drogon::HttpRequestPtr &req,
     claim["createdAt"] = timestampId("at");
     claim["managerEmail"] = accountEmail;
     auto &claims = arrayForLeague(waiversByLeague, leagueId);
-    int claimOrder = 1;
-    for (const auto &existing : claims) {
-        if (jsonString(existing, "managerEmail") == accountEmail && jsonString(existing, "status") == "Pending") {
-            claimOrder = std::max(claimOrder, cff::getIntOrDefault(existing, "claimOrder", 1) + 1);
-        }
-    }
+    const auto claimOrder = cff::league_waiver::nextClaimOrder(claims, accountEmail);
     claim["priority"] = 1;
     claim["claimOrder"] = claimOrder;
     claims.insert(0, claim);
-    addTransactionLocked(leagueId, "Waiver Claim", "Claimed " + jsonString(claim["addPlayer"], "name"), accountEmail);
+    addTransactionLocked(leagueId, "Waiver Claim", cff::league_waiver::claimTransactionSummary(claim["addPlayer"]), accountEmail);
     callback(jsonResponse(claim, drogon::k201Created));
 }
 
@@ -3688,7 +3618,7 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
             return;
         }
         const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-        if (!waiverDeadlinePassed(waiverRules)) {
+        if (!cff::league_waiver::deadlinePassed(waiverRules)) {
             sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
             return;
         }
@@ -3710,7 +3640,7 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
         sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
         return;
     }
-    if (!waiverDeadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
+    if (!cff::league_waiver::deadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
         sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
         return;
     }
@@ -3733,7 +3663,7 @@ void handleProcessWaiver(const drogon::HttpRequestPtr&,
                 roster.append(player);
             }
             claims[i]["status"] = "Processed";
-            addTransactionLocked(leagueId, "Waiver Processed", "Added " + jsonString(player, "name"), accountEmail);
+            addTransactionLocked(leagueId, "Waiver Processed", cff::league_waiver::processedTransactionSummary(player), accountEmail);
             callback(jsonResponse(claims[i], drogon::k200OK));
             return;
         }
@@ -3778,7 +3708,7 @@ void handleUpdateWaiverStatus(const drogon::HttpRequestPtr &req,
             return;
         }
         claim["status"] = "Cancelled";
-        addTransactionLocked(leagueId, "Waiver Cancelled", "Cancelled waiver claim", accountEmail);
+        addTransactionLocked(leagueId, "Waiver Cancelled", cff::league_waiver::cancelledTransactionSummary(), accountEmail);
         callback(jsonResponse(claims, drogon::k200OK));
         return;
     }
@@ -3840,7 +3770,7 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
             return;
         }
         const auto waiverRules = dbWaiverRules(leagueId).value_or(Json::Value{Json::objectValue});
-        if (!waiverDeadlinePassed(waiverRules)) {
+        if (!cff::league_waiver::deadlinePassed(waiverRules)) {
             sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
             return;
         }
@@ -3862,7 +3792,7 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
         sendError(callback, drogon::k409Conflict, "Waivers are locked after finalized matchups");
         return;
     }
-    if (!waiverDeadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
+    if (!cff::league_waiver::deadlinePassed(waiverRulesForLeagueLocked(leagueId))) {
         sendError(callback, drogon::k409Conflict, "Waiver deadline has not passed yet");
         return;
     }
@@ -3870,16 +3800,7 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
     auto &roster = arrayForLeague(rostersByLeague, leagueId);
     Json::Value processed(Json::arrayValue);
     Json::Value cancelled(Json::arrayValue);
-    std::vector<Json::ArrayIndex> claimIndexes;
-    for (Json::ArrayIndex i = 0; i < claims.size(); ++i) {
-        claimIndexes.push_back(i);
-    }
-    std::sort(claimIndexes.begin(), claimIndexes.end(), [&claims](Json::ArrayIndex left, Json::ArrayIndex right) {
-        const auto leftPriority = cff::getIntOrDefault(claims[left], "priority", 999);
-        const auto rightPriority = cff::getIntOrDefault(claims[right], "priority", 999);
-        if (leftPriority != rightPriority) return leftPriority < rightPriority;
-        return cff::getIntOrDefault(claims[left], "claimOrder", 999) < cff::getIntOrDefault(claims[right], "claimOrder", 999);
-    });
+    const auto claimIndexes = cff::league_waiver::orderedClaimIndexes(claims);
     for (const auto i : claimIndexes) {
         if (jsonString(claims[i], "status") != "Pending") {
             continue;
@@ -3900,7 +3821,7 @@ void handleProcessWaivers(const drogon::HttpRequestPtr&,
         }
         claims[i]["status"] = "Processed";
         processed.append(jsonString(claims[i], "id"));
-        addTransactionLocked(leagueId, "Waiver Processed", "Added " + jsonString(player, "name"), accountEmail);
+        addTransactionLocked(leagueId, "Waiver Processed", cff::league_waiver::processedTransactionSummary(player), accountEmail);
     }
     Json::Value payload;
     payload["processed"] = processed;
@@ -3929,17 +3850,8 @@ void handleListWaiverPriority(const drogon::HttpRequestPtr&,
     if (!ensureLeagueAccess(callback, accountEmail, leagueId)) {
         return;
     }
-    Json::Value priorities(Json::arrayValue);
-    int priority = 1;
-    for (const auto &member : arrayForLeague(membersByLeague, leagueId)) {
-        if (lowerString(jsonString(member, "status", "Active")) == "removed") continue;
-        Json::Value item;
-        item["managerEmail"] = jsonString(member, "email");
-        item["role"] = jsonString(member, "role", "member");
-        item["status"] = jsonString(member, "status", "Active");
-        item["priority"] = priority++;
-        priorities.append(item);
-    }
+    auto priorities = cff::league_waiver::buildPriorityBoard(
+        arrayForLeague(membersByLeague, leagueId));
     callback(jsonResponse(priorities, drogon::k200OK));
 }
 
@@ -3963,18 +3875,9 @@ void handleResetWaiverPriority(const drogon::HttpRequestPtr&,
     if (!ensureCommissionerAccess(callback, accountEmail, leagueId)) {
         return;
     }
-    Json::Value priorities(Json::arrayValue);
-    int priority = 1;
-    for (const auto &member : arrayForLeague(membersByLeague, leagueId)) {
-        if (lowerString(jsonString(member, "status", "Active")) == "removed") continue;
-        Json::Value item;
-        item["managerEmail"] = jsonString(member, "email");
-        item["role"] = jsonString(member, "role", "member");
-        item["status"] = jsonString(member, "status", "Active");
-        item["priority"] = priority++;
-        priorities.append(item);
-    }
-    addTransactionLocked(leagueId, "Waiver Priority", "Reset waiver priority order", accountEmail);
+    auto priorities = cff::league_waiver::buildPriorityBoard(
+        arrayForLeague(membersByLeague, leagueId));
+    addTransactionLocked(leagueId, "Waiver Priority", cff::league_waiver::resetPriorityTransactionSummary(), accountEmail);
     callback(jsonResponse(priorities, drogon::k200OK));
 }
 
@@ -4011,7 +3914,7 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
         return;
     }
     const auto requestedTarget = jsonString(*body, "targetManager", jsonString(*body, "targetManagerEmail"));
-    if (requestedTarget.empty() || requestedTarget == accountEmail) {
+    if (!cff::league_trade::validTarget(accountEmail, requestedTarget)) {
         sendError(callback, drogon::k400BadRequest, "Trade target must be another active league manager");
         return;
     }
@@ -4040,7 +3943,7 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
         return;
     }
     const auto targetManager = jsonString(*body, "targetManager");
-    if (targetManager.empty() || targetManager == accountEmail) {
+    if (!cff::league_trade::validTarget(accountEmail, targetManager)) {
         sendError(callback, drogon::k400BadRequest, "Trade target must be another active league manager");
         return;
     }
@@ -4048,7 +3951,10 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
         sendError(callback, drogon::k403Forbidden, "Trade target must be an active league manager");
         return;
     }
-    if (playerLockedInTradeLocked(leagueId, accountEmail, jsonString((*body)["offerPlayer"], "id"))) {
+    if (cff::league_trade::playerLockedInOpenOffer(
+            arrayForLeague(tradesByLeague, leagueId),
+            accountEmail,
+            jsonString((*body)["offerPlayer"], "id"))) {
         sendError(callback, drogon::k409Conflict, "Player is locked in a pending trade");
         return;
     }
@@ -4077,13 +3983,13 @@ void handleCreateTrade(const drogon::HttpRequestPtr &req,
     trade["offeredByEmail"] = accountEmail;
     trade["offeredToEmail"] = targetManager;
     const auto rules = tradeRulesForLeagueLocked(leagueId);
-    trade["requiresApproval"] = tradeApprovalRequired(rules);
+    trade["requiresApproval"] = cff::league_trade::approvalRequired(rules);
     trade["status"] = "Pending";
     trade["createdAt"] = timestampId("at");
     trade["expiresAt"] = timestampId("expires");
     auto &offers = arrayForLeague(tradesByLeague, leagueId);
     offers.insert(0, trade);
-    addTransactionLocked(leagueId, "Trade Offer", "Offered " + jsonString(trade["offerPlayer"], "name"), accountEmail);
+    addTransactionLocked(leagueId, "Trade Offer", cff::league_trade::offerTransactionSummary(trade["offerPlayer"]), accountEmail);
     callback(jsonResponse(trade, drogon::k201Created));
 }
 
@@ -4094,14 +4000,13 @@ void handleUpdateTradeStatus(const drogon::HttpRequestPtr &req,
                              const std::string &tradeId) {
     const auto body = req->getJsonObject();
     const auto status = body ? jsonString(*body, "status") : "";
-    if (!(status == "Accepted" || status == "Approved" || status == "Vetoed" || status == "Declined" || status == "Cancelled")) {
+    if (!cff::league_trade::requestStatusAllowed(status)) {
         sendError(callback, drogon::k400BadRequest, "status must be Accepted, Approved, Vetoed, Declined, or Cancelled");
         return;
     }
 #ifdef CFF_HAS_POSTGRES
     if (dbConfigured()) {
-        const auto dbStatus = statusForDb(status);
-        if ((dbStatus == "accepted" || dbStatus == "approved")) {
+        if (cff::league_trade::potentiallyExecutes(status)) {
             auto conn = connectToDb();
             if (conn && dbLineupLocked(conn.get(), leagueId)) {
                 sendError(callback, drogon::k409Conflict, "Trades are locked after finalized matchups");
@@ -4125,26 +4030,24 @@ void handleUpdateTradeStatus(const drogon::HttpRequestPtr &req,
     for (Json::ArrayIndex i = 0; i < offers.size(); ++i) {
         if (jsonString(offers[i], "id") == tradeId) {
             const auto currentStatus = jsonString(offers[i], "status");
-            if (currentStatus != "Pending" && currentStatus != "Accepted") {
+            if (!cff::league_trade::openStatus(currentStatus)) {
                 sendError(callback, drogon::k409Conflict, "Trade is no longer open");
                 return;
             }
             const bool requiresApproval = offers[i].isMember("requiresApproval") && offers[i]["requiresApproval"].asBool();
             const bool commissioner = isCommissionerLocked(accountEmail, leagueId);
-            bool executeTrade = false;
-            if (status == "Accepted") {
-                executeTrade = !requiresApproval;
-                offers[i]["status"] = executeTrade ? "Approved" : "Accepted";
-            } else if (status == "Approved" || status == "Vetoed") {
-                if (!commissioner) {
+            const auto decision = cff::league_trade::decideStatus(
+                status, requiresApproval, true, commissioner, false);
+            if (!decision.allowed) {
+                if (decision.commissionerRequired) {
                     sendError(callback, drogon::k403Forbidden, "Commissioner access required");
-                    return;
+                } else {
+                    sendError(callback, drogon::k404NotFound, "Trade offer not found");
                 }
-                executeTrade = status == "Approved";
-                offers[i]["status"] = status;
-            } else {
-                offers[i]["status"] = status;
+                return;
             }
+            const bool executeTrade = decision.execute;
+            offers[i]["status"] = decision.displayStatus;
             if (executeTrade && lineupLockedLocked(leagueId)) {
                 sendError(callback, drogon::k409Conflict, "Trades are locked after finalized matchups");
                 return;
@@ -4165,7 +4068,7 @@ void handleUpdateTradeStatus(const drogon::HttpRequestPtr &req,
                     roster.append(normalizePlayerJson(offers[i]["requestPlayer"]));
                 }
             }
-            addTransactionLocked(leagueId, "Trade", jsonString(offers[i], "status") + ": " + jsonString(offers[i]["offerPlayer"], "name"), accountEmail);
+            addTransactionLocked(leagueId, "Trade", cff::league_trade::statusTransactionSummary(decision.displayStatus, offers[i]["offerPlayer"]), accountEmail);
             callback(jsonResponse(offers[i], drogon::k200OK));
             return;
         }
@@ -4289,7 +4192,7 @@ void handleListMatchups(const drogon::HttpRequestPtr&,
             }
             return total;
         };
-        matchups = buildMatchups(members, leagueId, 1, scoreForManager);
+        matchups = cff::league_schedule::buildMatchups(members, leagueId, 1, scoreForManager);
     }
     callback(jsonResponse(matchups, drogon::k200OK));
 }
@@ -4336,7 +4239,7 @@ void handleGenerateMatchups(const drogon::HttpRequestPtr&,
             return;
         }
     }
-    matchups = buildMatchups(members, leagueId, 1, scoreForManager);
+    matchups = cff::league_schedule::buildMatchups(members, leagueId, 1, scoreForManager);
     addTransactionLocked(leagueId, "Schedule", "Generated week 1 matchups", accountEmail);
     callback(jsonResponse(matchups, drogon::k200OK));
 }
@@ -4382,7 +4285,7 @@ void handleGenerateSeasonSchedule(const drogon::HttpRequestPtr &req,
         }
         return total;
     };
-    matchups = buildSeasonSchedule(members, leagueId, weeks, scoreForManager);
+    matchups = cff::league_schedule::buildSeasonSchedule(members, leagueId, weeks, scoreForManager);
     addTransactionLocked(leagueId, "Schedule", "Generated " + std::to_string(weeks) + "-week season schedule", accountEmail);
     callback(jsonResponse(matchups, drogon::k200OK));
 }
@@ -4431,7 +4334,7 @@ void handleScoreWeek(const drogon::HttpRequestPtr &req,
         const auto slot = lowerString(jsonString(player, "rosterSlot", "bench"));
         if (slot != "bench") counts[slot] += 1;
     }
-    auto errors = lineupErrorsFromCounts(accountEmail, rules, counts);
+    auto errors = cff::league_roster::lineupErrorsFromCounts(accountEmail, rules, counts);
     if (errors.size() > 0) {
         Json::Value payload;
         payload["error"] = "Invalid lineup";
@@ -4456,7 +4359,7 @@ void handleScoreWeek(const drogon::HttpRequestPtr &req,
             return;
         }
     }
-    matchups = buildMatchups(members, leagueId, weekNumber, scoreForManager);
+    matchups = cff::league_schedule::buildMatchups(members, leagueId, weekNumber, scoreForManager);
     int matchupIndex = 1;
     for (auto &matchup : matchups) {
         matchup["week"] = weekNumber;
@@ -4511,7 +4414,7 @@ void handleFinalizeWeek(const drogon::HttpRequestPtr&,
         const auto slot = lowerString(jsonString(player, "rosterSlot", "bench"));
         if (slot != "bench") counts[slot] += 1;
     }
-    auto errors = lineupErrorsFromCounts(accountEmail, rules, counts);
+    auto errors = cff::league_roster::lineupErrorsFromCounts(accountEmail, rules, counts);
     if (errors.size() > 0) {
         Json::Value payload;
         payload["error"] = "Invalid lineup";
