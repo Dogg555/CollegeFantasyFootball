@@ -10,7 +10,8 @@ MIGRATION = (ROOT / "backend" / "db" / "migrations" / "012_league_onboarding_ide
 FRONTEND = (ROOT / "frontend" / "league-onboarding.js").read_text(encoding="utf-8")
 CONFIG = (ROOT / "frontend" / "config.js").read_text(encoding="utf-8")
 ROUTES = (ROOT / "backend" / "src" / "league_routes.cpp").read_text(encoding="utf-8")
-CORS = (ROOT / "backend" / "src" / "health_status.cpp").read_text(encoding="utf-8")
+HEALTH_CORS = (ROOT / "backend" / "src" / "health_status.cpp").read_text(encoding="utf-8")
+ACTIVE_CORS = (ROOT / "backend" / "src" / "http_security.cpp").read_text(encoding="utf-8")
 
 
 def require(source: str, fragment: str, message: str) -> None:
@@ -50,8 +51,9 @@ require(BACKEND, "registerSyncAdvice(onboardingAdvice)", "hardening must run bef
 require(ROUTES, '"/api/leagues"', "create route must remain registered")
 require(ROUTES, '"/api/leagues/{1}/join"', "join route must remain registered")
 require(ROUTES, '"/api/leagues/{1}/members/{2}"', "member approval route must remain registered")
-require(CORS, "Authorization, Content-Type, X-Request-ID, Idempotency-Key", "browser preflight must allow onboarding operation keys")
-require(CORS, '"GET, POST, PUT, PATCH, DELETE, OPTIONS"', "onboarding methods must remain available through CORS")
+for cors_source in (HEALTH_CORS, ACTIVE_CORS):
+    require(cors_source, "Authorization, Content-Type, X-Request-ID, Idempotency-Key", "browser preflight must allow onboarding operation keys")
+    require(cors_source, '"GET, POST, PUT, PATCH, DELETE, OPTIONS"', "onboarding methods must remain available through CORS")
 
 if not script_index("mutation-consistency.js") < script_index("league-onboarding.js"):
     raise AssertionError("onboarding must load after mutation consistency")

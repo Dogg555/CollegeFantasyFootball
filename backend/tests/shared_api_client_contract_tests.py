@@ -6,7 +6,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CLIENT = (ROOT / "frontend" / "api-client.js").read_text(encoding="utf-8")
 CONFIG = (ROOT / "frontend" / "config.js").read_text(encoding="utf-8")
-CORS = (ROOT / "backend" / "src" / "health_status.cpp").read_text(encoding="utf-8")
+HEALTH_CORS = (ROOT / "backend" / "src" / "health_status.cpp").read_text(encoding="utf-8")
+ACTIVE_CORS = (ROOT / "backend" / "src" / "http_security.cpp").read_text(encoding="utf-8")
 SECURITY = (ROOT / "backend" / "src" / "security_hardening.cpp").read_text(encoding="utf-8")
 
 
@@ -37,8 +38,9 @@ require(CLIENT, "correlationId: requestId", "correlation identifier alias")
 require(CLIENT, "root.apiRequest = wrapped", "legacy authenticated request adapter")
 require(CLIENT, "root.fetchJson = wrapped", "authentication request adapter")
 require(CLIENT, "root.mutationErrorMessage = wrapped", "request reference mutation messages")
-require(CORS, "Authorization, Content-Type, X-Request-ID, Idempotency-Key", "request and idempotency CORS allow-headers")
-require(CORS, '"GET, POST, PUT, PATCH, DELETE, OPTIONS"', "complete API method CORS allowlist")
+for cors_source in (HEALTH_CORS, ACTIVE_CORS):
+    require(cors_source, "Authorization, Content-Type, X-Request-ID, Idempotency-Key", "request and idempotency CORS allow-headers")
+    require(cors_source, '"GET, POST, PUT, PATCH, DELETE, OPTIONS"', "complete API method CORS allowlist")
 require(SECURITY, '"X-CFF-Request-Id, Retry-After, X-CFF-Invite-Email"', "request ID response exposure")
 require(SECURITY, 'for (const auto *header : {"rndr-id", "x-request-id"})', "backend request ID intake")
 require(SECURITY, 'resp->addHeader("X-CFF-Request-Id", currentRequestId)', "backend request ID echo")

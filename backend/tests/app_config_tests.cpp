@@ -123,7 +123,7 @@ int main() {
     set("JWT_SECRET", "test-secret");
     set("SSL_CERT_FILE", "/tmp/cert.pem");
     set("SSL_KEY_FILE", "/tmp/key.pem");
-    set("ALLOWED_ORIGINS", "https://one.example.test,https://two.example.test");
+    set("ALLOWED_ORIGINS", "https://one.example.test, https://two.example.test/");
     set("CFBD_INGEST_ON_STARTUP", "yes");
     set("CFBD_INGEST_INTERVAL_HOURS", "12");
     const auto runtime = loadRuntimeConfig();
@@ -131,7 +131,9 @@ int main() {
     expect(runtime.jwtSecret == std::optional<std::string>{"test-secret"}, "runtime JWT secret loaded");
     expect(runtime.sslEnabled(), "SSL requires both certificate and key");
     expect(runtime.allowedOriginsConfigured, "origin presence tracked separately");
-    expect(runtime.allowedOrigins.size() == 2, "runtime origins split without changing values");
+    expect(runtime.allowedOrigins.size() == 2, "runtime origins split, trim, and normalize trailing slashes");
+    expect(runtime.allowedOrigins.count("https://two.example.test") == 1,
+           "runtime origins do not retain comma-list whitespace or trailing slashes");
     expect(runtime.ingestOnStartup, "legacy startup ingest flag behavior preserved");
     expect(runtime.ingestIntervalHours == 12, "runtime ingest interval loaded");
 

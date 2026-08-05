@@ -31,6 +31,10 @@ std::unordered_set<std::string> splitOrigins(const std::string &raw) {
     while (true) {
         const auto pos = raw.find(',', start);
         auto value = raw.substr(start, pos == std::string::npos ? std::string::npos : pos - start);
+        value = trimAscii(std::move(value));
+        while (!value.empty() && value.back() == '/') {
+            value.pop_back();
+        }
         if (!value.empty()) {
             values.insert(std::move(value));
         }

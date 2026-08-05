@@ -135,7 +135,7 @@ void applyCorsHeaders(
         resp->addHeader("Vary", "Origin");
     }
     resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID");
-    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
 }
 
 drogon::HttpResponsePtr buildPreflightResponse(
