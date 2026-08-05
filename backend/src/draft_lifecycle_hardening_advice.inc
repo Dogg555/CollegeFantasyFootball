@@ -27,29 +27,32 @@ drogon::HttpResponsePtr draftLifecycleAdvice(const drogon::HttpRequestPtr &reque
     }
 
     if (action == Action::None) return nullptr;
+    const auto respond = [&request](const drogon::HttpResponsePtr &response) {
+        return cff::http::withRuntimeCorsHeaders(request, response);
+    };
     const auto email = accountEmail(request);
     if (!email) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+        return respond(errorResponse(drogon::k401Unauthorized,
+                                     "Authentication is required.",
+                                     "authentication_required"));
     }
 
     switch (action) {
         case Action::Get:
         case Action::ReadinessGet:
-            return getDraft(leagueId, *email);
+            return respond(getDraft(leagueId, *email));
         case Action::ReadinessSet:
-            return setReadiness(request, leagueId, *email);
+            return respond(setReadiness(request, leagueId, *email));
         case Action::Order:
-            return saveOrder(request, leagueId, *email);
+            return respond(saveOrder(request, leagueId, *email));
         case Action::Start:
-            return startDraft(request, leagueId, *email);
+            return respond(startDraft(request, leagueId, *email));
         case Action::Pick:
-            return makePick(request, leagueId, *email);
+            return respond(makePick(request, leagueId, *email));
         case Action::Reset:
-            return resetDraft(request, leagueId, *email);
+            return respond(resetDraft(request, leagueId, *email));
         case Action::Undo:
-            return undoPick(request, leagueId, *email);
+            return respond(undoPick(request, leagueId, *email));
         default:
             return nullptr;
     }

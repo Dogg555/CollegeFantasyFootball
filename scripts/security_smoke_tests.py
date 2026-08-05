@@ -95,9 +95,14 @@ def main() -> int:
         "/api/auth/signup",
         method="POST",
         payload={"email": "weak-password@example.test", "password": "password123"},
+        headers={"Origin": ALLOWED_ORIGIN},
     )
     require(weak.status == 400, "weak password should be rejected")
     require(weak.json().get("code") == "weak_password", "weak password rejection code missing")
+    require(
+        weak.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN,
+        "allowed-origin auth validation errors must include CORS headers",
+    )
 
     wrong_type = request(
         "/api/auth/signup",

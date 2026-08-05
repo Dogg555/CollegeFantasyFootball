@@ -83,44 +83,47 @@ drogon::HttpResponsePtr waiverLifecycleAdvice(const drogon::HttpRequestPtr &requ
     }
 
     if (route == Route::None) return nullptr;
+    const auto respond = [&request](const drogon::HttpResponsePtr &response) {
+        return cff::http::withRuntimeCorsHeaders(request, response);
+    };
     const auto email = accountEmail(request);
     if (!email) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+        return respond(errorResponse(drogon::k401Unauthorized,
+                                     "Authentication is required.",
+                                     "authentication_required"));
     }
 
     switch (route) {
         case Route::State:
-            return getWaiverState(leagueId, *email);
+            return respond(getWaiverState(leagueId, *email));
         case Route::Transaction:
-            return dispatchWaiverTransaction(request, leagueId, *email);
+            return respond(dispatchWaiverTransaction(request, leagueId, *email));
         case Route::List:
-            return legacyWaiverCollection(leagueId, *email, false);
+            return respond(legacyWaiverCollection(leagueId, *email, false));
         case Route::Priority:
-            return legacyWaiverCollection(leagueId, *email, true);
+            return respond(legacyWaiverCollection(leagueId, *email, true));
         case Route::Create:
-            return createWaiverClaim(request, leagueId, *email, true);
+            return respond(createWaiverClaim(request, leagueId, *email, true));
         case Route::Cancel: {
             const auto body = request->getJsonObject();
             const auto status = body && body->isObject()
                 ? lower(trim(body->get("status", "").asString()))
                 : "";
             if (status != "cancelled" && status != "canceled") {
-                return errorResponse(drogon::k400BadRequest,
-                                     "Only cancellation is supported for pending waiver claims.",
-                                     "invalid_waiver_status");
+                return respond(errorResponse(drogon::k400BadRequest,
+                                             "Only cancellation is supported for pending waiver claims.",
+                                             "invalid_waiver_status"));
             }
-            return cancelWaiverClaim(request, leagueId, *email, claimId, true);
+            return respond(cancelWaiverClaim(request, leagueId, *email, claimId, true));
         }
         case Route::Reorder:
-            return reorderWaiverClaims(request, leagueId, *email, true);
+            return respond(reorderWaiverClaims(request, leagueId, *email, true));
         case Route::ProcessOne:
-            return processWaiverClaims(request, leagueId, *email, claimId, false, true);
+            return respond(processWaiverClaims(request, leagueId, *email, claimId, false, true));
         case Route::ProcessAll:
-            return processWaiverClaims(request, leagueId, *email, "", true, true);
+            return respond(processWaiverClaims(request, leagueId, *email, "", true, true));
         case Route::ResetPriority:
-            return resetWaiverPriority(request, leagueId, *email, true);
+            return respond(resetWaiverPriority(request, leagueId, *email, true));
         default:
             return nullptr;
     }

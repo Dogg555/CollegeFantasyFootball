@@ -129,6 +129,11 @@ void applyCorsHeaders(
     if (!req || !resp) {
         return;
     }
+    resp->removeHeader("Access-Control-Allow-Origin");
+    resp->removeHeader("Access-Control-Allow-Headers");
+    resp->removeHeader("Access-Control-Allow-Methods");
+    resp->removeHeader("Access-Control-Expose-Headers");
+    resp->removeHeader("Access-Control-Max-Age");
     const auto origin = req->getHeader("Origin");
     if (!allowedOrigins.empty() && allowedOrigins.find(origin) != allowedOrigins.end()) {
         resp->addHeader("Access-Control-Allow-Origin", origin);
@@ -136,6 +141,7 @@ void applyCorsHeaders(
     }
     resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID");
     resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    resp->addHeader("Access-Control-Expose-Headers", "X-CFF-Request-Id, Retry-After, X-CFF-Invite-Email");
 }
 
 drogon::HttpResponsePtr buildPreflightResponse(
@@ -144,6 +150,15 @@ drogon::HttpResponsePtr buildPreflightResponse(
     auto resp = drogon::HttpResponse::newHttpResponse();
     applyCorsHeaders(req, resp, allowedOrigins);
     resp->setStatusCode(drogon::k204NoContent);
+    return resp;
+}
+
+drogon::HttpResponsePtr withRuntimeCorsHeaders(
+    const drogon::HttpRequestPtr &req,
+    const drogon::HttpResponsePtr &resp) {
+    if (resp) {
+        applyCorsHeaders(req, resp, cff::config::loadRuntimeConfig().allowedOrigins);
+    }
     return resp;
 }
 

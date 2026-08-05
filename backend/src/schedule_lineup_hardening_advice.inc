@@ -64,37 +64,40 @@ drogon::HttpResponsePtr scheduleLineupAdvice(const drogon::HttpRequestPtr &reque
     }
 
     const auto email = accountEmail(request);
+    const auto respond = [&request](const drogon::HttpResponsePtr &response) {
+        return cff::http::withRuntimeCorsHeaders(request, response);
+    };
     if (!email) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+        return respond(errorResponse(drogon::k401Unauthorized,
+                                     "Authentication is required.",
+                                     "authentication_required"));
     }
 
     switch (route) {
         case Route::State:
         case Route::LineupState:
-            return getScheduleState(leagueId, *email, requestSeason(request), requestWeek(request, week));
+            return respond(getScheduleState(leagueId, *email, requestSeason(request), requestWeek(request, week)));
         case Route::Transaction:
-            return dispatchScheduleTransaction(request, leagueId, *email);
+            return respond(dispatchScheduleTransaction(request, leagueId, *email));
         case Route::LegacyGenerate:
-            return generateSchedule(request, leagueId, *email, requestSeason(request), 1, true);
+            return respond(generateSchedule(request, leagueId, *email, requestSeason(request), 1, true));
         case Route::LegacyGenerateSeason: {
             const auto body = request->getJsonObject();
             const auto weeks = body && body->isObject()
                 ? positiveInt(body->get("weeks", 12), 12)
                 : 12;
-            return generateSchedule(request, leagueId, *email, requestSeason(request), weeks, true);
+            return respond(generateSchedule(request, leagueId, *email, requestSeason(request), weeks, true));
         }
         case Route::LineupLock:
-            return mutateLineupLock(request, leagueId, *email,
-                                    requestSeason(request), week, false, true);
+            return respond(mutateLineupLock(request, leagueId, *email,
+                                            requestSeason(request), week, false, true));
         case Route::LineupUnlock:
-            return mutateLineupLock(request, leagueId, *email,
-                                    requestSeason(request), week, true, true);
+            return respond(mutateLineupLock(request, leagueId, *email,
+                                            requestSeason(request), week, true, true));
         case Route::RosterSlotGuard:
-            return rosterSlotGuard(leagueId, *email);
+            return respond(rosterSlotGuard(leagueId, *email));
         case Route::RosterDropGuard:
-            return rosterDropGuard(request, leagueId, *email);
+            return respond(rosterDropGuard(request, leagueId, *email));
         default:
             return nullptr;
     }

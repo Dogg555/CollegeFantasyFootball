@@ -13,6 +13,16 @@ public_routes = (root / "backend/src/public_routes.cpp").read_text(encoding="utf
 security = (root / "backend/src/http_security.cpp").read_text(encoding="utf-8")
 header = (root / "backend/src/http_security.h").read_text(encoding="utf-8")
 cmake = (root / "backend/CMakeLists.txt").read_text(encoding="utf-8")
+sync_advice_sources = [
+    root / "backend/src/draft_lifecycle_hardening_advice.inc",
+    root / "backend/src/league_onboarding_hardening.cpp",
+    root / "backend/src/roster_transaction_hardening_advice.inc",
+    root / "backend/src/schedule_lineup_hardening_advice.inc",
+    root / "backend/src/scoring_lifecycle_hardening_advice.inc",
+    root / "backend/src/stat_ingestion_hardening_advice.inc",
+    root / "backend/src/trade_lifecycle_hardening_advice.inc",
+    root / "backend/src/waiver_lifecycle_hardening_advice.inc",
+]
 
 owned_functions = (
     "bearerToken",
@@ -23,6 +33,7 @@ owned_functions = (
     "requireAdmin",
     "applyCorsHeaders",
     "buildPreflightResponse",
+    "withRuntimeCorsHeaders",
 )
 
 for function in owned_functions:
@@ -114,16 +125,24 @@ required_behavior = (
     'resp->setStatusCode(drogon::k401Unauthorized)',
     'resp->setStatusCode(drogon::k403Forbidden)',
     'resp->addHeader("Access-Control-Allow-Origin", origin)',
+    'resp->removeHeader("Access-Control-Allow-Origin")',
     'resp->addHeader("Vary", "Origin")',
     'resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID")',
     'resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")',
+    'resp->addHeader("Access-Control-Expose-Headers", "X-CFF-Request-Id, Retry-After, X-CFF-Invite-Email")',
     'resp->setStatusCode(drogon::k204NoContent)',
+    "applyCorsHeaders(req, resp, cff::config::loadRuntimeConfig().allowedOrigins)",
     'return std::string{"admin@example.com"}',
     'adminIdentity = "ops-token"',
 )
 for contract in required_behavior:
     if contract not in security:
         raise SystemExit(f"HTTP security behavior contract missing: {contract}")
+
+for source_path in sync_advice_sources:
+    source = source_path.read_text(encoding="utf-8")
+    if "registerSyncAdvice" in source and "cff::http::withRuntimeCorsHeaders(request, response)" not in source:
+        raise SystemExit(f"sync-advice responses must attach runtime CORS headers: {source_path.name}")
 
 for source_path in (
     "src/http_security.cpp",

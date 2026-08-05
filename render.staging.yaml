@@ -29,7 +29,7 @@ services:
         generateValue: true
 
       - key: ALLOWED_ORIGINS
-        value: https://college-ff-staging-frontend.onrender.com
+        value: https://college-ff-staging-frontend.onrender.com,http://localhost:3000,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5500,http://127.0.0.1:5500
 
       # External API key must be entered in the Render dashboard.
       - key: CFBD_API_KEY

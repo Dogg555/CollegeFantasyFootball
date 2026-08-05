@@ -33,24 +33,27 @@ drogon::HttpResponsePtr tradeLifecycleAdvice(const drogon::HttpRequestPtr &reque
     }
 
     if (route == Route::None) return nullptr;
+    const auto respond = [&request](const drogon::HttpResponsePtr &response) {
+        return cff::http::withRuntimeCorsHeaders(request, response);
+    };
     const auto email = accountEmail(request);
     if (!email) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+        return respond(errorResponse(drogon::k401Unauthorized,
+                                     "Authentication is required.",
+                                     "authentication_required"));
     }
 
     switch (route) {
         case Route::State:
-            return getTradeState(leagueId, *email, false);
+            return respond(getTradeState(leagueId, *email, false));
         case Route::Transaction:
-            return dispatchTradeTransaction(request, leagueId, *email);
+            return respond(dispatchTradeTransaction(request, leagueId, *email));
         case Route::List:
-            return getTradeState(leagueId, *email, true);
+            return respond(getTradeState(leagueId, *email, true));
         case Route::Create:
-            return createTradeOffer(request, leagueId, *email, true);
+            return respond(createTradeOffer(request, leagueId, *email, true));
         case Route::Status:
-            return updateTradeLifecycleStatus(request, leagueId, *email, tradeId, true);
+            return respond(updateTradeLifecycleStatus(request, leagueId, *email, tradeId, true));
         default:
             return nullptr;
     }

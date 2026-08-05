@@ -25,24 +25,27 @@ drogon::HttpResponsePtr rosterTransactionAdvice(const drogon::HttpRequestPtr &re
     }
 
     if (action == Action::None) return nullptr;
+    const auto respond = [&request](const drogon::HttpResponsePtr &response) {
+        return cff::http::withRuntimeCorsHeaders(request, response);
+    };
     const auto email = accountEmail(request);
     if (!email) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+        return respond(errorResponse(drogon::k401Unauthorized,
+                                     "Authentication is required.",
+                                     "authentication_required"));
     }
 
     switch (action) {
         case Action::State:
-            return getRosterState(leagueId, *email);
+            return respond(getRosterState(leagueId, *email));
         case Action::Transaction:
-            return dispatchRosterTransaction(request, leagueId, *email);
+            return respond(dispatchRosterTransaction(request, leagueId, *email));
         case Action::LegacyAdd:
-            return mutateRoster(request, leagueId, *email, RosterAction::Add, "", true);
+            return respond(mutateRoster(request, leagueId, *email, RosterAction::Add, "", true));
         case Action::LegacyDrop:
-            return mutateRoster(request, leagueId, *email, RosterAction::Drop, "", true);
+            return respond(mutateRoster(request, leagueId, *email, RosterAction::Drop, "", true));
         case Action::LegacySlot:
-            return mutateRoster(request, leagueId, *email, RosterAction::Slot, playerId, true);
+            return respond(mutateRoster(request, leagueId, *email, RosterAction::Slot, playerId, true));
         default:
             return nullptr;
     }

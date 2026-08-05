@@ -45,17 +45,20 @@ drogon::HttpResponsePtr scoringLifecycleAdvice(const drogon::HttpRequestPtr &req
     }
 
     const auto email = accountEmail(request);
+    const auto respond = [&request](const drogon::HttpResponsePtr &response) {
+        return cff::http::withRuntimeCorsHeaders(request, response);
+    };
     if (!email) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+        return respond(errorResponse(drogon::k401Unauthorized,
+                                     "Authentication is required.",
+                                     "authentication_required"));
     }
 
     switch (route) {
         case Route::State:
-            return getScoringState(leagueId, *email, requestSeason(request), requestWeek(request));
+            return respond(getScoringState(leagueId, *email, requestSeason(request), requestWeek(request)));
         case Route::Standings:
-            return getStandingsState(leagueId, *email, requestSeason(request));
+            return respond(getStandingsState(leagueId, *email, requestSeason(request)));
         case Route::Transaction: {
             const auto body = request->getJsonObject();
             const auto action = body && body->isObject()
@@ -64,23 +67,23 @@ drogon::HttpResponsePtr scoringLifecycleAdvice(const drogon::HttpRequestPtr &req
             if (action == "score" || action == "finalize") {
                 if (auto blocked = cff::schedule_lineup_hardening::prepareLineupsForScoring(
                         leagueId, *email, requestSeason(request), requestWeek(request))) {
-                    return blocked;
+                    return respond(blocked);
                 }
             }
-            return dispatchScoringTransaction(request, leagueId, *email);
+            return respond(dispatchScoringTransaction(request, leagueId, *email));
         }
         case Route::LegacyScore:
             if (auto blocked = cff::schedule_lineup_hardening::prepareLineupsForScoring(
                     leagueId, *email, requestSeason(request), week)) {
-                return blocked;
+                return respond(blocked);
             }
-            return scoreWeek(request, leagueId, *email, requestSeason(request), week, true);
+            return respond(scoreWeek(request, leagueId, *email, requestSeason(request), week, true));
         case Route::LegacyFinalize:
             if (auto blocked = cff::schedule_lineup_hardening::prepareLineupsForScoring(
                     leagueId, *email, requestSeason(request), week)) {
-                return blocked;
+                return respond(blocked);
             }
-            return finalizeWeek(request, leagueId, *email, requestSeason(request), week, true);
+            return respond(finalizeWeek(request, leagueId, *email, requestSeason(request), week, true));
         default:
             return nullptr;
     }

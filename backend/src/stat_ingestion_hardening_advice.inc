@@ -6,6 +6,9 @@ drogon::HttpResponsePtr statIngestionAdvice(const drogon::HttpRequestPtr &reques
     const bool statusRoute = path == "/api/admin/ingest/cfbd/stats/status";
     const bool transactionRoute = path == "/api/admin/ingest/cfbd/stats/transactions";
     if (!statusRoute && !transactionRoute) return nullptr;
+    const auto respond = [&request](const drogon::HttpResponsePtr &response) {
+        return cff::http::withRuntimeCorsHeaders(request, response);
+    };
 
     if (method == drogon::Options) {
         const auto config = cff::config::loadRuntimeConfig();
@@ -13,27 +16,27 @@ drogon::HttpResponsePtr statIngestionAdvice(const drogon::HttpRequestPtr &reques
     }
     if ((statusRoute && method != drogon::Get)
         || (transactionRoute && method != drogon::Post)) {
-        return errorResponse(drogon::k405MethodNotAllowed,
-                             "Method not allowed.",
-                             "method_not_allowed");
+        return respond(errorResponse(drogon::k405MethodNotAllowed,
+                                     "Method not allowed.",
+                                     "method_not_allowed"));
     }
 
     const auto config = cff::config::loadRuntimeConfig();
     std::string actor;
     if (!cff::http::bearerToken(request)) {
-        return errorResponse(drogon::k401Unauthorized,
-                             "Authentication is required.",
-                             "authentication_required");
+        return respond(errorResponse(drogon::k401Unauthorized,
+                                     "Authentication is required.",
+                                     "authentication_required"));
     }
     if (!cff::http::isAdminRequest(request, config.jwtSecret, actor)) {
-        return errorResponse(drogon::k403Forbidden,
-                             "Admin access is required.",
-                             "admin_required");
+        return respond(errorResponse(drogon::k403Forbidden,
+                                     "Admin access is required.",
+                                     "admin_required"));
     }
     actor = lower(trim(actor));
     const auto season = requestSeason(request);
     const auto week = requestWeek(request);
-    if (statusRoute) return getStatStatus(season, week, actor);
+    if (statusRoute) return respond(getStatStatus(season, week, actor));
 
     const auto body = request->getJsonObject();
     const auto action = body && body->isObject()
@@ -43,25 +46,25 @@ drogon::HttpResponsePtr statIngestionAdvice(const drogon::HttpRequestPtr &reques
         const auto key = operationKey(request);
         if (!key.empty()) {
             auto context = openStatContext(season, week);
-            if (!context) return statStorageUnavailable();
+            if (!context) return respond(statStorageUnavailable());
             if (const auto replay = operationReplay(
                     context->connection.get(), season, week, actor, key, "recover")) {
                 if (!(*replay)["operationTypeMatches"].asBool()) {
                     rollback(context->connection.get());
-                    return errorResponse(drogon::k409Conflict,
-                                         "This idempotency key was used for another ingestion action.",
-                                         "idempotency_key_conflict");
+                    return respond(errorResponse(drogon::k409Conflict,
+                                                 "This idempotency key was used for another ingestion action.",
+                                                 "idempotency_key_conflict"));
                 }
                 auto payload = *replay;
                 payload.removeMember("operationTypeMatches");
                 payload.removeMember("storedOperationType");
-                if (!commit(context->connection.get())) return statStorageUnavailable();
-                return jsonResponse(payload);
+                if (!commit(context->connection.get())) return respond(statStorageUnavailable());
+                return respond(jsonResponse(payload));
             }
             rollback(context->connection.get());
         }
     }
-    return dispatchStatTransaction(request, season, week, actor);
+    return respond(dispatchStatTransaction(request, season, week, actor));
 #else
     (void)request;
     return nullptr;

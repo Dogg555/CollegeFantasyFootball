@@ -43,4 +43,8 @@ drogon::HttpResponsePtr buildPreflightResponse(
     const drogon::HttpRequestPtr &req,
     const std::unordered_set<std::string> &allowedOrigins);
 
+drogon::HttpResponsePtr withRuntimeCorsHeaders(
+    const drogon::HttpRequestPtr &req,
+    const drogon::HttpResponsePtr &resp);
+
 } // namespace cff::http

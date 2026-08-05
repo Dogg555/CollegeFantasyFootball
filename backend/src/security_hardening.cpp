@@ -424,20 +424,53 @@ bool allowedOrigin(const std::string &origin) {
     return origins.find(origin) != origins.end();
 }
 
+std::string requestOrigin(const drogon::HttpRequestPtr &req) {
+    auto origin = req->getHeader("Origin");
+    if (origin.empty()) origin = req->getHeader("origin");
+    return origin;
+}
+
+void applyCorsHeaders(const drogon::HttpRequestPtr &req,
+                      const drogon::HttpResponsePtr &resp) {
+    resp->removeHeader("Access-Control-Allow-Origin");
+    resp->removeHeader("Access-Control-Allow-Headers");
+    resp->removeHeader("Access-Control-Allow-Methods");
+    resp->removeHeader("Access-Control-Expose-Headers");
+    resp->removeHeader("Access-Control-Max-Age");
+    const auto origin = requestOrigin(req);
+    if (!origin.empty() && allowedOrigin(origin)) {
+        resp->addHeader("Access-Control-Allow-Origin", origin);
+        resp->addHeader("Vary", "Origin");
+    }
+    resp->addHeader("Access-Control-Allow-Headers",
+                    "Authorization, Content-Type, X-Request-ID, Idempotency-Key");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    resp->addHeader("Access-Control-Expose-Headers",
+                    "X-CFF-Request-Id, Retry-After, X-CFF-Invite-Email");
+    if (req->getMethod() == drogon::Options) {
+        resp->addHeader("Access-Control-Max-Age", "600");
+    }
+}
+
 drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
     const auto &path = req->getPath();
     const bool apiPath = path == "/health" || path.rfind("/api/", 0) == 0;
     if (!apiPath) return nullptr;
 
+    const auto withCors = [&req](const drogon::HttpResponsePtr &response) {
+        applyCorsHeaders(req, response);
+        return response;
+    };
+
     if (!startupProblems.empty()) {
-        return jsonError(drogon::k503ServiceUnavailable,
-                         "Service security configuration is incomplete.",
-                         "security_configuration_invalid");
+        return withCors(jsonError(drogon::k503ServiceUnavailable,
+                                  "Service security configuration is incomplete.",
+                                  "security_configuration_invalid"));
     }
 
-    const auto origin = req->getHeader("origin");
+    const auto origin = requestOrigin(req);
     if (!allowedOrigin(origin)) {
-        return jsonError(drogon::k403Forbidden, "Origin is not allowed.", "origin_not_allowed");
+        return withCors(jsonError(drogon::k403Forbidden, "Origin is not allowed.", "origin_not_allowed"));
     }
 
     constexpr std::size_t kAbsoluteMaximum = 10 * 1024 * 1024;
@@ -446,22 +479,22 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
     const auto maximum = path.rfind("/api/auth/", 0) == 0 ? authLimit : generalLimit;
     const auto actualLength = std::max(req->bodyLength(), req->getRealContentLength());
     if (actualLength > maximum) {
-        return jsonError(static_cast<drogon::HttpStatusCode>(413),
-                         "Request body is too large.",
-                         "request_too_large");
+        return withCors(jsonError(static_cast<drogon::HttpStatusCode>(413),
+                                  "Request body is too large.",
+                                  "request_too_large"));
     }
 
     if (req->getQuery().size() > 4096 || req->getPath().size() > 2048) {
-        return jsonError(static_cast<drogon::HttpStatusCode>(414),
-                         "Request URI is too large.",
-                         "request_uri_too_large");
+        return withCors(jsonError(static_cast<drogon::HttpStatusCode>(414),
+                                  "Request URI is too large.",
+                                  "request_uri_too_large"));
     }
 
     if (isMutation(req->getMethod()) && req->bodyLength() > 0 &&
         !isJsonContentType(req->getHeader("content-type"))) {
-        return jsonError(static_cast<drogon::HttpStatusCode>(415),
-                         "Content-Type must be application/json.",
-                         "unsupported_content_type");
+        return withCors(jsonError(static_cast<drogon::HttpStatusCode>(415),
+                                  "Content-Type must be application/json.",
+                                  "unsupported_content_type"));
     }
 
     if (path.rfind("/api/auth/", 0) == 0 && isMutation(req->getMethod())) {
@@ -470,9 +503,9 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
             envSize("CFF_AUTH_BURST_WINDOW_SECONDS", 60, 3600));
         const auto burstKey = "/api/auth/*:burst:" + fingerprint(clientAddress(req));
         if (!takeRateLimit(burstKey, burstLimit, burstWindow)) {
-            auto response = jsonError(static_cast<drogon::HttpStatusCode>(429),
-                                      "Too many authentication requests. Try again shortly.",
-                                      "rate_limited");
+            auto response = withCors(jsonError(static_cast<drogon::HttpStatusCode>(429),
+                                               "Too many authentication requests. Try again shortly.",
+                                               "rate_limited"));
             response->addHeader("Retry-After", std::to_string(burstWindow.count()));
             return response;
         }
@@ -481,12 +514,12 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
     if (req->bodyLength() > 0 && isJsonContentType(req->getHeader("content-type"))) {
         const auto body = req->getJsonObject();
         if (!body || !body->isObject()) {
-            return jsonError(drogon::k400BadRequest, "A valid JSON object is required.", "invalid_json");
+            return withCors(jsonError(drogon::k400BadRequest, "A valid JSON object is required.", "invalid_json"));
         }
         normalizeEmailFields(*body);
         std::string emailError;
         if (!validateEmailFields(*body, emailError)) {
-            return jsonError(drogon::k400BadRequest, emailError, "invalid_email");
+            return withCors(jsonError(drogon::k400BadRequest, emailError, "invalid_email"));
         }
     }
 
@@ -497,11 +530,11 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
     if (authPayload && req->bodyLength() > 0) {
         const auto body = req->getJsonObject();
         if (!body || !body->isObject()) {
-            return jsonError(drogon::k400BadRequest, "A valid JSON object is required.", "invalid_json");
+            return withCors(jsonError(drogon::k400BadRequest, "A valid JSON object is required.", "invalid_json"));
         }
         if (!body->isMember("email") || !(*body)["email"].isString() ||
             !looksLikeEmail(trim((*body)["email"].asString()))) {
-            return jsonError(drogon::k400BadRequest, "A valid email address is required.", "invalid_email");
+            return withCors(jsonError(drogon::k400BadRequest, "A valid email address is required.", "invalid_email"));
         }
     }
 
@@ -510,7 +543,7 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
         if (!body || !body->isObject() ||
             !body->isMember("password") || !(*body)["password"].isString() ||
             (*body)["password"].asString().empty()) {
-            return jsonError(drogon::k400BadRequest, "A password is required.", "invalid_password");
+            return withCors(jsonError(drogon::k400BadRequest, "A password is required.", "invalid_password"));
         }
     }
 
@@ -519,16 +552,16 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
         const auto minimum = envSize("CFF_MIN_PASSWORD_LENGTH", 12, 64);
         if (!body || !body->isObject() ||
             !body->isMember("password") || !(*body)["password"].isString()) {
-            return jsonError(drogon::k400BadRequest, "A password is required.", "invalid_password");
+            return withCors(jsonError(drogon::k400BadRequest, "A password is required.", "invalid_password"));
         }
         const auto email = body->isMember("email") && (*body)["email"].isString()
             ? (*body)["email"].asString()
             : std::string{};
         if (!strongPassword((*body)["password"].asString(), email, minimum)) {
-            return jsonError(drogon::k400BadRequest,
-                             "Password must be between " + std::to_string(minimum) +
-                                 " and 72 characters and must not be commonly used.",
-                             "weak_password");
+            return withCors(jsonError(drogon::k400BadRequest,
+                                      "Password must be between " + std::to_string(minimum) +
+                                          " and 72 characters and must not be commonly used.",
+                                      "weak_password"));
         }
     }
 
@@ -539,9 +572,9 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
         const auto route = safeRoute(req);
         const auto client = fingerprint(clientAddress(req));
         if (!takeRateLimit(route + ":client:" + client, policy->clientLimit, policy->window)) {
-            auto response = jsonError(static_cast<drogon::HttpStatusCode>(429),
-                                      "Too many requests. Try again later.",
-                                      "rate_limited");
+            auto response = withCors(jsonError(static_cast<drogon::HttpStatusCode>(429),
+                                               "Too many requests. Try again later.",
+                                               "rate_limited"));
             response->addHeader("Retry-After", std::to_string(policy->window.count()));
             return response;
         }
@@ -549,9 +582,9 @@ drogon::HttpResponsePtr securityGate(const drogon::HttpRequestPtr &req) {
             const auto subject = authSubject(req);
             if (!subject.empty() &&
                 !takeRateLimit(route + ":account:" + subject, policy->accountLimit, policy->window)) {
-                auto response = jsonError(static_cast<drogon::HttpStatusCode>(429),
-                                          "Too many requests. Try again later.",
-                                          "rate_limited");
+                auto response = withCors(jsonError(static_cast<drogon::HttpStatusCode>(429),
+                                                   "Too many requests. Try again later.",
+                                                   "rate_limited"));
                 response->addHeader("Retry-After", std::to_string(policy->window.count()));
                 return response;
             }

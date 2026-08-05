@@ -739,14 +739,17 @@ std::optional<Json::Value> approveMember(const drogon::HttpRequestPtr &request,
 drogon::HttpResponsePtr onboardingAdvice(const drogon::HttpRequestPtr &request) {
     const auto &path = request->getPath();
     const auto method = request->getMethod();
+    const auto respond = [&request](const drogon::HttpResponsePtr &response) {
+        return cff::http::withRuntimeCorsHeaders(request, response);
+    };
 
     if (method == drogon::Post && path == "/api/leagues") {
         const auto body = request->getJsonObject();
         const int teams = body && body->isObject() ? body->get("teams", 10).asInt() : 10;
         if (!allowedTeamCount(teams)) {
-            return errorResponse(drogon::k400BadRequest,
-                                 "League size must be 4, 6, 8, 10, 12, 14, or 16 teams.",
-                                 "unsupported_team_count");
+            return respond(errorResponse(drogon::k400BadRequest,
+                                         "League size must be 4, 6, 8, 10, 12, 14, or 16 teams.",
+                                         "unsupported_team_count"));
         }
 #ifdef CFF_HAS_POSTGRES
         if (dbConfigured()) {
@@ -754,7 +757,7 @@ drogon::HttpResponsePtr onboardingAdvice(const drogon::HttpRequestPtr &request) 
             if (!email) return nullptr;
             drogon::HttpStatusCode status = drogon::k500InternalServerError;
             auto payload = createLeague(request, *email, status);
-            return payload ? jsonResponse(*payload, status) : nullptr;
+            return payload ? respond(jsonResponse(*payload, status)) : nullptr;
         }
 #endif
         return nullptr;
@@ -770,7 +773,7 @@ drogon::HttpResponsePtr onboardingAdvice(const drogon::HttpRequestPtr &request) 
         if (leagueId.empty()) return nullptr;
         drogon::HttpStatusCode status = drogon::k500InternalServerError;
         auto payload = joinLeague(request, *email, leagueId, status);
-        return payload ? jsonResponse(*payload, status) : nullptr;
+        return payload ? respond(jsonResponse(*payload, status)) : nullptr;
     }
 
     if (method == drogon::Post && path.size() > 8 && path.substr(path.size() - 8) == "/members") {
@@ -778,7 +781,7 @@ drogon::HttpResponsePtr onboardingAdvice(const drogon::HttpRequestPtr &request) 
         if (leagueId.empty()) return nullptr;
         drogon::HttpStatusCode status = drogon::k500InternalServerError;
         auto payload = inviteMember(request, *email, leagueId, status);
-        return payload ? jsonResponse(*payload, status) : nullptr;
+        return payload ? respond(jsonResponse(*payload, status)) : nullptr;
     }
 
     if ((method == drogon::Put || method == drogon::Post) && path.find("/members/") != std::string::npos) {
@@ -788,7 +791,7 @@ drogon::HttpResponsePtr onboardingAdvice(const drogon::HttpRequestPtr &request) 
         const auto memberEmail = path.substr(marker + std::string{"/members/"}.size());
         drogon::HttpStatusCode status = drogon::k500InternalServerError;
         auto payload = approveMember(request, *email, leagueId, memberEmail, status);
-        return payload ? jsonResponse(*payload, status) : nullptr;
+        return payload ? respond(jsonResponse(*payload, status)) : nullptr;
     }
 #endif
 
