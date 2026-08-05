@@ -48,7 +48,10 @@ def main() -> None:
             "finalized matchups must lock roster mutations")
     require("scoring_week_states scoring" in database and "scoring.status = 'final'" in database,
             "finalized scoring weeks must lock roster mutations")
-    require("lineup.status = 'finalized'" in database and "week_state.status IN ('locked', 'finalized')" in database,
+    require("to_regclass($1) IS NOT NULL" in database,
+            "optional lock tables must be checked before querying them")
+    require("lineup_week_states" in database and "status = 'finalized'" in database
+            and "schedule_week_states" in database and "status IN ('locked', 'finalized')" in database,
             "lineup and schedule locks must block roster mutations")
     require("Roster changes are locked after a matchup is finalized." in mutations and "lineup_locked" in mutations,
             "all roster mutations must reject when roster changes are locked")
