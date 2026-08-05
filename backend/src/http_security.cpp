@@ -139,7 +139,7 @@ void applyCorsHeaders(
         resp->addHeader("Access-Control-Allow-Origin", origin);
         resp->addHeader("Vary", "Origin");
     }
-    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID");
+    resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, Idempotency-Key");
     resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     resp->addHeader("Access-Control-Expose-Headers", "X-CFF-Request-Id, Retry-After, X-CFF-Invite-Email");
 }

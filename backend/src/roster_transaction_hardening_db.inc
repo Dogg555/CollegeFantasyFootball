@@ -181,13 +181,8 @@ Json::Value unavailablePlayerIds(PGconn *connection,
 }
 
 bool lineupLocked(PGconn *connection, const std::string &leagueId) {
-    auto finalizedMatchup = execute(connection,
-        "SELECT 1 FROM league_matchups matchup "
-        "WHERE matchup.league_id = $1 AND matchup.status = 'final' LIMIT 1",
-        {leagueId});
-    if (tuplesOk(finalizedMatchup) && PQntuples(finalizedMatchup.get()) > 0) return true;
-
     auto optionalLock = [&](const std::string &tableName,
+                            const std::string &tableReference,
                             const std::string &statusPredicate) {
         auto exists = execute(connection,
             "SELECT to_regclass($1) IS NOT NULL",
@@ -196,14 +191,33 @@ bool lineupLocked(PGconn *connection, const std::string &leagueId) {
             return false;
         }
         auto result = execute(connection,
-            "SELECT 1 FROM " + tableName + " WHERE league_id = $1 AND " + statusPredicate + " LIMIT 1",
+            "SELECT 1 FROM " + tableReference + " WHERE league_id = $1 AND " + statusPredicate + " LIMIT 1",
             {leagueId});
         return tuplesOk(result) && PQntuples(result.get()) > 0;
     };
 
-    return optionalLock("scoring_week_states", "status = 'final'")
-        || optionalLock("lineup_week_states", "status = 'finalized'")
-        || optionalLock("schedule_week_states", "status IN ('locked', 'finalized')");
+    auto scheduleExists = execute(connection,
+        "SELECT to_regclass($1) IS NOT NULL",
+        {"public.schedule_week_states"});
+    if (tuplesOk(scheduleExists)
+        && PQntuples(scheduleExists.get()) > 0
+        && cell(scheduleExists.get(), 0, 0) == "t") {
+        auto finalizedMatchup = execute(connection,
+            "SELECT 1 FROM schedule_week_states week_state "
+            "JOIN league_matchups matchup "
+            "ON matchup.league_id = week_state.league_id "
+            "AND matchup.season = week_state.season "
+            "AND matchup.week = week_state.week "
+            "WHERE week_state.league_id = $1 "
+            "AND week_state.status = 'locked' "
+            "AND matchup.status = 'final'",
+            {leagueId});
+        if (tuplesOk(finalizedMatchup) && PQntuples(finalizedMatchup.get()) > 0) return true;
+    }
+
+    return optionalLock("scoring_week_states", "scoring_week_states scoring", "scoring.status = 'final'")
+        || optionalLock("lineup_week_states", "lineup_week_states", "status = 'finalized'")
+        || optionalLock("schedule_week_states", "schedule_week_states", "status IN ('locked', 'finalized')");
 }
 
 std::optional<std::string> playerOwner(PGconn *connection,
