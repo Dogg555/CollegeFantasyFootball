@@ -56,6 +56,29 @@ function testLegalDestinationsRespectCapacity() {
   assert.deepEqual(helpers.legalDestinations(roster[2], roster, rules), []);
 }
 
+function testFullRosterCanOpenStarterSlot() {
+  const roster = [
+    player('rb-1', 'RB', 'rb'),
+    player('rb-2', 'RB', 'rb'),
+    player('flex-1', 'WR', 'flex'),
+    player('bench-1', 'QB', 'bench'),
+    player('bench-2', 'WR', 'bench'),
+    player('bench-3', 'TE', 'bench'),
+    player('bench-4', 'RB', 'bench')
+  ];
+  assert.deepEqual(
+    helpers.legalDestinations(roster[0], roster, rules),
+    ['bench'],
+    'a starter must be able to move to a full bench so its slot can be refilled'
+  );
+  const staged = [...roster, player('bench-5', 'RB', 'bench')];
+  assert.deepEqual(
+    helpers.lineupErrorsAllowEmpty(staged, { rosterRules: rules }),
+    [],
+    'temporary extra bench players must not invalidate an otherwise legal lineup'
+  );
+}
+
 function testInvalidAndOverfilledLineupsStillFail() {
   const roster = [
     player('qb-1', 'QB', 'qb'),
@@ -97,6 +120,7 @@ testStarterSlotsRemainVisibleWhenEmpty();
 testEmptyLineupsAreValid();
 testPositionEligibility();
 testLegalDestinationsRespectCapacity();
+testFullRosterCanOpenStarterSlot();
 testInvalidAndOverfilledLineupsStillFail();
 testWeeklyPlayerLocks();
 testStarterAndBenchGrouping();
