@@ -111,11 +111,13 @@ async function testCommittedMutationIsNotReportedAsFailed() {
     resources: () => [{ name: 'trades', path: '/fail', apply() {} }]
   });
 
+  coordinator.initializeSafetyGate();
   coordinator.recordCommittedMutation({
     path: '/leagues/league-1/trades',
     leagueId: 'league-1',
     requestId: 'request-1'
   });
+  assert.equal(coordinator.controlsDisabled(), true, 'recording a commit must not reopen writes before reconciliation');
   const result = await coordinator.refreshActiveCollections({ force: true });
   assert.equal(result.mutationCommitted, true);
   assert.equal(result.refreshFailed, true);
@@ -199,6 +201,7 @@ async function testSuccessfulMutationIsRecordedByApiWrapper() {
   assert.equal(coordinator.hasRecentCommit('league-1'), true);
   assert.equal(coordinator.currentStatus().lastMutationRequestId, 'req-2');
   assert.equal(root.roster[0].id, 'player-3');
+  assert.equal(coordinator.controlsDisabled(), true, 'a mutation response cannot bypass the startup synchronization gate');
 }
 
 async function main() {
