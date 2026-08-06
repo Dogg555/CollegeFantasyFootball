@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const stateSource = fs.readFileSync(path.join(__dirname, '..', 'state.js'), 'utf8');
 const context = {
   console,
   Date,
@@ -22,7 +23,7 @@ const context = {
 context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(
-  fs.readFileSync(path.join(__dirname, '..', 'state.js'), 'utf8'),
+  stateSource,
   context
 );
 
@@ -66,5 +67,16 @@ assert.deepEqual(
 assert.equal(standings.find((row) => row.email === 'active@example.test').wins, 1);
 assert.equal(context.sameSeasonWeek({ season: 2026, week: 1 }, 2026, 1), true);
 assert.equal(context.sameSeasonWeek({ season: 2025, week: 1 }, 2026, 1), false);
+
+assert.match(
+  stateSource,
+  /if \(!getAuthState\(\)\?\.token \|\| isLocalDemoSession\(\)\) \{[\s\S]*?samplePlayers\.filter/,
+  'manager roster demo fallback must be limited to missing-auth or explicit local demo mode'
+);
+assert.match(
+  stateSource,
+  /if \(!league\?\.id \|\| !managerEmail\) return \[\];/,
+  'production manager roster lookup must not synthesize sample rosters when scoped data is missing'
+);
 
 console.log('state domain tests passed');

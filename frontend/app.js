@@ -224,7 +224,11 @@ if (searchForm && searchInput && searchResultsEl) {
       if (!response.ok) throw new Error('Player search failed.');
       renderSearchResults((await response.json()).map(normalizePlayer));
     } catch {
-      renderSearchResults(filterSamplePlayers(term), true);
+      if (isLocalDemoSession()) {
+        renderSearchResults(filterSamplePlayers(term), true);
+      } else {
+        searchResultsEl.textContent = 'The current player database is temporarily unavailable.';
+      }
     }
   });
 }

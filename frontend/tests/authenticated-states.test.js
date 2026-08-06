@@ -45,4 +45,10 @@ assert.match(
   'beta UI should mark the page ready after enhancement'
 );
 
+assert.match(
+  betaSource,
+  /result\.unavailable[\s\S]*cachedAuth\?\.token[\s\S]*dataset\.cffPrivateAuth = 'cached'/,
+  'private pages must remain viewable for signed-in users when auth validation is temporarily unavailable'
+);
+
 console.log('authenticated page state contracts passed');

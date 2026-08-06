@@ -238,7 +238,9 @@ function renderRecommended() {
   if (!canEnterDraftRoom()) return;
   if (!recommendedList) return;
   const usedIds = new Set([...getQueue(), ...getRoster()].map((player) => player.id));
-  const available = samplePlayers.filter((player) => !usedIds.has(player.id)).slice(0, 8);
+  const available = getAvailablePlayers()
+    .filter((player) => !usedIds.has(player.id))
+    .slice(0, 8);
   if (!available.length) {
     recommendedList.textContent = 'Every recommended player is queued or drafted.';
     return;
@@ -254,7 +256,7 @@ function renderRecommended() {
   `).join('');
   recommendedList.querySelectorAll('[data-queue]').forEach((button) => {
     button.addEventListener('click', async () => {
-      const player = samplePlayers.find((item) => item.id === button.dataset.queue);
+      const player = getAvailablePlayers().find((item) => String(item.id) === String(button.dataset.queue));
       if (!player) return;
       const nextQueue = [...getQueue().filter((item) => item.id !== player.id), normalizePlayer(player)];
       try {

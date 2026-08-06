@@ -268,7 +268,8 @@ function setAuthState(auth) {
 
 async function validateAuthSession() {
   const result = await validateAuthSessionResult();
-  return result.authenticated === true;
+  return result.authenticated === true
+    || (result.unavailable === true && result.expired !== true && Boolean(getAuthState()?.token));
 }
 
 async function validateAuthSessionResult() {
@@ -1694,9 +1695,10 @@ async function updateTradeStatusApi(tradeId, status) {
 
 async function getManagerRosterApi(managerEmail) {
   const league = getLeagueState();
-  if (!getAuthState()?.token || !league?.id || !managerEmail) {
+  if (!getAuthState()?.token || isLocalDemoSession()) {
     return samplePlayers.filter((player) => !getRoster().some((item) => item.id === player.id)).map(normalizePlayer);
   }
+  if (!league?.id || !managerEmail) return [];
   const roster = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/rosters/${encodeURIComponent(managerEmail)}`);
   return (roster || []).map(normalizePlayer);
 }

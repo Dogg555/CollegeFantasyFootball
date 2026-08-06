@@ -299,10 +299,18 @@
       if (result.authenticated) {
         hideAuthUnavailablePanel();
         document.documentElement.classList.remove('cff-private-pending');
+        delete document.documentElement.dataset.cffPrivateAuth;
         return true;
       }
 
       if (result.unavailable) {
+        const cachedAuth = typeof root.getAuthState === 'function' ? root.getAuthState() : null;
+        if (cachedAuth?.token && !result.expired) {
+          hideAuthUnavailablePanel();
+          document.documentElement.classList.remove('cff-private-pending');
+          document.documentElement.dataset.cffPrivateAuth = 'cached';
+          return true;
+        }
         await waitForRetry();
         hideAuthUnavailablePanel();
         privatePageRecovery = null;

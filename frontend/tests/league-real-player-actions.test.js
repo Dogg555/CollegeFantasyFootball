@@ -16,6 +16,12 @@ assert.match(
 
 assert.match(
   leagueSource,
+  /return isLocalDemoSession\(\)[\s\S]*samplePlayers\.find/,
+  'demo player fallback must be limited to explicit local demo sessions'
+);
+
+assert.match(
+  leagueSource,
   /const player = findAvailablePlayerById\(button\.dataset\.addFreeAgent\);/,
   'free-agent add buttons must support real server player ids, not only demo ids'
 );
@@ -24,6 +30,24 @@ assert.match(
   leagueSource,
   /const player = findAvailablePlayerById\(waiverAddPlayer\.value\);/,
   'waiver claims must submit the selected real server player object'
+);
+
+assert.doesNotMatch(
+  leagueSource,
+  /const available = roster\.length \? roster : samplePlayers/,
+  'trade target rosters must not substitute demo players when a real manager roster is empty'
+);
+
+assert.doesNotMatch(
+  leagueSource,
+  /let requestPlayer = samplePlayers\.find/,
+  'trade submission must resolve the requested player from the selected manager roster'
+);
+
+assert.match(
+  leagueSource,
+  /requestPlayer = targetRoster\.find\(\(item\) => String\(item\.id\) === String\(tradeRequestPlayerId\?\.value\)\) \|\| null;/,
+  'trade submission should support real server roster player ids'
 );
 
 assert.ok(

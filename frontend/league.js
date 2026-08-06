@@ -81,9 +81,11 @@ const tradeApproval = document.getElementById('trade-approval');
 
 function findAvailablePlayerById(playerId) {
   const selectedId = String(playerId || '');
-  return getAvailablePlayers().find((player) => String(player.id) === selectedId)
-    || samplePlayers.find((player) => String(player.id) === selectedId)
-    || null;
+  const availablePlayer = getAvailablePlayers().find((player) => String(player.id) === selectedId);
+  if (availablePlayer) return availablePlayer;
+  return isLocalDemoSession()
+    ? samplePlayers.find((player) => String(player.id) === selectedId) || null
+    : null;
 }
 const tradeExpiration = document.getElementById('trade-expiration');
 const managerList = document.getElementById('manager-list');
@@ -569,15 +571,17 @@ async function renderRequestedTradePlayers() {
   tradeRequestPlayerId.innerHTML = '<option value="">Loading roster...</option>';
   try {
     const roster = await getManagerRosterApi(target);
-    const available = roster.length ? roster : samplePlayers.filter((player) => !getRoster().some((item) => item.id === player.id));
-    tradeRequestPlayerId.innerHTML = available
+    if (!roster.length) {
+      tradeRequestPlayerId.innerHTML = '<option value="">No tradeable players</option>';
+      tradeRequestPlayerId.disabled = true;
+      return;
+    }
+    tradeRequestPlayerId.innerHTML = roster
       .map((player) => `<option value="${player.id}">${player.name} (${player.position})</option>`)
       .join('');
   } catch {
-    const fallback = samplePlayers.filter((player) => !getRoster().some((item) => item.id === player.id));
-    tradeRequestPlayerId.innerHTML = fallback
-      .map((player) => `<option value="${player.id}">${player.name} (${player.position})</option>`)
-      .join('');
+    tradeRequestPlayerId.innerHTML = '<option value="">Roster unavailable</option>';
+    tradeRequestPlayerId.disabled = true;
   }
 }
 
@@ -1475,12 +1479,12 @@ tradeForm?.addEventListener('submit', async (event) => {
     return;
   }
   let ok = false;
-  let requestPlayer = samplePlayers.find((item) => item.id === tradeRequestPlayerId?.value);
+  let requestPlayer = null;
   try {
     const targetRoster = await getManagerRosterApi(tradeTargetManager.value);
-    requestPlayer = targetRoster.find((item) => item.id === tradeRequestPlayerId?.value) || requestPlayer;
+    requestPlayer = targetRoster.find((item) => String(item.id) === String(tradeRequestPlayerId?.value)) || null;
   } catch {
-    // Keep the sample fallback selected above.
+    requestPlayer = null;
   }
   try {
     ok = await submitTradeOfferApi(tradeOfferPlayer.value, tradeRequestPlayer.value.trim(), tradeTargetManager.value, requestPlayer, tradeNote?.value.trim() || '');

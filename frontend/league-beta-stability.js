@@ -292,7 +292,7 @@
       <div class="card__header">
         <div>
           <h2>Join a league</h2>
-          <div class="muted small">Enter the commissioner’s join code. Uninvited accounts send an approval request.</div>
+          <div class="muted small">Enter the commissioner's join code. Uninvited accounts send an approval request.</div>
         </div>
         <span class="pill pill--muted">Join code</span>
       </div>
@@ -326,7 +326,7 @@
       }
       const button = form.querySelector('button[type="submit"]');
       button.disabled = true;
-      status.textContent = 'Checking league code…';
+      status.textContent = 'Checking league code...';
       try {
         const joined = await window.joinLeagueApi(code);
         if (joined?.joinStatus === 'pending_approval') {
@@ -364,7 +364,7 @@
       panel.className = 'row';
       settings.querySelector('.card__header')?.insertAdjacentElement('afterend', panel);
     }
-    panel.innerHTML = '<div><strong>League join code</strong><div class="muted">Loading…</div></div>';
+    panel.innerHTML = '<div><strong>League join code</strong><div class="muted">Loading...</div></div>';
     try {
       let info = joinInfoCache.get(league.id);
       if (!info) {

@@ -114,6 +114,19 @@ async function testServiceUnavailablePreservesSession() {
     'temporary 503 outage should preserve the session for retry');
 }
 
+async function testUnavailableValidationAllowsCachedSession() {
+  const response = {
+    ok: false,
+    status: 503,
+    async json() { return { error: 'Authentication service is temporarily unavailable' }; },
+    headers: { get() { return ''; } }
+  };
+  const { context } = createContext(async () => response);
+  const authenticated = await vm.runInContext('validateAuthSession()', context);
+  assert.equal(authenticated, true,
+    'page startup should continue with a cached token during temporary auth validation outages');
+}
+
 async function testNetworkFailurePreservesSession() {
   const { context, sessionStorage } = createContext(async () => {
     throw new TypeError('Failed to fetch');
@@ -167,6 +180,7 @@ async function testUnauthorizedStillClearsSession() {
 (async () => {
   await testHungValidationTimesOut();
   await testServiceUnavailablePreservesSession();
+  await testUnavailableValidationAllowsCachedSession();
   await testNetworkFailurePreservesSession();
   await testSuccessfulValidationKeepsSession();
   await testUnauthorizedStillClearsSession();
