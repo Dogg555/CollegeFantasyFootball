@@ -25,7 +25,7 @@ def main() -> None:
     require(
         lock_header,
         '"/api/leagues/{1}/lineup-locks"',
-        "scheduled.start_date <= NOW()",
+        "game.start_date <= NOW()",
         "scheduled.season = $3::int",
         "scheduled.week = $4::int",
         "lineup_week_states",
