@@ -57,6 +57,8 @@ add_executable(college_ff_server
     src/stat_ingestion_hardening.cpp
     src/public_routes.cpp
     src/league_beta_stability.cpp
+    src/commissioner_controls.cpp
+    src/commissioner_routes.cpp
     src/team_name_handler.cpp
     src/json_utils.cpp
     src/handlers/league_handler.cpp
@@ -262,6 +264,14 @@ if (BUILD_TESTING)
     target_include_directories(stat_ingestion_lifecycle_tests PRIVATE src)
     target_link_libraries(stat_ingestion_lifecycle_tests PRIVATE Drogon::Drogon)
     add_test(NAME stat_ingestion_lifecycle_tests COMMAND stat_ingestion_lifecycle_tests)
+
+
+    add_executable(commissioner_controls_tests
+        tests/commissioner_controls_tests.cpp
+        src/commissioner_controls.cpp
+    )
+    target_include_directories(commissioner_controls_tests PRIVATE src)
+    add_test(NAME commissioner_controls_tests COMMAND commissioner_controls_tests)
 
 
     add_executable(league_roster_tests
