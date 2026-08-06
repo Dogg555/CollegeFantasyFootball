@@ -1,0 +1,56 @@
+name: Authoritative league context contracts
+
+on:
+  push:
+    branches: [Test]
+    paths:
+      - "backend/src/app_composition.cpp"
+      - "backend/src/league_context.h"
+      - "backend/src/league_context_routes.h"
+      - "backend/tests/league_context_contract_tests.py"
+      - "frontend/config.js"
+      - "frontend/league-context-authority.js"
+      - "frontend/tests/league-context-authority.test.js"
+      - ".github/workflows/league-context-authority.yml"
+  pull_request:
+    branches: [Test]
+    paths:
+      - "backend/src/app_composition.cpp"
+      - "backend/src/league_context.h"
+      - "backend/src/league_context_routes.h"
+      - "backend/tests/league_context_contract_tests.py"
+      - "frontend/config.js"
+      - "frontend/league-context-authority.js"
+      - "frontend/tests/league-context-authority.test.js"
+      - ".github/workflows/league-context-authority.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: league-context-authority-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Context route and frontend authority
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax checks
+        run: |
+          node --check frontend/league-context-authority.js
+          node --check frontend/tests/league-context-authority.test.js
+          python -m py_compile backend/tests/league_context_contract_tests.py
+      - name: Run authority contracts
+        run: |
+          node frontend/tests/league-context-authority.test.js
+          python backend/tests/league_context_contract_tests.py
