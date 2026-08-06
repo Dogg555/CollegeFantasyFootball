@@ -308,9 +308,12 @@
         requestId: String(context.requestId || ''),
         committedAt: Number(context.committedAt || now())
       };
+      const status = currentStatus();
       publish({
-        health: online() ? 'recovering' : 'offline',
-        writable: online(),
+        health: online()
+          ? (status.health === 'healthy' ? 'healthy' : 'recovering')
+          : 'offline',
+        writable: Boolean(online() && status.writable === true),
         lastMutationCommittedAt: new Date(recentCommit.committedAt).toISOString(),
         lastMutationPath: recentCommit.path,
         lastMutationRequestId: recentCommit.requestId
@@ -600,7 +603,9 @@
               leagueId: leagueIdFromPath(path) || activeLeagueId(),
               requestId: options.cffRequestId || result?.requestId || result?.correlationId || ''
             });
-            if (applied.length) publish({ health: 'healthy', writable: true });
+            if (applied.length && currentStatus().writable === true) {
+              publish({ health: 'healthy', writable: true });
+            }
           } else if (syncProbeDepth === 0
               && isServerSession(rootObject)
               && normalizePath(path).startsWith('/leagues')) {
