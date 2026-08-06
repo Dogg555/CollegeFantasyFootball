@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <unordered_set>
 
 namespace cff::trade_lifecycle {
 
@@ -161,9 +162,30 @@ TransitionDecision decideTransition(const std::string &currentStatus,
 
 bool validOfferPlayers(const std::string &offeredPlayerId,
                        const std::string &requestedPlayerId) {
-    const auto offered = canonicalPlayerId(offeredPlayerId);
-    const auto requested = canonicalPlayerId(requestedPlayerId);
-    return !offered.empty() && !requested.empty() && offered != requested;
+    return validOfferPlayerPackages({offeredPlayerId}, {requestedPlayerId}, 1);
+}
+
+bool validOfferPlayerPackages(const std::vector<std::string> &offeredPlayerIds,
+                              const std::vector<std::string> &requestedPlayerIds,
+                              std::size_t maximumPerSide) {
+    if (maximumPerSide == 0
+        || offeredPlayerIds.empty()
+        || requestedPlayerIds.empty()
+        || offeredPlayerIds.size() > maximumPerSide
+        || requestedPlayerIds.size() > maximumPerSide) {
+        return false;
+    }
+
+    std::unordered_set<std::string> players;
+    players.reserve(offeredPlayerIds.size() + requestedPlayerIds.size());
+    const auto appendPackage = [&players](const std::vector<std::string> &ids) {
+        for (const auto &rawId : ids) {
+            const auto id = canonicalPlayerId(rawId);
+            if (id.empty() || !players.insert(id).second) return false;
+        }
+        return true;
+    };
+    return appendPackage(offeredPlayerIds) && appendPackage(requestedPlayerIds);
 }
 
 } // namespace cff::trade_lifecycle
