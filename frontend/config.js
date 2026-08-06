@@ -27,11 +27,22 @@ if (typeof window.apiCacheMeta !== 'function') {
 }
 
 if (typeof window.mutationControlsDisabled !== 'function') {
-  window.mutationControlsDisabled = () => false;
+  window.mutationControlsDisabled = () => {
+    try {
+      const auth = JSON.parse(window.sessionStorage.getItem('cff_auth') || 'null');
+      const token = String(auth?.token || '');
+      return Boolean(token && !token.startsWith('local-demo-'));
+    } catch {
+      return true;
+    }
+  };
 }
 
 if (typeof window.mutationErrorMessage !== 'function') {
   window.mutationErrorMessage = (error, fallback = 'Request failed. No local changes were made.') => {
+    if (error?.mutationCommitted) {
+      return 'The server saved the change, but the latest data could not be refreshed. Refresh before making another change.';
+    }
     if (error?.status === 429) {
       const retry = error.retryAfter ? ` Retry after ${error.retryAfter} seconds.` : ' Try again later.';
       return `Too many requests.${retry}`;
@@ -46,8 +57,8 @@ if (typeof window.mutationErrorMessage !== 'function') {
 (() => {
   // Keep dependency-sensitive modules contiguous so contract checks and runtime
   // loading agree after stacked PR merges.
-  const baseScripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'lineup-management.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js'];
-  const scripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'lineup-management.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
+  const baseScripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'snake-draft-only.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'multi-player-trades.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'commissioner-controls.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js'];
+  const scripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'snake-draft-only.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'multi-player-trades.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'commissioner-controls.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
   const styles = [
     ['polish.css', 'cffPolish', 'data-cff-polish="true"'],
     ['beta-ui.css', 'cffBeta', 'data-cff-beta="true"'],

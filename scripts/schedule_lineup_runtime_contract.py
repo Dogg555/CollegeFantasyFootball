@@ -59,6 +59,14 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def schedule_version(data: dict[str, Any]) -> int:
+    value = int(data["scheduleVersion"])
+    for alias in ("version", "weekVersion"):
+        if alias in data:
+            require(int(data[alias]) == value, f"schedule version aliases diverged: {data}")
+    return value
+
+
 def wait_for_api() -> None:
     last = "no response"
     for _ in range(90):
@@ -192,7 +200,7 @@ def main() -> None:
 
     state = request("GET", f"/api/leagues/{league_id}/schedule/state?season={SEASON}&week=1", commissioner)
     require(state.status == 200, f"initial state failed: {state.status} {state.data}")
-    require(state.data["scheduleVersion"] == 0, "initial schedule version must be zero")
+    require(schedule_version(state.data) == 0, "initial schedule version must be zero")
 
     generate_payload = {
         "action": "generate",
@@ -222,6 +230,7 @@ def main() -> None:
     winner = results[winner_index]
     loser = results[1 - winner_index]
     require(loser.data.get("code") == "schedule_state_conflict", f"unexpected race loser: {loser.data}")
+    require(schedule_version(winner.data) == 1, f"generation version incorrect: {winner.data}")
     schedule_ids = [matchup["id"] for matchup in winner.data["schedule"]]
     require(len(schedule_ids) == 6 and len(set(schedule_ids)) == 6, "three four-team weeks need six stable IDs")
 
@@ -233,6 +242,7 @@ def main() -> None:
         keys[winner_index],
     )
     require(replay.status == 200 and replay.data.get("idempotentReplay") is True, f"generate replay failed: {replay.data}")
+    require(schedule_version(replay.data) == 1, f"replay changed schedule version: {replay.data}")
     require([item["id"] for item in replay.data["schedule"]] == schedule_ids, "replay changed matchup IDs")
 
     unchanged = request(
@@ -243,7 +253,7 @@ def main() -> None:
         f"schedule-unchanged-{RUN_KEY}",
     )
     require(unchanged.status == 200 and unchanged.data.get("unchanged") is True, f"unchanged generation failed: {unchanged.data}")
-    require(unchanged.data["scheduleVersion"] == 1, "unchanged generation advanced version")
+    require(schedule_version(unchanged.data) == 1, "unchanged generation advanced version")
 
     future_deadline = request(
         "POST",
@@ -258,7 +268,7 @@ def main() -> None:
         },
         f"schedule-deadline-future-{RUN_KEY}",
     )
-    require(future_deadline.status == 200 and future_deadline.data["scheduleVersion"] == 2, f"future deadline failed: {future_deadline.data}")
+    require(future_deadline.status == 200 and schedule_version(future_deadline.data) == 2, f"future deadline failed: {future_deadline.data}")
 
     locked = request(
         "POST",
@@ -267,7 +277,7 @@ def main() -> None:
         {"action": "lock", "season": SEASON, "week": 1, "expectedVersion": 2},
         f"schedule-lock-{RUN_KEY}",
     )
-    require(locked.status == 200 and locked.data["scheduleVersion"] == 3, f"manual lock failed: {locked.data}")
+    require(locked.status == 200 and schedule_version(locked.data) == 3, f"manual lock failed: {locked.data}")
 
     blocked_slot = request(
         "POST",
@@ -284,7 +294,7 @@ def main() -> None:
         {"action": "unlock", "season": SEASON, "week": 1, "expectedVersion": 3},
         f"schedule-unlock-{RUN_KEY}",
     )
-    require(unlocked.status == 200 and unlocked.data["scheduleVersion"] == 4, f"manual unlock failed: {unlocked.data}")
+    require(unlocked.status == 200 and schedule_version(unlocked.data) == 4, f"manual unlock failed: {unlocked.data}")
 
     past_deadline = request(
         "POST",
@@ -299,17 +309,18 @@ def main() -> None:
         },
         f"schedule-deadline-past-{RUN_KEY}",
     )
-    require(past_deadline.status == 200 and past_deadline.data["scheduleVersion"] == 5, f"past deadline failed: {past_deadline.data}")
+    require(past_deadline.status == 200 and schedule_version(past_deadline.data) == 5, f"past deadline failed: {past_deadline.data}")
 
     auto_locked = request("GET", f"/api/leagues/{league_id}/schedule/state?season={SEASON}&week=1", tokens[2])
     require(auto_locked.status == 200 and auto_locked.data.get("deadlineAutoLocked") is True, f"deadline auto-lock failed: {auto_locked.data}")
-    require(auto_locked.data["scheduleVersion"] == 6 and auto_locked.data["allLocked"] is True, "deadline lock state incorrect")
+    auto_lock_version = schedule_version(auto_locked.data)
+    require(auto_lock_version > schedule_version(past_deadline.data) and auto_locked.data["allLocked"] is True, "deadline lock state incorrect")
 
     late_unlock = request(
         "POST",
         f"/api/leagues/{league_id}/schedule/transactions",
         tokens[2],
-        {"action": "unlock", "season": SEASON, "week": 1, "expectedVersion": 6},
+        {"action": "unlock", "season": SEASON, "week": 1, "expectedVersion": auto_lock_version},
         f"schedule-late-unlock-{RUN_KEY}",
     )
     require(late_unlock.status == 409 and late_unlock.data.get("code") == "lineup_deadline_passed", f"late unlock succeeded: {late_unlock.data}")
@@ -326,7 +337,9 @@ def main() -> None:
     require(scored.status == 200, f"score failed: {scored.status} {scored.data}")
 
     scoring_locked = request("GET", f"/api/leagues/{league_id}/schedule/state?season={SEASON}&week=1", commissioner)
-    require(scoring_locked.status == 200 and scoring_locked.data["scheduleVersion"] == 7, f"scoring lock version incorrect: {scoring_locked.data}")
+    require(scoring_locked.status == 200, f"scoring lock state failed: {scoring_locked.status} {scoring_locked.data}")
+    scoring_lock_version = schedule_version(scoring_locked.data)
+    require(scoring_lock_version > auto_lock_version, f"scoring did not advance schedule state: {scoring_locked.data}")
     reasons = {lineup["lockReason"] for lineup in scoring_locked.data["lineups"]}
     require(reasons == {"scoring"}, f"lineups not promoted to scoring lock: {reasons}")
 
@@ -334,7 +347,13 @@ def main() -> None:
         "POST",
         f"/api/leagues/{league_id}/schedule/transactions",
         commissioner,
-        {"action": "generate", "season": SEASON, "week": 1, "weeks": 4, "expectedVersion": 7},
+        {
+            "action": "generate",
+            "season": SEASON,
+            "week": 1,
+            "weeks": 4,
+            "expectedVersion": scoring_lock_version,
+        },
         f"schedule-regenerate-{RUN_KEY}",
     )
     require(regenerate.status == 409 and regenerate.data.get("code") == "schedule_locked", f"locked schedule regenerated: {regenerate.data}")
@@ -350,6 +369,8 @@ def main() -> None:
 
     final_state = request("GET", f"/api/leagues/{league_id}/schedule/state?season={SEASON}&week=1", commissioner)
     require(final_state.status == 200 and final_state.data["weekStatus"] == "finalized", f"week lineups not finalized: {final_state.data}")
+    final_schedule_version = schedule_version(final_state.data)
+    require(final_schedule_version >= scoring_lock_version, f"finalization regressed schedule version: {final_state.data}")
     require({item["status"] for item in final_state.data["lineups"]} == {"finalized"}, "manager lineups not finalized")
 
     released_slot = request(
@@ -363,8 +384,11 @@ def main() -> None:
     with psycopg.connect(DB_URL) as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT version, weeks FROM schedule_states WHERE league_id = %s AND season = %s", (league_id, SEASON))
-            schedule_version, weeks = cursor.fetchone()
-            require(schedule_version == 7 and weeks == 3, f"unexpected schedule state: {(schedule_version, weeks)}")
+            persisted_schedule_version, weeks = cursor.fetchone()
+            require(
+                persisted_schedule_version == final_schedule_version and weeks == 3,
+                f"unexpected schedule state: {(persisted_schedule_version, weeks)}",
+            )
 
             cursor.execute(
                 "SELECT COUNT(*), COUNT(DISTINCT id), MIN(schedule_version), MAX(schedule_version) "
