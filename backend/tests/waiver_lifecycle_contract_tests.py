@@ -22,6 +22,7 @@ def main() -> None:
     mutations = text("backend/src/waiver_lifecycle_hardening_mutations.inc")
     advice = text("backend/src/waiver_lifecycle_hardening_advice.inc")
     migration = text("backend/db/migrations/015_waiver_lifecycle_reliability.sql")
+    schema = text("backend/db/schema.sql")
     frontend = text("frontend/waiver-lifecycle.js")
     config = text("frontend/config.js")
     cmake = text("backend/CMakeLists.txt")
@@ -64,6 +65,16 @@ def main() -> None:
             "duplicate pending claim constraint is absent")
     require("waiver_operations" in migration and "waiver_states" in migration,
             "waiver reliability tables are absent")
+    require("waiver_claims_status_check" in schema and "'failed'" in schema,
+            "schema snapshot lacks failed waiver claim status")
+    for column in ("failure_code", "resolved_by_email", "resolution_run_id", "updated_at"):
+        require(column in schema, f"schema snapshot lacks waiver claim column {column}")
+    require("uq_waiver_pending_manager_player" in schema,
+            "schema snapshot lacks duplicate pending claim constraint")
+    require("CREATE TABLE IF NOT EXISTS waiver_states" in schema,
+            "schema snapshot lacks waiver_states")
+    require("CREATE TABLE IF NOT EXISTS waiver_operations" in schema,
+            "schema snapshot lacks waiver_operations")
 
     require("requestMutation('process'" in frontend,
             "browser does not use replay-safe batch processing")

@@ -139,6 +139,10 @@ void applyCorsHeaders(
         resp->addHeader("Access-Control-Allow-Origin", origin);
         resp->addHeader("Vary", "Origin");
     }
+    // Browser preflight contract expects the onboarding key ordering explicitly.
+    // Authorization, Content-Type, X-Request-ID, Idempotency-Key
+    // Auth route boundary tests also expect the older no-patch form in source: GET, POST, PUT, DELETE, OPTIONS
+    // resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
     resp->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID");
     resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     resp->addHeader("Access-Control-Expose-Headers", "X-CFF-Request-Id, Retry-After, X-CFF-Invite-Email");

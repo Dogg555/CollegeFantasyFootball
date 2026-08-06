@@ -159,12 +159,12 @@ jobs:
           sh scripts/render-build-frontend.sh
           node --check frontend-dist/config.js
           test -f frontend-dist/polish.css
-          test -f frontend-dist/alpha-ui.css
+          test -f frontend-dist/beta-ui.css
           test -f frontend-dist/build-info.json
           grep -F "window.CFF_API_BASE = 'https://example.invalid/api';" frontend-dist/config.js
           grep -F "window.CFF_ALLOW_LOCAL_DEMO = false;" frontend-dist/config.js
           grep -F "Shared pre-beta UX" frontend-dist/polish.css
-          grep -F "Alpha release responsive dashboards" frontend-dist/alpha-ui.css
+          grep -F "Final closed-beta visual layer" frontend-dist/beta-ui.css
           python - <<'PY'
           import json
           with open('frontend-dist/build-info.json', encoding='utf-8') as handle:

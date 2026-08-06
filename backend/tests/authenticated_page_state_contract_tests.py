@@ -2,7 +2,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ALPHA = ROOT / "frontend" / "alpha-ui.js"
+BETA = ROOT / "frontend" / "beta-ui.js"
 STYLES = ROOT / "frontend" / "authenticated-states.css"
 
 
@@ -11,24 +11,24 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-alpha = ALPHA.read_text(encoding="utf-8")
+beta = BETA.read_text(encoding="utf-8")
 styles = STYLES.read_text(encoding="utf-8")
 
-require("installAuthenticatedStateController" in alpha,
+require("installAuthenticatedStateController" in beta,
         "authenticated pages do not share one state controller")
-require("root.apiRequest = async function trackedApiRequest" in alpha,
+require("root.apiRequest = async function trackedApiRequest" in beta,
         "API requests are not routed through consistent loading and result states")
-require("const readOnly = method === 'GET'" in alpha,
+require("const readOnly = method === 'GET'" in beta,
         "read-only refreshes are not separated from mutations")
-require("root.location.reload()" in alpha,
+require("root.location.reload()" in beta,
         "failed refresh state does not provide a safe read-only retry")
-require("No local success state was recorded" in alpha,
+require("No local success state was recorded" in beta,
         "mutation failures can be mistaken for successful local changes")
-require("The server confirmed this update" in alpha,
+require("The server confirmed this update" in beta,
         "successful mutations do not expose a consistent confirmation")
-require("setAttribute('aria-busy', 'true')" in alpha,
+require("setAttribute('aria-busy', 'true')" in beta,
         "authenticated page loading is not exposed to assistive technology")
-require("new MutationObserver(queueEmptyStateScan)" in alpha,
+require("new MutationObserver(queueEmptyStateScan)" in beta,
         "rendered collections are not normalized into shared empty states")
 
 for target in (
@@ -47,7 +47,7 @@ for target in (
     "upcoming-pick-list",
     "recommended-list",
 ):
-    require(f"'{target}'" in alpha, f"missing authenticated empty-state contract for {target}")
+    require(f"'{target}'" in beta, f"missing authenticated empty-state contract for {target}")
 
 for selector in (
     ".cff-page-state",

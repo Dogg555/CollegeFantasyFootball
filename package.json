@@ -1,0 +1,14 @@
+{
+  "name": "college-fantasy-football",
+  "version": "0.0.0",
+  "private": true,
+  "description": "College Fantasy Football app test harness.",
+  "scripts": {
+    "test": "npm run test:frontend",
+    "test:frontend": "node -e \"const { spawnSync } = require('node:child_process'); const { readdirSync } = require('node:fs'); const { join } = require('node:path'); for (const file of readdirSync('frontend/tests').filter((name) => name.endsWith('.test.js')).sort()) { console.log('Running ' + file); const result = spawnSync(process.execPath, [join('frontend/tests', file)], { stdio: 'inherit' }); if (result.status) process.exit(result.status); }\"",
+    "check:frontend": "node -e \"const { spawnSync } = require('node:child_process'); const { readdirSync } = require('node:fs'); const { join } = require('node:path'); for (const file of readdirSync('frontend/tests').filter((name) => name.endsWith('.test.js')).sort()) { console.log('Checking ' + file); const result = spawnSync(process.execPath, ['--check', join('frontend/tests', file)], { stdio: 'inherit' }); if (result.status) process.exit(result.status); }\""
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

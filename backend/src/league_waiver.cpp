@@ -88,7 +88,7 @@ Json::Value buildPriorityBoard(const Json::Value &members) {
     Json::Value priorities(Json::arrayValue);
     int priority = 1;
     for (const auto &member : members) {
-        if (lowerString(cff::getStringOrDefault(member, "status", "Active")) == "removed") {
+        if (lowerString(cff::getStringOrDefault(member, "status", "Active")) != "active") {
             continue;
         }
         Json::Value item;

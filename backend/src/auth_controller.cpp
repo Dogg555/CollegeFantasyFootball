@@ -340,7 +340,16 @@ void handleLogout(const drogon::HttpRequestPtr &req,
         callback(resp);
         return;
     }
-    cff::auth::revokeSessionToken(token);
+    if (!cff::auth::revokeSessionToken(token)) {
+        Json::Value error;
+        error["error"] = "Authentication service is temporarily unavailable";
+        error["loggedOutLocally"] = true;
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k503ServiceUnavailable);
+        resp->addHeader("Retry-After", "5");
+        callback(resp);
+        return;
+    }
     Json::Value payload;
     payload["status"] = "ok";
     auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);

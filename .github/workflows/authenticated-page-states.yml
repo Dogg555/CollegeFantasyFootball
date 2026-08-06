@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, Test]
     paths:
-      - "frontend/alpha-ui.js"
+      - "frontend/beta-ui.js"
       - "frontend/authenticated-states.css"
       - "frontend/tests/authenticated-states.test.js"
       - "backend/tests/authenticated_page_state_contract_tests.py"
@@ -12,7 +12,7 @@ on:
   pull_request:
     branches: [main, Test]
     paths:
-      - "frontend/alpha-ui.js"
+      - "frontend/beta-ui.js"
       - "frontend/authenticated-states.css"
       - "frontend/tests/authenticated-states.test.js"
       - "backend/tests/authenticated_page_state_contract_tests.py"
@@ -44,7 +44,7 @@ jobs:
 
       - name: Validate state sources
         run: |
-          node --check frontend/alpha-ui.js
+          node --check frontend/beta-ui.js
           node --check frontend/tests/authenticated-states.test.js
           python -m py_compile backend/tests/authenticated_page_state_contract_tests.py
 

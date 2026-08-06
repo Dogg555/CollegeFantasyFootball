@@ -232,7 +232,8 @@ std::optional<std::string> emailForSessionToken(const std::string &token) {
     return it->second.email;
 }
 
-void revokeSessionToken(const std::string &token) {
+bool revokeSessionToken(const std::string &token) {
+    bool persistentRevocationConfirmed = true;
     {
         std::lock_guard<std::mutex> lock(sessionMutex);
         const auto now = std::chrono::steady_clock::now();
@@ -241,11 +242,21 @@ void revokeSessionToken(const std::string &token) {
         revokedTokens[token] = now + kTokenTtl;
     }
 #ifdef CFF_HAS_POSTGRES
-    if (databaseConfigured() && !revokeDatabaseToken(token)) {
-        std::cerr << "[auth] persistent token revocation could not be confirmed; "
-                  << "the token remains denied in this process" << std::endl;
+    if (databaseConfigured()) {
+        persistentRevocationConfirmed = revokeDatabaseToken(token);
+        if (!persistentRevocationConfirmed) {
+            std::cerr << "[auth] persistent token revocation could not be confirmed; "
+                      << "the token remains denied in this process" << std::endl;
+        }
+    } else if (cff::config::persistentDbRequired()) {
+        persistentRevocationConfirmed = false;
+    }
+#else
+    if (cff::config::persistentDbRequired()) {
+        persistentRevocationConfirmed = false;
     }
 #endif
+    return persistentRevocationConfirmed;
 }
 
 } // namespace cff::auth

@@ -46,14 +46,38 @@ std::pair<std::string, std::string> normalizedPair(const Json::Value &matchup) {
 void testActiveMemberCompatibility() {
     const auto result = cff::league_schedule::activeMembers(members({
         member("active@example.com"),
+        member("active-upper@example.com", "ACTIVE"),
         member("invited@example.com", "Invited"),
+        member("pending@example.com", "Pending"),
         member("removed-upper@example.com", "Removed"),
         member("removed-lower@example.com", "removed")
     }));
 
-    expect(result.size() == 2, "removed members must stay excluded");
+    expect(result.size() == 2, "only active members must be eligible for schedules");
     expect(result[0]["email"].asString() == "active@example.com", "active member order changed");
-    expect(result[1]["email"].asString() == "invited@example.com", "legacy non-removed membership behavior changed");
+    expect(result[1]["email"].asString() == "active-upper@example.com", "active status matching must be case-insensitive");
+}
+
+void testPendingMembersDoNotReceiveMatchups() {
+    const auto schedule = cff::league_schedule::buildSeasonSchedule(
+        members({
+            member("a@example.com"),
+            member("b@example.com"),
+            member("pending@example.com", "Pending"),
+            member("invited@example.com", "Invited")
+        }),
+        "league-active-only",
+        1,
+        [](const std::string &) { return 0.0; }
+    );
+
+    expect(schedule.size() == 1, "pending or invited members must not create fantasy matchups");
+    expect(schedule[0]["homeManager"].asString() == "a@example.com"
+               || schedule[0]["awayManager"].asString() == "a@example.com",
+           "active manager a must remain scheduled");
+    expect(schedule[0]["homeManager"].asString() == "b@example.com"
+               || schedule[0]["awayManager"].asString() == "b@example.com",
+           "active manager b must remain scheduled");
 }
 
 void testFourTeamRoundRobin() {
@@ -182,6 +206,7 @@ void testSnakeDraftTurns() {
 
 int main() {
     testActiveMemberCompatibility();
+    testPendingMembersDoNotReceiveMatchups();
     testFourTeamRoundRobin();
     testSixTeamRoundRobin();
     testOddTeamByes();

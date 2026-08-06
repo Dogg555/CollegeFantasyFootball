@@ -115,7 +115,9 @@ void testProcessingOrderPolicy() {
 void testPriorityBoardPolicy() {
     Json::Value members(Json::arrayValue);
     members.append(member("owner@example.com", "Active", "commissioner"));
+    members.append(member("active-upper@example.com", "ACTIVE"));
     members.append(member("invited@example.com", "Invited"));
+    members.append(member("pending@example.com", "Pending"));
     members.append(member("removed-upper@example.com", "Removed"));
     members.append(member("removed-lower@example.com", "removed"));
     Json::Value defaults(Json::objectValue);
@@ -123,15 +125,15 @@ void testPriorityBoardPolicy() {
     members.append(defaults);
 
     const auto board = cff::league_waiver::buildPriorityBoard(members);
-    expect(board.size() == 3, "removed members must be excluded case-insensitively");
+    expect(board.size() == 3, "only active members must receive waiver priority");
     expect(board[0]["managerEmail"].asString() == "owner@example.com"
                && board[0]["priority"].asInt() == 1
                && board[0]["role"].asString() == "commissioner",
            "commissioner priority entry changed");
-    expect(board[1]["managerEmail"].asString() == "invited@example.com"
+    expect(board[1]["managerEmail"].asString() == "active-upper@example.com"
                && board[1]["priority"].asInt() == 2
-               && board[1]["status"].asString() == "Invited",
-           "legacy non-removed membership compatibility changed");
+               && board[1]["status"].asString() == "ACTIVE",
+           "active status matching must be case-insensitive");
     expect(board[2]["managerEmail"].asString() == "defaults@example.com"
                && board[2]["priority"].asInt() == 3
                && board[2]["role"].asString() == "member"

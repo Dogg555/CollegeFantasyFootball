@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Your League - College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
-  <link rel="stylesheet" href="alpha-ui.css" />
+  <link rel="stylesheet" href="beta-ui.css" />
 </head>
 <body>
   <div class="topbar">
@@ -28,7 +28,7 @@
     </div>
   </div>
 
-  <main class="layout league-dashboard" style="max-width: 1080px">
+  <main class="layout layout--page league-dashboard">
     <section class="card card--accent" id="invite-flow" hidden>
       <div class="card__header">
         <div>
@@ -38,7 +38,7 @@
         <span class="pill" id="invite-flow-status">Invite</span>
       </div>
       <div id="invite-flow-detail" class="list"></div>
-      <div class="cta-row" style="margin-top: 12px">
+      <div class="cta-row section-actions">
         <button class="button button--primary" id="join-invite-now" type="button">Join league</button>
         <a class="button button--ghost" id="invite-signin-link" href="signin.html">Sign in</a>
       </div>
@@ -112,7 +112,7 @@
           </div>
         </div>
       </div>
-      <div class="cta-row" style="margin-top: 16px">
+      <div class="cta-row section-actions">
         <a class="button button--ghost" href="index.html">Create another league</a>
         <button class="button button--ghost" id="clear-league" type="button">Clear saved league</button>
       </div>
@@ -138,7 +138,7 @@
         <span class="pill">Roster</span>
       </div>
       <div id="team-roster" class="list">No players drafted yet.</div>
-      <div class="cta-row" style="margin-top: 12px">
+      <div class="cta-row section-actions">
         <a class="button button--primary" href="players.html">Add players</a>
         <a class="button" id="team-draft-link" href="draft.html">Open draft room</a>
       </div>
@@ -290,7 +290,7 @@
         <span class="pill pill--muted" id="league-count">0 / 3</span>
       </div>
       <div id="league-list" class="list">No leagues yet.</div>
-      <div class="cta-row" style="margin-top: 12px">
+      <div class="cta-row section-actions">
         <a class="button button--primary" id="create-league-link" href="index.html">Create league</a>
       </div>
     </section>
@@ -480,7 +480,7 @@
         <span class="pill pill--muted" id="manager-count">0</span>
       </div>
       <div id="manager-list" class="list">No managers invited yet.</div>
-      <div class="cta-row" style="margin-top: 12px">
+      <div class="cta-row section-actions">
         <button class="button button--primary" id="copy-invite-link" type="button">Copy invite link</button>
         <div class="muted small" id="invite-link-status" role="status"></div>
       </div>
@@ -535,7 +535,6 @@
   </footer>
   <script src="config.js"></script>
   <script src="state.js"></script>
-  <script src="alpha-ui.js"></script>
   <script src="league.js"></script>
 </body>
 </html>

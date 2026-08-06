@@ -10,7 +10,7 @@ def text(path):
 
 render = text("render.yaml")
 ci = text(".github/workflows/ci.yml")
-main = text("backend/src/main.cpp")
+public_routes = text("backend/src/public_routes.cpp")
 player_h = text("backend/src/player_catalog.h")
 player_cpp = text("backend/src/player_catalog.cpp")
 cfbd_ingest = text("backend/src/cfbd_ingest.cpp")
@@ -21,8 +21,6 @@ players = text("frontend/players.html")
 players_js = text("frontend/players.js")
 draft = text("frontend/draft.html")
 league = text("frontend/league.html")
-alpha_css = text("frontend/alpha-ui.css")
-alpha_js = text("frontend/alpha-ui.js")
 beta_css = text("frontend/beta-ui.css")
 beta_js = text("frontend/beta-ui.js")
 league_nav_css = text("frontend/league-nav.css")
@@ -33,10 +31,10 @@ favicon = text("frontend/assets/favicon.svg")
 
 assert 'schedule: "0 10 * * 2"' in render
 assert "roster['schedule'] == '0 10 * * 2'" in ci
-assert '"/api/players/meta"' in main
-assert '"/api/scores/live/meta"' in main
-assert 'getOptionalParam(req, "team")' in main
-assert 'req->getParameter("offset")' in main
+assert '"/api/players/meta"' in public_routes
+assert '"/api/scores/live/meta"' in public_routes
+assert 'getOptionalParam(request, "team")' in public_routes
+assert 'request->getParameter("offset")' in public_routes
 assert 'Json::Value playerCatalogMeta();' in player_h
 assert 'std::size_t offset = 0' in player_h
 assert 'OFFSET $' in player_cpp
@@ -56,10 +54,6 @@ assert "params.set('offset', String(offset))" in players_js or "offset: String(o
 assert 'data-mobile-collapsible' in draft
 assert 'draft-dashboard' in draft
 assert 'league-dashboard' in league
-assert 'league-tab-select' in alpha_js
-assert "new Set(['league.html', 'draft.html'])" in alpha_js
-assert 'assets/favicon.svg' in alpha_js
-assert 'data-cff-modern' in config
 assert 'assets/favicon.svg' in config
 assert 'beta-ui.css' in config
 assert 'beta-ui.js' in config
@@ -89,8 +83,7 @@ assert 'activity-member-card' in workspace_js
 assert 'commissioner && member.email' in workspace_js
 assert "managersTab.hidden = !commissioner" in workspace_js
 assert 'scrubVisibleMemberEmails' in workspace_js
-assert '@media (max-width: 760px)' in alpha_css
 assert '@media (max-width: 760px)' in beta_css
 assert '<svg' in favicon and 'linearGradient' in favicon
 assert (ROOT / 'docs/manual-alpha-lifecycle-test-plan.md').exists()
-print('Alpha UI, beta polish, grouped league navigation, draft navigation, member privacy, branding, data, cron, quota, and bulk-roster contracts passed')
+print('Beta UI, grouped league navigation, draft navigation, member privacy, branding, data, cron, quota, and bulk-roster contracts passed')

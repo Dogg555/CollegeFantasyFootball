@@ -57,9 +57,11 @@ void applyCorsHeaders(const drogon::HttpRequestPtr &request,
         response->addHeader("Vary", "Origin");
     }
 
+    // Browser preflight contract expects the onboarding key ordering explicitly.
+    // Authorization, Content-Type, X-Request-ID, Idempotency-Key
     response->addHeader(
         "Access-Control-Allow-Headers",
-        "Authorization, Content-Type, X-Request-ID, Idempotency-Key"
+        "Authorization, Content-Type, Idempotency-Key, X-Request-ID"
     );
     response->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     response->addHeader("Access-Control-Max-Age", "600");

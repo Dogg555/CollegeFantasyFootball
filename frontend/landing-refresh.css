@@ -60,10 +60,14 @@
 }
 
 .page-home .hero-proof span::before {
-  content: '✓';
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 12px;
   margin-right: 7px;
-  color: var(--accent);
-  font-weight: 900;
+  border: solid var(--accent);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 
 .page-home .product-shot--hero {

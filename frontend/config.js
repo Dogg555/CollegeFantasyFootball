@@ -46,10 +46,10 @@ if (typeof window.mutationErrorMessage !== 'function') {
 (() => {
   // Keep dependency-sensitive modules contiguous so contract checks and runtime
   // loading agree after stacked PR merges.
-  const scripts = ['api-client.js', 'authoritative-data.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'auth-session-sync.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
+  const baseScripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js'];
+  const scripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
   const styles = [
     ['polish.css', 'cffPolish', 'data-cff-polish="true"'],
-    ['alpha-ui.css', 'cffModern', 'data-cff-modern="true"'],
     ['beta-ui.css', 'cffBeta', 'data-cff-beta="true"'],
     ['league-nav.css', 'cffLeagueNav', 'data-cff-league-nav="true"'],
     ['workspace-ui.css', 'cffWorkspace', 'data-cff-workspace="true"'],
@@ -61,8 +61,21 @@ if (typeof window.mutationErrorMessage !== 'function') {
   const leagueSizeSelectIds = ['league-size', 'settings-teams'];
   const assetVersion = String(window.CFF_BUILD_COMMIT || '').replace(/[^A-Za-z0-9._-]/g, '');
 
+  function assetBase(value) {
+    return String(value || '').split('?')[0].split('/').pop();
+  }
+
+  document.documentElement.dataset.cffUiLayer = 'beta';
+
   function assetUrl(source) {
     return assetVersion ? `${source}?v=${encodeURIComponent(assetVersion)}` : source;
+  }
+
+  function hasAsset(selector, source) {
+    return [...document.querySelectorAll(selector)].some((node) => {
+      const value = node.getAttribute('href') || node.getAttribute('src');
+      return assetBase(value) === source;
+    });
   }
 
   function ensureBranding() {
@@ -109,13 +122,13 @@ if (typeof window.mutationErrorMessage !== 'function') {
 
   function writeStylesheet(href, attribute) {
     const versionedHref = assetUrl(href);
-    if (document.querySelector(`link[href="${versionedHref}"]`)) return;
+    if (hasAsset('link[href]', href)) return;
     document.write(`<link rel="stylesheet" href="${versionedHref}" ${attribute}>`);
   }
 
   function appendStylesheet(href, datasetKey) {
     const versionedHref = assetUrl(href);
-    if (document.querySelector(`link[href="${versionedHref}"]`)) return;
+    if (hasAsset('link[href]', href)) return;
     const stylesheet = document.createElement('link');
     stylesheet.rel = 'stylesheet';
     stylesheet.href = versionedHref;
@@ -126,7 +139,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
   function appendScript(source) {
     return new Promise((resolve, reject) => {
       const versionedSource = assetUrl(source);
-      if (document.querySelector(`script[src="${versionedSource}"]`)) {
+      if (hasAsset('script[src]', source)) {
         resolve();
         return;
       }

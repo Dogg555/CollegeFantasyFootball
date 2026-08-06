@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Draft Room - College Fantasy Football</title>
   <link rel="stylesheet" href="style.css" />
-  <link rel="stylesheet" href="alpha-ui.css" />
+  <link rel="stylesheet" href="beta-ui.css" />
   <link rel="stylesheet" href="draft-mobile.css" />
 </head>
 <body>
@@ -29,7 +29,7 @@
     </div>
   </div>
 
-  <main class="layout" style="max-width: 1080px">
+  <main class="layout layout--page">
     <section class="league-tabs" aria-label="League sections">
       <a class="league-tab" href="league.html">Home</a>
       <a class="league-tab" href="league.html#team">My Team</a>
@@ -45,7 +45,7 @@
     </section>
   </main>
 
-  <main class="layout" id="draft-locked" style="max-width: 760px" hidden>
+  <main class="layout layout--compact" id="draft-locked" hidden>
     <section class="card card--accent">
       <div class="card__header">
         <h2>Draft lobby closed</h2>
@@ -62,7 +62,7 @@
   </main>
 
   <div id="draft-room-content">
-  <main class="layout" style="max-width: 1080px; padding-bottom: 0">
+  <main class="layout layout--page layout--flush-bottom">
     <section class="card card--accent">
       <div class="card__header">
         <div>
@@ -142,7 +142,7 @@
       </div>
       <div id="roster-list" class="list">No players drafted yet.</div>
       <div id="roster-balance" class="grid compact-grid"></div>
-      <div class="cta-row" style="margin-top: 12px">
+      <div class="cta-row section-actions">
         <button class="button" id="refresh-draft" type="button">Refresh</button>
         <button class="button button--ghost" id="undo-last-pick" type="button">Undo last pick</button>
         <button class="button button--ghost" id="clear-draft" type="button">Reset draft</button>
@@ -155,7 +155,7 @@
         <span class="pill pill--muted" id="draft-order-count">0 managers</span>
       </div>
       <div id="draft-order-list" class="list">Draft order will appear when managers join.</div>
-      <div class="cta-row" style="margin-top: 12px">
+      <div class="cta-row section-actions">
         <button class="button" id="randomize-draft-order" type="button">Randomize</button>
         <button class="button button--ghost" id="reset-draft-order" type="button">Reset order</button>
       </div>
@@ -211,7 +211,6 @@
   <script src="config.js"></script>
   <script src="state.js"></script>
   <script src="draft-auth-bridge.js"></script>
-  <script src="alpha-ui.js"></script>
   <script src="draft-lifecycle.js"></script>
   <script src="draft.js"></script>
 </body>

@@ -14,6 +14,9 @@ const CFF_API_CACHE_META_KEY = 'cff_api_cache_meta';
 const MAX_LEAGUES_PER_ACCOUNT = 3;
 const CFF_API_BASE = window.CFF_API_BASE || '/api';
 const CFF_ALLOW_LOCAL_DEMO = window.CFF_ALLOW_LOCAL_DEMO === true;
+const STATE_AUTH_VALIDATE_TIMEOUT_MS = Number(window.CFF_AUTH_VALIDATE_TIMEOUT_MS) > 0
+  ? Number(window.CFF_AUTH_VALIDATE_TIMEOUT_MS)
+  : 8000;
 let lastAuthSessionResult = { authenticated: false, unavailable: false, expired: false };
 let apiServiceUnavailable = false;
 
@@ -150,34 +153,70 @@ function authHeaders() {
 }
 
 async function apiRequest(path, options = {}) {
+  const {
+    timeoutMs = 0,
+    signal: externalSignal,
+    ...requestOptions
+  } = options;
   const headers = {
-    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(requestOptions.body ? { 'Content-Type': 'application/json' } : {}),
     ...authHeaders(),
-    ...(options.headers || {})
+    ...(requestOptions.headers || {})
   };
-  let resp;
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  let timedOut = false;
+  const timeout = controller
+    ? window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs)
+    : null;
+  const abortFromExternalSignal = () => controller?.abort();
+  if (controller && externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', abortFromExternalSignal, { once: true });
+  }
+
   try {
-    resp = await fetch(`${CFF_API_BASE}${path}`, { ...options, headers });
+    const resp = await fetch(`${CFF_API_BASE}${path}`, {
+      ...requestOptions,
+      headers,
+      signal: controller?.signal || externalSignal
+    });
+    let data = null;
+    try {
+      data = await resp.json();
+    } catch {
+      data = null;
+    }
+    if (!resp.ok) {
+      const err = new Error(data?.error || `Request failed with ${resp.status}`);
+      err.status = resp.status;
+      err.data = data;
+      err.retryAfter = resp.headers.get('Retry-After') || '';
+      err.unavailable = resp.status === 503;
+      if (resp.status === 503) apiServiceUnavailable = true;
+      throw err;
+    }
+    apiServiceUnavailable = false;
+    return data;
   } catch (error) {
-    apiServiceUnavailable = true;
+    if (timedOut) {
+      const timeoutError = new Error('Request timed out');
+      timeoutError.timedOut = true;
+      timeoutError.unavailable = true;
+      apiServiceUnavailable = true;
+      throw timeoutError;
+    }
+    if (!error?.status) {
+      error.unavailable = true;
+      apiServiceUnavailable = true;
+    }
     throw error;
+  } finally {
+    if (timeout !== null) window.clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', abortFromExternalSignal);
   }
-  let data = null;
-  try {
-    data = await resp.json();
-  } catch {
-    data = null;
-  }
-  if (!resp.ok) {
-    const err = new Error(data?.error || `Request failed with ${resp.status}`);
-    err.status = resp.status;
-    err.data = data;
-    err.retryAfter = resp.headers.get('Retry-After') || '';
-    if (resp.status === 503) apiServiceUnavailable = true;
-    throw err;
-  }
-  apiServiceUnavailable = false;
-  return data;
 }
 
 function mutationErrorMessage(error, fallback = 'Request failed. No local changes were made.') {
@@ -248,7 +287,7 @@ async function validateAuthSessionResult() {
     return lastAuthSessionResult;
   }
   try {
-    const data = await apiRequest('/auth/validate');
+    const data = await apiRequest('/auth/validate', { timeoutMs: STATE_AUTH_VALIDATE_TIMEOUT_MS });
     if (data?.valid) {
       if (data.email && data.email !== auth.email) {
         setAuthState({ ...auth, email: data.email });
@@ -265,7 +304,14 @@ async function validateAuthSessionResult() {
       lastAuthSessionResult = { authenticated: false, unavailable: false, expired: true, status: error.status };
       return lastAuthSessionResult;
     }
-    lastAuthSessionResult = { authenticated: false, unavailable: true, expired: false, status: error.status || 0, message: error.message };
+    lastAuthSessionResult = {
+      authenticated: false,
+      unavailable: true,
+      expired: false,
+      timedOut: error.timedOut === true,
+      status: error.status || 0,
+      message: error.message
+    };
     apiServiceUnavailable = true;
     return lastAuthSessionResult;
   }
@@ -1574,8 +1620,16 @@ async function processWaiversApi() {
 function getWaiverPriority() {
   const stored = getLeagueScopedItems(CFF_WAIVER_PRIORITIES_KEY);
   if (stored.length) return stored;
-  return (getLeagueState()?.members || [])
-    .filter((member) => member.status !== 'Removed')
+  return waiverPriorityFromMembers(getLeagueState()?.members || []);
+}
+
+function saveWaiverPriority(priority = []) {
+  setLeagueScopedItems(CFF_WAIVER_PRIORITIES_KEY, priority);
+}
+
+function waiverPriorityFromMembers(members = []) {
+  return members
+    .filter((member) => String(member.status || 'Active').toLowerCase() === 'active')
     .map((member, index) => ({
       managerEmail: member.email,
       role: member.role || 'member',
@@ -1584,21 +1638,10 @@ function getWaiverPriority() {
     }));
 }
 
-function saveWaiverPriority(priority = []) {
-  setLeagueScopedItems(CFF_WAIVER_PRIORITIES_KEY, priority);
-}
-
 async function resetWaiverPriorityApi() {
   const league = getLeagueState();
   if (!getAuthState()?.token || isLocalDemoSession()) {
-    const priority = (league?.members || [])
-      .filter((member) => member.status !== 'Removed')
-      .map((member, index) => ({
-        managerEmail: member.email,
-        role: member.role || 'member',
-        status: member.status || 'Active',
-        priority: index + 1
-      }));
+    const priority = waiverPriorityFromMembers(league?.members || []);
     saveWaiverPriority(priority);
     addTransaction('Waiver Priority', 'Reset waiver priority order');
     return priority;

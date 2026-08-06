@@ -1,4 +1,4 @@
-/* Final closed-beta visual layer. Loaded after the existing alpha and polish styles. */
+/* Final closed-beta visual layer. */
 :root {
   --bg: #080d12;
   --panel: #0f1720;
@@ -165,8 +165,8 @@ body.beta-ui::before {
 
 .beta-ui .footer--rich {
   width: min(1180px, calc(100% - 32px));
-  margin: 40px auto 0;
-  padding: 28px 0 36px;
+  margin: clamp(22px, 4vw, 34px) auto 0;
+  padding: 24px 0 28px;
   border-top: 1px solid var(--line);
 }
 

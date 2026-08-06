@@ -4,13 +4,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const alphaPath = path.join(__dirname, '..', 'alpha-ui.js');
+const betaPath = path.join(__dirname, '..', 'beta-ui.js');
 const {
   requestMethod,
   requestStateMessage,
   emptyStateDefinition,
   emptyStateTitle
-} = require(alphaPath);
+} = require(betaPath);
 
 assert.equal(requestMethod(), 'GET');
 assert.equal(requestMethod({ method: 'post' }), 'POST');
@@ -38,11 +38,11 @@ assert.equal(emptyStateTitle('draft-pick-list', 'No picks made yet.'), 'No picks
 assert.equal(emptyStateTitle('upcoming-pick-list', 'Draft complete.'), 'Draft complete');
 assert.equal(emptyStateTitle('missing-state', ''), 'Nothing here yet');
 
-const alphaSource = fs.readFileSync(alphaPath, 'utf8');
+const betaSource = fs.readFileSync(betaPath, 'utf8');
 assert.match(
-  alphaSource,
-  /pageName === 'draft\.html'[\s\S]*document\.querySelector\('main\.layout'\)[\s\S]*document\.getElementById\('draft-room-content'\)/,
-  'draft page state and retry controls should render outside the mutation-disable region'
+  betaSource,
+  /document\.documentElement\.classList\.add\('beta-ui-ready'\)/,
+  'beta UI should mark the page ready after enhancement'
 );
 
 console.log('authenticated page state contracts passed');

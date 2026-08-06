@@ -68,8 +68,8 @@ std::string stringValue(
 Json::Value activeMembers(const Json::Value &members) {
     Json::Value active(Json::arrayValue);
     for (const auto &member : members) {
-        const auto status = stringValue(member, "status", "Active");
-        if (status != "Removed" && status != "removed") {
+        const auto status = lowerString(stringValue(member, "status", "Active"));
+        if (status == "active" && status != "Removed" && status != "removed") {
             active.append(member);
         }
     }
