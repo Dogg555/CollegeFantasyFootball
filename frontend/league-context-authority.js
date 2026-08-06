@@ -44,6 +44,18 @@
     return /^\/leagues\/[^/]+\/(?:roster(?:\/|$)|waivers(?:\/|$)|trades(?:\/|$))/.test(path);
   }
 
+  function loadWorkspaceStates() {
+    if (!window.document?.createElement || !window.document?.head) return;
+    const page = String(window.location?.pathname || '').split('/').pop();
+    if (page !== 'league.html') return;
+    if (window.document.querySelector?.('script[data-cff-league-workspace-states="true"]')) return;
+    const script = window.document.createElement('script');
+    script.src = 'league-workspace-states.js';
+    script.dataset.cffLeagueWorkspaceStates = 'true';
+    script.async = false;
+    window.document.head.appendChild(script);
+  }
+
   function install() {
     if (installed) return true;
     if (typeof window.apiRequest !== 'function'
@@ -179,6 +191,8 @@
     });
     return true;
   }
+
+  loadWorkspaceStates();
 
   if (!install()) {
     const timer = window.setInterval(() => {

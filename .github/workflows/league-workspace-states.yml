@@ -1,0 +1,43 @@
+name: League workspace state contracts
+
+on:
+  push:
+    branches: [Test]
+    paths:
+      - "frontend/league-context-authority.js"
+      - "frontend/league-workspace-states.js"
+      - "frontend/tests/league-workspace-states.test.js"
+      - ".github/workflows/league-workspace-states.yml"
+  pull_request:
+    branches: [Test, agent/server-authoritative-league-context]
+    paths:
+      - "frontend/league-context-authority.js"
+      - "frontend/league-workspace-states.js"
+      - "frontend/tests/league-workspace-states.test.js"
+      - ".github/workflows/league-workspace-states.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: league-workspace-states-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  state-contracts:
+    name: Loading, empty, pending, unavailable, and outage states
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax checks
+        run: |
+          node --check frontend/league-context-authority.js
+          node --check frontend/league-workspace-states.js
+          node --check frontend/tests/league-workspace-states.test.js
+      - name: Run workspace state contracts
+        run: node frontend/tests/league-workspace-states.test.js
