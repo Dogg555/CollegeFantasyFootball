@@ -39,6 +39,8 @@ add_executable(college_ff_server
     src/health_routes.cpp
     src/operations_routes.cpp
     src/league_routes.cpp
+    src/league_dashboard.cpp
+    src/league_dashboard_routes.cpp
     src/snake_draft_only.cpp
     src/league_onboarding_hardening.cpp
     src/draft_lifecycle.cpp
@@ -197,6 +199,14 @@ if (BUILD_TESTING)
     target_include_directories(league_schedule_tests PRIVATE src)
     target_link_libraries(league_schedule_tests PRIVATE Drogon::Drogon)
     add_test(NAME league_schedule_tests COMMAND league_schedule_tests)
+
+
+    add_executable(league_dashboard_tests
+        tests/league_dashboard_tests.cpp
+        src/league_dashboard.cpp
+    )
+    target_include_directories(league_dashboard_tests PRIVATE src)
+    add_test(NAME league_dashboard_tests COMMAND league_dashboard_tests)
 
 
     add_executable(draft_lifecycle_tests
