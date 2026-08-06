@@ -19,6 +19,7 @@
 
 #include "app_config.h"
 #include "http_security.h"
+#include "league_roster.h"
 
 namespace cff::lineup_game_lock {
 namespace {
@@ -140,15 +141,6 @@ std::optional<std::string> requestEmail(const drogon::HttpRequestPtr &request) {
     return lowerValue(trimValue(*email));
 }
 
-std::string pathLeagueId(const std::string &path, const std::string &suffix) {
-    const std::string prefix = "/api/leagues/";
-    if (path.rfind(prefix, 0) != 0 || suffix.empty()) return "";
-    if (path.size() <= prefix.size() + suffix.size()) return "";
-    if (path.substr(path.size() - suffix.size()) != suffix) return "";
-    const auto leagueId = path.substr(prefix.size(), path.size() - prefix.size() - suffix.size());
-    return leagueId.find('/') == std::string::npos ? leagueId : "";
-}
-
 bool canAccessLeague(PGconn *connection,
                      const std::string &leagueId,
                      const std::string &email) {
@@ -180,14 +172,26 @@ WeekContext activeWeek(PGconn *connection, const std::string &leagueId) {
     return context;
 }
 
+WeekContext bodyWeek(const Json::Value &body,
+                     PGconn *connection,
+                     const std::string &leagueId) {
+    auto context = activeWeek(connection, leagueId);
+    if (body.isObject()) {
+        context.season = positiveInt(body.get("season", context.season), context.season);
+        context.week = positiveInt(body.get("week", context.week), context.week);
+    }
+    return context;
+}
+
 WeekContext requestWeek(const drogon::HttpRequestPtr &request,
                         PGconn *connection,
                         const std::string &leagueId) {
-    auto context = activeWeek(connection, leagueId);
-    if (const auto body = request->getJsonObject(); body && body->isObject()) {
-        context.season = positiveInt(body->get("season", context.season), context.season);
-        context.week = positiveInt(body->get("week", context.week), context.week);
-    }
+    auto context = bodyWeek(
+        request->getJsonObject() && request->getJsonObject()->isObject()
+            ? *request->getJsonObject()
+            : Json::Value{Json::objectValue},
+        connection,
+        leagueId);
     const auto season = request->getParameter("season");
     const auto week = request->getParameter("week");
     if (!season.empty()) {
@@ -277,15 +281,11 @@ drogon::HttpResponsePtr jsonResponse(const Json::Value &payload,
 drogon::HttpResponsePtr errorResponse(const std::string &message,
                                       const std::string &code,
                                       drogon::HttpStatusCode status,
-                                      bool retryable = false,
-                                      const Json::Value &details = Json::Value{Json::objectValue}) {
+                                      bool retryable = false) {
     Json::Value payload(Json::objectValue);
     payload["error"] = message;
     payload["code"] = code;
     payload["retryable"] = retryable;
-    if (details.isObject()) {
-        for (const auto &key : details.getMemberNames()) payload[key] = details[key];
-    }
     return jsonResponse(payload, status);
 }
 
@@ -321,61 +321,24 @@ void handleLineupLocks(const drogon::HttpRequestPtr &request,
     respond(jsonResponse(payload));
 }
 
-drogon::HttpResponsePtr lineupGameLockAdvice(const drogon::HttpRequestPtr &request) {
-    if (request->getMethod() != drogon::Post) return nullptr;
-    const auto leagueId = pathLeagueId(request->getPath(), "/roster/transactions");
-    if (leagueId.empty()) return nullptr;
-    const auto body = request->getJsonObject();
-    if (!body || !body->isObject() || lowerValue(body->get("action", "").asString()) != "slot") return nullptr;
-
-    const auto respond = [&request](const drogon::HttpResponsePtr &response) {
-        return cff::http::withRuntimeCorsHeaders(request, response);
-    };
-    const auto email = requestEmail(request);
-    if (!email) {
-        return respond(errorResponse("Authentication is required.", "authentication_required",
-                                     drogon::k401Unauthorized));
-    }
-    auto connection = connectDb();
-    if (!connection) {
-        return respond(errorResponse("Lineup lock validation is temporarily unavailable.",
-                                     "lineup_lock_unavailable", drogon::k503ServiceUnavailable, true));
-    }
-    if (!canAccessLeague(connection.get(), leagueId, *email)) {
-        return respond(errorResponse("Active league membership is required.", "league_membership_required",
-                                     drogon::k403Forbidden));
-    }
-
-    const auto context = requestWeek(request, connection.get(), leagueId);
-    if (weekLocked(connection.get(), leagueId, *email, context)) {
-        Json::Value details(Json::objectValue);
-        details["season"] = context.season;
-        details["week"] = context.week;
-        return respond(errorResponse("This weekly lineup is locked.", "lineup_locked",
-                                     drogon::k409Conflict, false, details));
-    }
-
-    const auto playerId = trimValue(body->get("playerId", "").asString());
-    const auto locks = playerLocks(connection.get(), leagueId, *email, context);
-    if (!locks.isArray()) {
-        return respond(errorResponse("Lineup lock validation is temporarily unavailable.",
-                                     "lineup_lock_unavailable", drogon::k503ServiceUnavailable, true));
-    }
-    for (const auto &lock : locks) {
-        if (lock.get("playerId", "").asString() != playerId || !lock.get("locked", false).asBool()) continue;
-        Json::Value details(Json::objectValue);
-        details["playerId"] = playerId;
-        details["gameId"] = lock.get("gameId", "");
-        details["gameStartTime"] = lock.get("gameStartTime", "");
-        details["season"] = context.season;
-        details["week"] = context.week;
-        return respond(errorResponse("This player's game has started, so the player is locked for the week.",
-                                     "player_game_started", drogon::k409Conflict, false, details));
-    }
-    return nullptr;
-}
-
 } // namespace
+
+inline bool slotMoveAllowed(PGconn *connection,
+                            const std::string &leagueId,
+                            const std::string &email,
+                            const Json::Value &body,
+                            const std::string &playerId) {
+    if (!connection || playerId.empty()) return false;
+    const auto context = bodyWeek(body, connection, leagueId);
+    if (weekLocked(connection, leagueId, email, context)) return false;
+    const auto locks = playerLocks(connection, leagueId, email, context);
+    if (!locks.isArray()) return false;
+    for (const auto &lock : locks) {
+        if (lock.get("playerId", "").asString() == playerId
+            && lock.get("locked", false).asBool()) return false;
+    }
+    return true;
+}
 
 inline void registerRoutes(drogon::HttpAppFramework &app) {
     app.registerHandler(
@@ -386,7 +349,25 @@ inline void registerRoutes(drogon::HttpAppFramework &app) {
             handleLineupLocks(request, std::move(callback), leagueId);
         },
         {drogon::Get});
-    app.registerSyncAdvice(lineupGameLockAdvice);
 }
 
 } // namespace cff::lineup_game_lock
+
+namespace cff::league_roster {
+
+inline bool validateRosterSlotMoveWithWeeklyLock(
+    PGconn *connection,
+    const std::string &leagueId,
+    const std::string &email,
+    const Json::Value &body,
+    const Json::Value &player,
+    const Json::Value &roster,
+    const Json::Value &rules,
+    const std::string &playerId,
+    const std::string &slot) {
+    return validateRosterSlotMove(player, roster, rules, playerId, slot)
+        && cff::lineup_game_lock::slotMoveAllowed(
+            connection, leagueId, email, body, playerId);
+}
+
+} // namespace cff::league_roster
