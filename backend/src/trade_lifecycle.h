@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
+#include <vector>
 
 #include <json/json.h>
 
@@ -34,5 +36,9 @@ TransitionDecision decideTransition(const std::string &currentStatus,
 
 bool validOfferPlayers(const std::string &offeredPlayerId,
                        const std::string &requestedPlayerId);
+
+bool validOfferPlayerPackages(const std::vector<std::string> &offeredPlayerIds,
+                              const std::vector<std::string> &requestedPlayerIds,
+                              std::size_t maximumPerSide = 20);
 
 } // namespace cff::trade_lifecycle
