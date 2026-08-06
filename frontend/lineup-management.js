@@ -106,8 +106,12 @@
     const occupied = slotOccupancy(roster, player?.id);
     return [...STARTER_ORDER, 'bench'].filter((slot) => {
       if (slot === current || Number(rules?.[slot] || 0) <= 0) return false;
-      return positionEligible(player, slot)
-        && Number(occupied[slot] || 0) < Number(rules[slot] || 0);
+      if (!positionEligible(player, slot)) return false;
+      // Moving a starter to the bench never changes total roster ownership.
+      // Permit the temporary extra bench player so a full roster can open a
+      // starter slot and then move the replacement into that empty position.
+      if (slot === 'bench') return true;
+      return Number(occupied[slot] || 0) < Number(rules[slot] || 0);
     });
   }
 
@@ -132,10 +136,6 @@
         errors.push({ slot, message: `Too many ${slot.toUpperCase()} starters` });
       }
     });
-    const benchLimit = Number(rules.bench || 0);
-    if (Number(counts.bench || 0) > benchLimit) {
-      errors.push({ slot: 'bench', message: 'Too many bench players' });
-    }
     return errors;
   }
 
