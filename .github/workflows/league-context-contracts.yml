@@ -1,0 +1,47 @@
+name: Canonical league context contracts
+
+on:
+  push:
+    branches:
+      - Test
+    paths:
+      - "frontend/config.js"
+      - "frontend/league-context.js"
+      - "frontend/tests/league-context.test.js"
+      - ".github/workflows/league-context-contracts.yml"
+  pull_request:
+    branches:
+      - Test
+    paths:
+      - "frontend/config.js"
+      - "frontend/league-context.js"
+      - "frontend/tests/league-context.test.js"
+      - ".github/workflows/league-context-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: league-context-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-contracts:
+    name: League context routing and tab isolation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate JavaScript syntax
+        run: |
+          node --check frontend/config.js
+          node --check frontend/league-context.js
+          node --check frontend/tests/league-context.test.js
+      - name: Run canonical league context contracts
+        run: node frontend/tests/league-context.test.js
+      - name: Verify runtime registration
+        run: grep -F "'league-context.js'" frontend/config.js
