@@ -13,12 +13,15 @@ on:
       - "backend/src/draft_lifecycle_hardening_*.inc"
       - "backend/tests/draft_lifecycle_tests.cpp"
       - "backend/tests/draft_lifecycle_contract_tests.py"
+      - "backend/tests/beta_pilot_contract_tests.py"
       - "backend/db/migrations/013_draft_lifecycle_reliability.sql"
       - "scripts/draft_lifecycle_runtime_contract.py"
+      - "scripts/beta_pilot_runtime_contract.py"
       - "scripts/test_smtp_server.py"
       - "frontend/config.js"
       - "frontend/draft-lifecycle.js"
       - "frontend/tests/draft-lifecycle.test.js"
+      - ".github/workflows/beta-pilot-lifecycle.yml"
       - ".github/workflows/draft-lifecycle-contracts.yml"
   pull_request:
     branches: [main, Test]
@@ -32,12 +35,15 @@ on:
       - "backend/src/draft_lifecycle_hardening_*.inc"
       - "backend/tests/draft_lifecycle_tests.cpp"
       - "backend/tests/draft_lifecycle_contract_tests.py"
+      - "backend/tests/beta_pilot_contract_tests.py"
       - "backend/db/migrations/013_draft_lifecycle_reliability.sql"
       - "scripts/draft_lifecycle_runtime_contract.py"
+      - "scripts/beta_pilot_runtime_contract.py"
       - "scripts/test_smtp_server.py"
       - "frontend/config.js"
       - "frontend/draft-lifecycle.js"
       - "frontend/tests/draft-lifecycle.test.js"
+      - ".github/workflows/beta-pilot-lifecycle.yml"
       - ".github/workflows/draft-lifecycle-contracts.yml"
   workflow_dispatch:
 
@@ -75,12 +81,15 @@ jobs:
           node --check frontend/tests/draft-lifecycle.test.js
           python -m py_compile \
             backend/tests/draft_lifecycle_contract_tests.py \
-            scripts/draft_lifecycle_runtime_contract.py
+            backend/tests/beta_pilot_contract_tests.py \
+            scripts/draft_lifecycle_runtime_contract.py \
+            scripts/beta_pilot_runtime_contract.py
 
       - name: Run browser and source contracts
         run: |
           node frontend/tests/draft-lifecycle.test.js
           python backend/tests/draft_lifecycle_contract_tests.py
+          python backend/tests/beta_pilot_contract_tests.py
 
       - name: Compile and run lifecycle rules
         run: |
@@ -93,10 +102,10 @@ jobs:
           /tmp/draft_lifecycle_tests
 
   postgres-race:
-    name: PostgreSQL simultaneous-pick race
+    name: PostgreSQL draft race and beta pilot
     needs: contracts
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     services:
       postgres:
@@ -123,8 +132,12 @@ jobs:
       - name: Install runtime contract dependency
         run: python -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
 
-      - name: Validate runtime contract
-        run: python -m py_compile scripts/draft_lifecycle_runtime_contract.py scripts/test_smtp_server.py
+      - name: Validate runtime contracts
+        run: |
+          python -m py_compile \
+            scripts/draft_lifecycle_runtime_contract.py \
+            scripts/beta_pilot_runtime_contract.py \
+            scripts/test_smtp_server.py
 
       - name: Build production API image
         run: docker build -f backend/Dockerfile -t college-ff-api-draft-contracts .
@@ -152,6 +165,8 @@ jobs:
           echo "CFF_DRAFT_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
           echo "CFF_CONTRACT_PASSWORD=$password" >> "$GITHUB_ENV"
           echo "CFF_DRAFT_RUN_KEY=$run_key" >> "$GITHUB_ENV"
+          echo "CFF_BETA_PILOT_RUN_KEY=beta-$run_key" >> "$GITHUB_ENV"
+          echo "CFF_BETA_PILOT_REPORT=/tmp/beta-pilot-runtime.json" >> "$GITHUB_ENV"
 
       - name: Start isolated SMTP catcher
         shell: bash
@@ -213,15 +228,17 @@ jobs:
             -e CFF_SIGNUP_RATE_WINDOW_MINUTES=60 \
             college-ff-api-draft-contracts
 
-      - name: Run simultaneous-pick and recovery contracts
+      - name: Run draft race and four-manager pilot
         shell: bash
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
           DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
           CFF_CONTRACT_ORIGIN: https://frontend.example.test
         run: |
+          set -euo pipefail
           set -o pipefail
           python scripts/draft_lifecycle_runtime_contract.py 2>&1 | tee /tmp/draft-lifecycle-runtime.log
+          python scripts/beta_pilot_runtime_contract.py 2>&1 | tee /tmp/beta-pilot-runtime.log
 
       - name: Retain runtime diagnostics
         if: always()
@@ -230,6 +247,8 @@ jobs:
           name: draft-lifecycle-runtime-diagnostics
           path: |
             /tmp/draft-lifecycle-runtime.log
+            /tmp/beta-pilot-runtime.log
+            /tmp/beta-pilot-runtime.json
             /tmp/cff-draft-mail.jsonl
             /tmp/cff-draft-smtp.log
           if-no-files-found: warn
