@@ -425,7 +425,7 @@
         publish({
           leagueId,
           health: complete ? 'healthy' : 'partial',
-          writable: true,
+          writable: complete,
           lastSuccessAt: new Date(now()).toISOString(),
           ...(complete ? { lastFullSuccessAt: new Date(now()).toISOString() } : {})
         });
@@ -433,7 +433,7 @@
           rootObject.CFFAsyncStates?.show?.(
             'warning',
             'Some league data is stale',
-            `Updated ${applied.length} data source${applied.length === 1 ? '' : 's'}, but ${failed.length} could not be refreshed. Cached data remains read-only for the failed sections.`,
+            `Updated ${applied.length} data source${applied.length === 1 ? '' : 's'}, but ${failed.length} could not be refreshed. Mutation controls remain disabled until every required source refreshes successfully.`,
             null,
             4200
           );
