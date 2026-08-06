@@ -257,7 +257,7 @@
     };
 
     root.finalizeWeekApi = async function resilientFinalizeWeek(week = 1, season = currentSeason()) {
-      if (root.isLocalDemoSession?.()) return originals.finalizeWeekApi.call(this, week);
+      if (root.isLocalDemoSession?.()) return originals.finalizeWeekApi.call(this, week, season);
       return requestMutation('finalize', Number(season) || new Date().getFullYear(), Number(week) || 1);
     };
 

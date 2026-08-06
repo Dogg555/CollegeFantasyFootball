@@ -78,6 +78,13 @@ const waiverMode = document.getElementById('waiver-mode');
 const waiverDeadline = document.getElementById('waiver-deadline');
 const waiverFaLock = document.getElementById('waiver-fa-lock');
 const tradeApproval = document.getElementById('trade-approval');
+
+function findAvailablePlayerById(playerId) {
+  const selectedId = String(playerId || '');
+  return getAvailablePlayers().find((player) => String(player.id) === selectedId)
+    || samplePlayers.find((player) => String(player.id) === selectedId)
+    || null;
+}
 const tradeExpiration = document.getElementById('trade-expiration');
 const managerList = document.getElementById('manager-list');
 let latestApiFeedItems = [];
@@ -285,7 +292,7 @@ function renderFreeAgency() {
       freeAgentList.innerHTML = capacityRow + freeAgentList.innerHTML;
       freeAgentList.querySelectorAll('[data-add-free-agent]').forEach((button) => {
         button.addEventListener('click', async () => {
-          const player = samplePlayers.find((item) => item.id === button.dataset.addFreeAgent);
+          const player = findAvailablePlayerById(button.dataset.addFreeAgent);
           if (player) {
             try {
               await addFreeAgentApi(player);
@@ -1447,7 +1454,7 @@ waiverForm?.addEventListener('submit', async (event) => {
     if (waiverStatus) waiverStatus.textContent = 'Waivers are locked after finalized matchups.';
     return;
   }
-  const player = samplePlayers.find((item) => item.id === waiverAddPlayer.value);
+  const player = findAvailablePlayerById(waiverAddPlayer.value);
   if (!player) {
     if (waiverStatus) waiverStatus.textContent = 'No player selected.';
     return;

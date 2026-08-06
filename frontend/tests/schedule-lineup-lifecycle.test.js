@@ -32,7 +32,11 @@ global.saveMatchups = (matchups) => { global.savedMatchups = matchups; };
 global.generateSeasonScheduleApi = async () => [];
 global.updateRosterSlotApi = async () => true;
 global.scoreWeekApi = async () => ({ ok: true });
-global.finalizeWeekApi = async () => ({ ok: true });
+let finalizedArgs = [];
+global.finalizeWeekApi = async (...args) => {
+  finalizedArgs = args;
+  return { ok: true };
+};
 global.apiRequest = async () => ({
   leagueId: 'league-1', season: 2026, week: 1, scheduleVersion: 1,
   schedule: [], myLineup: { status: 'open' }, lineupLocked: false
@@ -68,6 +72,18 @@ require('../schedule-lineup-lifecycle.js');
   assert.strictEqual(JSON.parse(requestOptions.body).expectedVersion, 5);
   assert.strictEqual(lifecycle.cachedState().scheduleVersion, 6);
   assert.strictEqual(global.sessionStorage.values.size, 0, 'confirmed mutation should clear operation key');
+
+  let refreshedPath = '';
+  global.apiRequest = async (path) => {
+    refreshedPath = path;
+    return {
+      leagueId: 'league-1', season: 2027, week: 2, scheduleVersion: 7,
+      schedule: [{ id: 'finalized-refresh' }], myLineup: { status: 'open' }, lineupLocked: false
+    };
+  };
+  await global.finalizeWeekApi(2, 2027);
+  assert.deepStrictEqual(finalizedArgs, [2, 2027], 'finalize wrapper must preserve the requested season');
+  assert.match(refreshedPath, /season=2027&week=2/, 'finalize refresh must request the same season and week');
 
   lifecycle.applyState({
     leagueId: 'league-1', season: 2026, week: 1, scheduleVersion: 7,

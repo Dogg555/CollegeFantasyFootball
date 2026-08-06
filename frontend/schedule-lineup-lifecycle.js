@@ -240,7 +240,7 @@
       window.finalizeWeekApi = async (...args) => {
         const result = await originalFinalize(...args);
         if (auth()?.token && !localDemo()) {
-          await requestState(new Date().getFullYear(), args[0] || 1).catch(() => null);
+          await requestState(args[1] || currentState?.season || new Date().getFullYear(), args[0] || 1).catch(() => null);
         }
         return result;
       };

@@ -1150,6 +1150,11 @@ function saveMatchups(matchups) {
   setLeagueScopedItems(CFF_MATCHUPS_KEY, matchups);
 }
 
+function sameSeasonWeek(matchup, season, week) {
+  return Number(matchup.week || 1) === Number(week)
+    && Number(matchup.season || season) === Number(season);
+}
+
 function lineupProjection(roster = getRoster()) {
   return roster.reduce((total, player) => {
     const slot = String(player.rosterSlot || player.position || 'bench').toLowerCase();
@@ -1159,7 +1164,8 @@ function lineupProjection(roster = getRoster()) {
 
 function activeLeagueManagers(league = getLeagueState()) {
   const auth = getAuthState();
-  const members = (league?.members || []).filter((member) => member.status !== 'Removed');
+  const members = (league?.members || [])
+    .filter((member) => String(member.status || 'Active').toLowerCase() === 'active');
   return members.length ? members : auth?.email ? [{ email: auth.email, status: 'Active' }] : [];
 }
 
@@ -1208,19 +1214,21 @@ function generateLocalSeasonSchedule(league = getLeagueState(), weeks = 12) {
 }
 
 function standingsFromMatchups(league = getLeagueState(), matchups = getMatchups()) {
-  const rows = (league?.members || []).filter((member) => member.status !== 'Removed').map((member) => ({
-    email: member.email,
-    teamName: member.teamName || '',
-    role: member.role,
-    status: member.status || 'Invited',
-    wins: 0,
-    losses: 0,
-    ties: 0,
-    pointsFor: 0,
-    pointsAgainst: 0,
-    gamesPlayed: 0,
-    winPct: 0
-  }));
+  const rows = (league?.members || [])
+    .filter((member) => String(member.status || 'Active').toLowerCase() === 'active')
+    .map((member) => ({
+      email: member.email,
+      teamName: member.teamName || '',
+      role: member.role,
+      status: member.status || 'Invited',
+      wins: 0,
+      losses: 0,
+      ties: 0,
+      pointsFor: 0,
+      pointsAgainst: 0,
+      gamesPlayed: 0,
+      winPct: 0
+    }));
   const byEmail = new Map(rows.map((row) => [row.email, row]));
   matchups.forEach((matchup) => {
     const home = byEmail.get(matchup.homeManager);
@@ -1745,8 +1753,8 @@ async function scoreWeekApi(week = 1, season = new Date().getFullYear()) {
     throw error;
   }
   if (!getAuthState()?.token || isLocalDemoSession()) {
-    const others = getMatchups().filter((matchup) => Number(matchup.week || 1) !== Number(week));
-    const matchups = generateLocalMatchups(league, week);
+    const others = getMatchups().filter((matchup) => !sameSeasonWeek(matchup, season, week));
+    const matchups = generateLocalMatchups(league, week).map((matchup) => ({ ...matchup, season }));
     saveMatchups([...others, ...matchups]);
     return { season, week, scores: [], matchups };
   }
@@ -1756,7 +1764,7 @@ async function scoreWeekApi(week = 1, season = new Date().getFullYear()) {
     body: JSON.stringify({ season })
   });
   if (Array.isArray(result?.matchups)) {
-    const others = getMatchups().filter((matchup) => Number(matchup.week || 1) !== Number(week));
+    const others = getMatchups().filter((matchup) => !sameSeasonWeek(matchup, season, week));
     saveMatchups([...others, ...result.matchups]);
   }
   return result;
@@ -1778,7 +1786,7 @@ async function generateSeasonScheduleApi(weeks = 12) {
   return schedule;
 }
 
-async function finalizeWeekApi(week = 1) {
+async function finalizeWeekApi(week = 1, season = new Date().getFullYear()) {
   const league = getLeagueState();
   const errors = lineupErrors(getRoster(), league);
   if (errors.length) {
@@ -1788,9 +1796,9 @@ async function finalizeWeekApi(week = 1) {
   }
   if (!getAuthState()?.token || isLocalDemoSession()) {
     const now = new Date().toISOString();
-    const matchups = (getMatchups().length ? getMatchups() : generateLocalMatchups(league)).map((matchup) => (
-      Number(matchup.week || 1) === Number(week)
-        ? { ...matchup, status: 'final', finalizedAt: matchup.finalizedAt || now }
+    const matchups = (getMatchups().length ? getMatchups() : generateLocalMatchups(league, week)).map((matchup) => (
+      sameSeasonWeek(matchup, season, week)
+        ? { ...matchup, season, status: 'final', finalizedAt: matchup.finalizedAt || now }
         : matchup
     ));
     saveMatchups(matchups);
@@ -1799,10 +1807,11 @@ async function finalizeWeekApi(week = 1) {
   }
   if (!league?.id) throw new Error('No server league selected');
   const matchups = await apiRequest(`/leagues/${encodeURIComponent(league.id)}/score/week/${encodeURIComponent(week)}/finalize`, {
-    method: 'POST'
+    method: 'POST',
+    body: JSON.stringify({ season })
   });
   if (Array.isArray(matchups)) {
-    const others = getMatchups().filter((matchup) => Number(matchup.week || 1) !== Number(week));
+    const others = getMatchups().filter((matchup) => !sameSeasonWeek(matchup, season, week));
     saveMatchups([...others, ...matchups]);
   }
   return matchups;
