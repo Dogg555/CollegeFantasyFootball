@@ -46,8 +46,8 @@ if (typeof window.mutationErrorMessage !== 'function') {
 (() => {
   // Keep dependency-sensitive modules contiguous so contract checks and runtime
   // loading agree after stacked PR merges.
-  const baseScripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js'];
-  const scripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
+  const baseScripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'lineup-management.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js'];
+  const scripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'lineup-management.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
   const styles = [
     ['polish.css', 'cffPolish', 'data-cff-polish="true"'],
     ['beta-ui.css', 'cffBeta', 'data-cff-beta="true"'],
@@ -56,6 +56,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
     ['mobile-density.css', 'cffMobileDensity', 'data-cff-mobile-density="true"'],
     ['player-catalog.css', 'cffPlayerCatalog', 'data-cff-player-catalog="true"'],
     ['league-card-hierarchy.css', 'cffLeagueCardHierarchy', 'data-cff-league-card-hierarchy="true"'],
+    ['lineup-management.css', 'cffLineupManagement', 'data-cff-lineup-management="true"'],
     ['landing-refresh.css', 'cffLandingRefresh', 'data-cff-landing-refresh="true"']
   ];
   const leagueSizeSelectIds = ['league-size', 'settings-teams'];
