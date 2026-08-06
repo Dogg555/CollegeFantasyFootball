@@ -1,0 +1,164 @@
+name: League dashboard contracts
+
+on:
+  push:
+    branches: [Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/league_dashboard*"
+      - "backend/tests/league_dashboard*"
+      - "frontend/config.js"
+      - "frontend/league-dashboard-*"
+      - "frontend/tests/league-dashboard-*.test.js"
+      - "scripts/league_dashboard_runtime_contract.py"
+      - ".github/workflows/league-dashboard-contracts.yml"
+  pull_request:
+    branches: [Test]
+    paths:
+      - "backend/CMakeLists.txt"
+      - "backend/src/app_composition.cpp"
+      - "backend/src/league_dashboard*"
+      - "backend/tests/league_dashboard*"
+      - "frontend/config.js"
+      - "frontend/league-dashboard-*"
+      - "frontend/tests/league-dashboard-*.test.js"
+      - "scripts/league_dashboard_runtime_contract.py"
+      - ".github/workflows/league-dashboard-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: league-dashboard-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate focused sources
+        run: |
+          node --check frontend/config.js
+          node --check frontend/league-dashboard-hub.js
+          node --check frontend/league-dashboard-runtime-deps.js
+          node --check frontend/league-dashboard-runtime.js
+          node --check frontend/tests/league-dashboard-hub.test.js
+          node --check frontend/tests/league-dashboard-runtime.test.js
+          python -m py_compile backend/tests/league_dashboard_review_contract_tests.py
+          python -m py_compile scripts/league_dashboard_runtime_contract.py
+      - name: Run browser dashboard contracts
+        run: |
+          node frontend/tests/league-dashboard-hub.test.js
+          node frontend/tests/league-dashboard-runtime.test.js
+      - name: Run review regression contracts
+        run: python backend/tests/league_dashboard_review_contract_tests.py
+      - name: Compile and run dashboard policy contracts
+        run: |
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            -Ibackend/src \
+            backend/tests/league_dashboard_tests.cpp \
+            backend/src/league_dashboard.cpp \
+            -o /tmp/league_dashboard_tests
+          /tmp/league_dashboard_tests
+      - name: Verify production composition
+        run: |
+          grep -F 'src/league_dashboard.cpp' backend/CMakeLists.txt
+          grep -F 'src/league_dashboard_routes.cpp' backend/CMakeLists.txt
+          grep -F 'registerLeagueDashboardRoutes' backend/src/app_composition.cpp
+          grep -F '"/api/leagues/{1}/dashboard"' backend/src/league_dashboard_routes.cpp
+          grep -F 'league-context.js' frontend/config.js
+          grep -F 'league-dashboard-runtime.js' frontend/config.js
+
+  postgres-runtime:
+    name: PostgreSQL dashboard authorization and aggregate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cff"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+      CFF_API_BASE_URL: http://127.0.0.1:8080
+      CFF_DASHBOARD_RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime dependency
+        run: python -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
+      - name: Build production API image
+        run: docker build -f backend/Dockerfile -t college-ff-api-dashboard .
+      - name: Apply production migrations
+        run: |
+          docker run --rm --network host \
+            --entrypoint sh \
+            -e DB_URL="$DB_URL" \
+            college-ff-api-dashboard \
+            /srv/db/migrate.sh
+      - name: Generate isolated credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          jwt_secret="$(openssl rand -hex 32)"
+          admin_token="$(openssl rand -hex 32)"
+          password="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' 'Dd')-D7!"
+          for value in "$jwt_secret" "$admin_token" "$password"; do
+            echo "::add-mask::$value"
+          done
+          echo "CFF_DASHBOARD_JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          echo "CFF_DASHBOARD_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_PASSWORD=$password" >> "$GITHUB_ENV"
+      - name: Start production API
+        shell: bash
+        run: |
+          docker run -d --name college-ff-api-dashboard --network host \
+            -e PORT=8080 \
+            -e DB_URL="$DB_URL" \
+            -e JWT_SECRET="$CFF_DASHBOARD_JWT_SECRET" \
+            -e ALLOWED_ORIGINS=https://frontend.example.test \
+            -e CFF_ADMIN_API_TOKEN="$CFF_DASHBOARD_ADMIN_TOKEN" \
+            -e CFF_REQUIRE_DB=true \
+            -e CFF_RUN_MIGRATIONS_ON_STARTUP=false \
+            -e ESPN_ROSTER_AUTO_ONCE=false \
+            -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION=false \
+            -e CFF_EXPOSE_AUTH_TOKENS=false \
+            -e CFF_LOG_AUTH_TOKENS=false \
+            -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
+            -e CFF_TRUST_PROXY_HEADERS=false \
+            -e CFF_FRONTEND_BASE_URL=https://frontend.example.test \
+            -e CFF_MIN_PASSWORD_LENGTH=12 \
+            -e CFF_AUTH_BURST_CLIENT_LIMIT=500 \
+            -e CFF_SIGNUP_CLIENT_LIMIT=500 \
+            -e CFF_SIGNUP_ACCOUNT_LIMIT=100 \
+            college-ff-api-dashboard
+      - name: Run dashboard runtime contract
+        run: python scripts/league_dashboard_runtime_contract.py
+      - name: Print API logs
+        if: always()
+        run: docker logs college-ff-api-dashboard || true
+      - name: Stop API
+        if: always()
+        run: docker rm -f college-ff-api-dashboard || true

@@ -57,8 +57,8 @@ if (typeof window.mutationErrorMessage !== 'function') {
 (() => {
   // Keep dependency-sensitive modules contiguous so contract checks and runtime
   // loading agree after stacked PR merges.
-  const baseScripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'snake-draft-only.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'multi-player-trades.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'commissioner-controls.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'league-context.js', 'league-context-authority.js'];
-  const scripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'snake-draft-only.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'multi-player-trades.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'commissioner-controls.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'league-context.js', 'league-context-authority.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
+  const baseScripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'snake-draft-only.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'multi-player-trades.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'commissioner-controls.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'league-context.js', 'league-context-authority.js', 'league-dashboard-hub.js', 'league-dashboard-runtime-deps.js', 'league-dashboard-runtime.js'];
+  const scripts = ['api-client.js', 'authoritative-data.js', 'auth-session-sync.js', 'mutation-consistency.js', 'snake-draft-only.js', 'league-onboarding.js', 'roster-transactions.js', 'waiver-lifecycle.js', 'trade-lifecycle.js', 'multi-player-trades.js', 'scoring-lifecycle.js', 'schedule-lineup-lifecycle.js', 'draft-poll-scope.js', 'draft-lifecycle.js', 'commissioner-controls.js', 'polish-core.js', 'polish-forms.js', 'polish-state.js', 'league-context.js', 'league-context-authority.js', 'league-dashboard-hub.js', 'league-dashboard-runtime-deps.js', 'league-dashboard-runtime.js', 'beta-ui.js', 'league-nav.js', 'workspace-ui.js', 'invite-fix.js', 'footer-links.js', 'landing-refresh.js'];
   const styles = [
     ['polish.css', 'cffPolish', 'data-cff-polish="true"'],
     ['beta-ui.css', 'cffBeta', 'data-cff-beta="true"'],
@@ -68,6 +68,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
     ['player-catalog.css', 'cffPlayerCatalog', 'data-cff-player-catalog="true"'],
     ['league-card-hierarchy.css', 'cffLeagueCardHierarchy', 'data-cff-league-card-hierarchy="true"'],
     ['lineup-management.css', 'cffLineupManagement', 'data-cff-lineup-management="true"'],
+    ['league-dashboard-hub.css', 'cffLeagueDashboard', 'data-cff-league-dashboard="true"'],
     ['landing-refresh.css', 'cffLandingRefresh', 'data-cff-landing-refresh="true"']
   ];
   const leagueSizeSelectIds = ['league-size', 'settings-teams'];
