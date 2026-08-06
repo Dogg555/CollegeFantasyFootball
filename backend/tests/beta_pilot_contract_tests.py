@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PILOT = (ROOT / "scripts" / "beta_pilot_runtime_contract.py").read_text(encoding="utf-8")
 WORKFLOW = (ROOT / ".github" / "workflows" / "beta-pilot-lifecycle.yml").read_text(encoding="utf-8")
+DRAFT_WORKFLOW = (ROOT / ".github" / "workflows" / "draft-lifecycle-contracts.yml").read_text(encoding="utf-8")
 
 
 def require(source: str, fragment: str, message: str) -> None:
@@ -68,5 +69,14 @@ require(WORKFLOW, "CFF_EXPOSE_AUTH_TOKENS=false", "production token exposure mod
 require(WORKFLOW, "CFF_BETA_PILOT_REPORT: /tmp/beta-pilot-runtime.json", "workflow must retain a structured report")
 if "uses:" in WORKFLOW:
     raise AssertionError("beta pilot workflow must not depend on marketplace actions")
+
+for integration in (
+    '"scripts/beta_pilot_runtime_contract.py"',
+    '"backend/tests/beta_pilot_contract_tests.py"',
+    "python backend/tests/beta_pilot_contract_tests.py",
+    "python scripts/beta_pilot_runtime_contract.py",
+    "/tmp/beta-pilot-runtime.json",
+):
+    require(DRAFT_WORKFLOW, integration, f"established draft workflow is missing pilot integration: {integration}")
 
 print("beta pilot source contracts passed")
