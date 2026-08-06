@@ -72,6 +72,18 @@ int main() {
     assert(!cff::trade_lifecycle::expectedVersionMatches(8, body));
     assert(cff::trade_lifecycle::validOfferPlayers("player-a", "player-b"));
     assert(!cff::trade_lifecycle::validOfferPlayers("player-a", "player-a"));
+    assert(cff::trade_lifecycle::validOfferPlayerPackages(
+        {"player-a", "player-b"}, {"player-c", "player-d"}));
+    assert(cff::trade_lifecycle::validOfferPlayerPackages(
+        {"player-a"}, {"player-b", "player-c"}));
+    assert(!cff::trade_lifecycle::validOfferPlayerPackages(
+        {}, {"player-b"}));
+    assert(!cff::trade_lifecycle::validOfferPlayerPackages(
+        {"player-a", "player-a"}, {"player-b"}));
+    assert(!cff::trade_lifecycle::validOfferPlayerPackages(
+        {"player-a"}, {"player-a"}));
+    assert(!cff::trade_lifecycle::validOfferPlayerPackages(
+        {"player-a", "player-b"}, {"player-c"}, 1));
     assert(cff::trade_lifecycle::openStatus("Accepted"));
     assert(cff::trade_lifecycle::terminalStatus("Expired"));
 

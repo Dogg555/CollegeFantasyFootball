@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const helpers = require('../trade-lifecycle.js');
+const packageHelpers = require('../multi-player-trades.js');
 
 function memoryStorage() {
   const values = new Map();
@@ -49,5 +50,25 @@ assert.match(
   helpers.tradeErrorMessage({ status: 503, retryable: true }),
   /same operation will not run twice/i
 );
+
+const duplicateOffer = {
+  offerPlayers: [
+    { id: 'a', name: 'Alpha' },
+    { playerId: 'a', name: 'Alpha duplicate' },
+    { id: 'b', name: 'Beta' }
+  ],
+  requestPlayers: [{ id: 'c', name: 'Charlie' }]
+};
+assert.deepEqual(packageHelpers.offerPlayers(duplicateOffer).map(packageHelpers.playerId), ['a', 'b']);
+assert.deepEqual(packageHelpers.requestPlayers(duplicateOffer).map(packageHelpers.playerId), ['c']);
+assert.equal(packageHelpers.packageNames(packageHelpers.offerPlayers(duplicateOffer)), 'Alpha, Beta');
+assert.equal(packageHelpers.packageValid(['a'], ['b']), true);
+assert.equal(packageHelpers.packageValid(['a', 'b'], ['c']), true);
+assert.equal(packageHelpers.packageValid([], ['b']), false);
+assert.equal(packageHelpers.packageValid(['a'], ['a']), false);
+assert.equal(packageHelpers.packageValid(['a', 'a'], ['b']), false);
+assert.equal(packageHelpers.packageValid(Array.from({ length: 21 }, (_, index) => `a-${index}`), ['b']), false);
+assert.equal(packageHelpers.uncertainFailure({ status: 409 }), false);
+assert.equal(packageHelpers.uncertainFailure({ status: 503 }), true);
 
 console.log('trade lifecycle browser tests passed');

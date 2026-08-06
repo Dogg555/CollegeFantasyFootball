@@ -11,13 +11,16 @@ on:
       - "backend/src/trade_lifecycle.cpp"
       - "backend/src/trade_lifecycle_hardening.cpp"
       - "backend/src/trade_lifecycle_hardening_*.inc"
+      - "backend/src/trade_multi_player.inc"
       - "backend/tests/trade_lifecycle_tests.cpp"
       - "backend/tests/trade_lifecycle_contract_tests.py"
       - "backend/db/migrations/016_trade_lifecycle_reliability.sql"
       - "scripts/trade_lifecycle_runtime_contract.py"
+      - "scripts/multi_player_trade_runtime_contract.py"
       - "scripts/test_smtp_server.py"
       - "frontend/config.js"
       - "frontend/trade-lifecycle.js"
+      - "frontend/multi-player-trades.js"
       - "frontend/tests/trade-lifecycle.test.js"
       - ".github/workflows/trade-lifecycle-contracts.yml"
   pull_request:
@@ -30,13 +33,16 @@ on:
       - "backend/src/trade_lifecycle.cpp"
       - "backend/src/trade_lifecycle_hardening.cpp"
       - "backend/src/trade_lifecycle_hardening_*.inc"
+      - "backend/src/trade_multi_player.inc"
       - "backend/tests/trade_lifecycle_tests.cpp"
       - "backend/tests/trade_lifecycle_contract_tests.py"
       - "backend/db/migrations/016_trade_lifecycle_reliability.sql"
       - "scripts/trade_lifecycle_runtime_contract.py"
+      - "scripts/multi_player_trade_runtime_contract.py"
       - "scripts/test_smtp_server.py"
       - "frontend/config.js"
       - "frontend/trade-lifecycle.js"
+      - "frontend/multi-player-trades.js"
       - "frontend/tests/trade-lifecycle.test.js"
       - ".github/workflows/trade-lifecycle-contracts.yml"
   workflow_dispatch:
@@ -72,10 +78,12 @@ jobs:
       - name: Validate lifecycle sources
         run: |
           node --check frontend/trade-lifecycle.js
+          node --check frontend/multi-player-trades.js
           node --check frontend/tests/trade-lifecycle.test.js
           python -m py_compile \
             backend/tests/trade_lifecycle_contract_tests.py \
-            scripts/trade_lifecycle_runtime_contract.py
+            scripts/trade_lifecycle_runtime_contract.py \
+            scripts/multi_player_trade_runtime_contract.py
 
       - name: Run browser and source contracts
         run: |
@@ -123,7 +131,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
 
       - name: Validate runtime contract
-        run: python -m py_compile scripts/trade_lifecycle_runtime_contract.py scripts/test_smtp_server.py
+        run: python -m py_compile scripts/trade_lifecycle_runtime_contract.py scripts/multi_player_trade_runtime_contract.py scripts/test_smtp_server.py
 
       - name: Build production API image
         run: docker build -f backend/Dockerfile -t college-ff-api-trade-contracts .
@@ -212,7 +220,7 @@ jobs:
             -e CFF_SIGNUP_RATE_WINDOW_MINUTES=60 \
             college-ff-api-trade-contracts
 
-      - name: Run trade race, approval, replay, and expiration contracts
+      - name: Run trade race, package, counter, approval, replay, and expiration contracts
         shell: bash
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
@@ -221,6 +229,7 @@ jobs:
         run: |
           set -o pipefail
           python scripts/trade_lifecycle_runtime_contract.py 2>&1 | tee /tmp/trade-lifecycle-runtime.log
+          python scripts/multi_player_trade_runtime_contract.py 2>&1 | tee /tmp/multi-player-trade-runtime.log
 
       - name: Retain runtime diagnostics
         if: always()
@@ -229,6 +238,7 @@ jobs:
           name: trade-lifecycle-runtime-diagnostics
           path: |
             /tmp/trade-lifecycle-runtime.log
+            /tmp/multi-player-trade-runtime.log
             /tmp/cff-trade-mail.jsonl
             /tmp/cff-trade-smtp.log
           if-no-files-found: warn

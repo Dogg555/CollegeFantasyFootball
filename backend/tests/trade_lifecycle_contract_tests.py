@@ -17,12 +17,15 @@ def main() -> None:
         'getHeader("Idempotency-Key")',
         "accountEmailForRequest",
         "trade_lifecycle_hardening_mutations.inc",
+        "trade_multi_player.inc",
     )
     require(
         "backend/src/trade_lifecycle_hardening_advice.inc",
         'pathLeagueId(path, "/trades/state")',
         'pathLeagueId(path, "/trades/transactions")',
         'parseTradePath(path, "/status"',
+        "getTradeStatePackage",
+        "dispatchTradeTransactionPackage",
         "registerSyncAdvice(tradeLifecycleAdvice)",
     )
     require(
@@ -50,6 +53,20 @@ def main() -> None:
         "trade_roster_invalid",
     )
     require(
+        "backend/src/trade_multi_player.inc",
+        "offerPlayers",
+        "requestPlayers",
+        "validOfferPlayerPackages",
+        "acquireTradePlayerLocksPackage",
+        "executeTradeSwapPackage",
+        "planIncomingTradePackage",
+        "trade_counter_not_allowed",
+        'action == "counter"',
+        "jsonb_array_elements_text",
+        "advanceRosterVersion",
+        "tradeStatePayloadPackage",
+    )
+    require(
         "backend/db/migrations/016_trade_lifecycle_reliability.sql",
         "CREATE TABLE IF NOT EXISTS trade_states",
         "CREATE TABLE IF NOT EXISTS trade_operations",
@@ -69,8 +86,20 @@ def main() -> None:
         "updateTradeStatusApi",
     )
     require(
+        "frontend/multi-player-trades.js",
+        "offerPlayers",
+        "requestPlayers",
+        "multiple = true",
+        "Send counter",
+        "action === 'counter'",
+        "Idempotency-Key",
+        "stopImmediatePropagation",
+        "playerLockedInTrade",
+    )
+    require(
         "frontend/config.js",
         "trade-lifecycle.js",
+        "multi-player-trades.js",
     )
     require(
         "backend/CMakeLists.txt",

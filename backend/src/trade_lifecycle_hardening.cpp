@@ -137,6 +137,7 @@ bool parseTradePath(const std::string &path,
 #include "trade_lifecycle_hardening_db.inc"
 #include "trade_lifecycle_hardening_payload.inc"
 #include "trade_lifecycle_hardening_mutations.inc"
+#include "trade_multi_player.inc"
 #endif
 
 #include "trade_lifecycle_hardening_advice.inc"
