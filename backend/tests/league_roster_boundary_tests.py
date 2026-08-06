@@ -76,7 +76,7 @@ for behavior_contract in (
     'slot == "bench"',
     'slot == "flex"',
     'slot != "qb"',
-    '"Missing " + std::to_string(required - filled)',
+    "Empty starter slots are legal",
     '"Too many " + upperString(slot) + " starter(s)"',
     "return 14;",
     'cff::getIntOrDefault(rules, "bench", 6)',
@@ -86,6 +86,11 @@ for behavior_contract in (
 ):
     require(behavior_contract in SOURCE,
             f"league roster behavior contract missing: {behavior_contract}")
+
+require(
+    '"Missing " + std::to_string(required - filled)' not in SOURCE,
+    "empty starter slots must not be rejected as missing lineup errors",
+)
 
 for cmake_contract in (
     "src/league_roster.cpp",

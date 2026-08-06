@@ -1,0 +1,67 @@
+name: Weekly lineup management contracts
+
+on:
+  push:
+    branches: [main, Test]
+    paths:
+      - "backend/src/app_composition.cpp"
+      - "backend/src/league_roster.cpp"
+      - "backend/src/lineup_game_lock.h"
+      - "backend/src/roster_transaction_hardening.cpp"
+      - "backend/tests/league_roster_boundary_tests.py"
+      - "backend/tests/league_roster_tests.cpp"
+      - "backend/tests/lineup_game_lock_contract_tests.py"
+      - "frontend/config.js"
+      - "frontend/lineup-management.css"
+      - "frontend/lineup-management.js"
+      - "frontend/tests/lineup-management.test.js"
+      - ".github/workflows/lineup-management-contracts.yml"
+  pull_request:
+    branches: [main, Test]
+    paths:
+      - "backend/src/app_composition.cpp"
+      - "backend/src/league_roster.cpp"
+      - "backend/src/lineup_game_lock.h"
+      - "backend/src/roster_transaction_hardening.cpp"
+      - "backend/tests/league_roster_boundary_tests.py"
+      - "backend/tests/league_roster_tests.cpp"
+      - "backend/tests/lineup_game_lock_contract_tests.py"
+      - "frontend/config.js"
+      - "frontend/lineup-management.css"
+      - "frontend/lineup-management.js"
+      - "frontend/tests/lineup-management.test.js"
+      - ".github/workflows/lineup-management-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lineup-management-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-contracts:
+    name: Starter bench and weekly lock rules
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate focused source syntax
+        run: |
+          node --check frontend/lineup-management.js
+          node --check frontend/tests/lineup-management.test.js
+          python -m py_compile backend/tests/lineup_game_lock_contract_tests.py
+
+      - name: Run lineup browser policy tests
+        run: node frontend/tests/lineup-management.test.js
+
+      - name: Run lineup source contracts
+        run: python backend/tests/lineup_game_lock_contract_tests.py

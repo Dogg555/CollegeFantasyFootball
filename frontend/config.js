@@ -67,6 +67,7 @@ if (typeof window.mutationErrorMessage !== 'function') {
     ['mobile-density.css', 'cffMobileDensity', 'data-cff-mobile-density="true"'],
     ['player-catalog.css', 'cffPlayerCatalog', 'data-cff-player-catalog="true"'],
     ['league-card-hierarchy.css', 'cffLeagueCardHierarchy', 'data-cff-league-card-hierarchy="true"'],
+    ['lineup-management.css', 'cffLineupManagement', 'data-cff-lineup-management="true"'],
     ['landing-refresh.css', 'cffLandingRefresh', 'data-cff-landing-refresh="true"']
   ];
   const leagueSizeSelectIds = ['league-size', 'settings-teams'];

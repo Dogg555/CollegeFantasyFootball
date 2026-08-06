@@ -19,6 +19,7 @@
 #include "app_config.h"
 #include "http_security.h"
 #include "league_roster.h"
+#include "lineup_game_lock.h"
 #include "roster_transaction.h"
 
 namespace {
@@ -134,7 +135,32 @@ bool parseRosterSlotPath(const std::string &path,
 #ifdef CFF_HAS_POSTGRES
 #include "roster_transaction_hardening_db.inc"
 #include "roster_transaction_hardening_payload.inc"
+
+bool rosterActionLocked(PGconn *connection,
+                        const std::string &leagueId,
+                        bool slotAction,
+                        const std::string &email,
+                        const Json::Value &body,
+                        const std::string &pathPlayerId) {
+    if (!slotAction) {
+        return lineupLocked(connection, leagueId);
+    }
+    const auto playerId = cff::roster_transaction::canonicalPlayerId(
+        pathPlayerId.empty() ? body.get("playerId", "").asString() : pathPlayerId);
+    if (playerId.empty()) return false;
+    return !cff::lineup_game_lock::slotMoveAllowed(
+        connection, leagueId, email, body, playerId);
+}
+
+#define lineupLocked(connection, leagueId) \
+    rosterActionLocked( \
+        (connection), (leagueId), action == RosterAction::Slot, email, body, pathPlayerId)
+#define validateRosterSlotMove(player, roster, rules, playerId, slot) \
+    validateRosterSlotMoveWithWeeklyLock( \
+        connection.get(), leagueId, email, body, (player), (roster), (rules), (playerId), (slot))
 #include "roster_transaction_hardening_mutations.inc"
+#undef validateRosterSlotMove
+#undef lineupLocked
 #endif
 
 #include "roster_transaction_hardening_advice.inc"

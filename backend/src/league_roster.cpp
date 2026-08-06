@@ -57,11 +57,18 @@ bool validateRosterSlotMove(const Json::Value &player,
                             const std::string &playerId,
                             const std::string &slot) {
     if (slot != "qb" && slot != "rb" && slot != "wr" && slot != "te"
-        && slot != "flex" && slot != "bench") {
+        && slot != "flex" && slot != "k" && slot != "def" && slot != "bench") {
         return false;
     }
     if (!playerEligibleForSlot(player, slot)) {
         return false;
+    }
+    // A slot move does not change roster ownership. Always permit a starter to
+    // stage on the bench so a full roster can open a starter slot and then move
+    // its replacement into that position. Total roster size remains capped by
+    // rosterLimitFromRules during acquisitions.
+    if (slot == "bench") {
+        return true;
     }
 
     int occupied = 0;
@@ -81,17 +88,11 @@ Json::Value lineupErrorsFromCounts(
     const Json::Value &rules,
     const std::unordered_map<std::string, int> &counts) {
     Json::Value errors(Json::arrayValue);
-    for (const auto &slot : {"qb", "rb", "wr", "te", "flex"}) {
+    for (const auto &slot : {"qb", "rb", "wr", "te", "flex", "k", "def"}) {
         const auto required = slotLimit(rules, slot);
         const auto filled = countFor(counts, slot);
-        if (filled < required) {
-            Json::Value error;
-            error["managerEmail"] = managerEmail;
-            error["slot"] = slot;
-            error["message"] = "Missing " + std::to_string(required - filled)
-                + " " + upperString(slot) + " starter(s)";
-            errors.append(error);
-        }
+        // Empty starter slots are legal. They remain visible and contribute
+        // zero points for the week instead of blocking lineup lock or scoring.
         if (filled > required) {
             Json::Value error;
             error["managerEmail"] = managerEmail;
@@ -112,6 +113,8 @@ int rosterLimitFromRules(const Json::Value &rules) {
         + cff::getIntOrDefault(rules, "wr", 2)
         + cff::getIntOrDefault(rules, "te", 1)
         + cff::getIntOrDefault(rules, "flex", 2)
+        + cff::getIntOrDefault(rules, "k", 0)
+        + cff::getIntOrDefault(rules, "def", 0)
         + cff::getIntOrDefault(rules, "bench", 6);
 }
 
