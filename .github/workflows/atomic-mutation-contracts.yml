@@ -1,0 +1,73 @@
+name: Atomic mutation contracts
+
+on:
+  pull_request:
+    branches: [Test]
+    paths:
+      - "backend/db/migrations/023_atomic_mutation_invariants.sql"
+      - "scripts/atomic_mutation_runtime_contract.py"
+      - ".github/workflows/atomic-mutation-contracts.yml"
+  push:
+    branches: [Test]
+    paths:
+      - "backend/db/migrations/023_atomic_mutation_invariants.sql"
+      - "scripts/atomic_mutation_runtime_contract.py"
+      - ".github/workflows/atomic-mutation-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atomic-mutations-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cff"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+
+    steps:
+      - name: Checkout source without marketplace actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git clone --depth 1 --branch "$ref" "https://github.com/$GITHUB_REPOSITORY.git" .
+
+      - name: Validate contract sources
+        run: |
+          python3 -m py_compile scripts/atomic_mutation_runtime_contract.py
+          grep -F 'DEFERRABLE INITIALLY DEFERRED' backend/db/migrations/023_atomic_mutation_invariants.sql
+          grep -F 'trg_atomic_draft_pick_roster' backend/db/migrations/023_atomic_mutation_invariants.sql
+          grep -F 'trg_atomic_processed_waiver' backend/db/migrations/023_atomic_mutation_invariants.sql
+          grep -F 'trg_atomic_approved_trade' backend/db/migrations/023_atomic_mutation_invariants.sql
+
+      - name: Install PostgreSQL contract dependency
+        run: python3 -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
+
+      - name: Apply production schema and migrations
+        run: sh backend/db/migrate.sh
+
+      - name: Run cross-feature rollback contract
+        env:
+          CFF_ATOMIC_RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: python3 scripts/atomic_mutation_runtime_contract.py
