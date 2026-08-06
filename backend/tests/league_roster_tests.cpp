@@ -103,6 +103,13 @@ void testRosterSlotMoveContracts() {
     expect(!cff::league_roster::validateRosterSlotMove(
                receiver, roster, rules, "wr-1", "superflex"),
            "unknown roster slots must remain rejected");
+
+    for (int index = 0; index < 6; ++index) {
+        roster.append(rosterPlayer("bench-" + std::to_string(index), "bench"));
+    }
+    expect(cff::league_roster::validateRosterSlotMove(
+               receiver, roster, rules, "wr-1", "bench"),
+           "a starter must be able to stage on a full bench so its slot can be refilled");
 }
 
 void testLineupValidationContracts() {
