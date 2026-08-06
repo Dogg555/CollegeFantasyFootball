@@ -45,15 +45,15 @@ drogon::HttpResponsePtr tradeLifecycleAdvice(const drogon::HttpRequestPtr &reque
 
     switch (route) {
         case Route::State:
-            return respond(getTradeState(leagueId, *email, false));
+            return respond(getTradeStatePackage(leagueId, *email, false));
         case Route::Transaction:
-            return respond(dispatchTradeTransaction(request, leagueId, *email));
+            return respond(dispatchTradeTransactionPackage(request, leagueId, *email));
         case Route::List:
-            return respond(getTradeState(leagueId, *email, true));
+            return respond(getTradeStatePackage(leagueId, *email, true));
         case Route::Create:
-            return respond(createTradeOffer(request, leagueId, *email, true));
+            return respond(createTradeOfferPackage(request, leagueId, *email, true, false));
         case Route::Status:
-            return respond(updateTradeLifecycleStatus(request, leagueId, *email, tradeId, true));
+            return respond(updateTradeLifecycleStatusPackage(request, leagueId, *email, tradeId, true));
         default:
             return nullptr;
     }
