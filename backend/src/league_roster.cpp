@@ -84,14 +84,8 @@ Json::Value lineupErrorsFromCounts(
     for (const auto &slot : {"qb", "rb", "wr", "te", "flex"}) {
         const auto required = slotLimit(rules, slot);
         const auto filled = countFor(counts, slot);
-        if (filled < required) {
-            Json::Value error;
-            error["managerEmail"] = managerEmail;
-            error["slot"] = slot;
-            error["message"] = "Missing " + std::to_string(required - filled)
-                + " " + upperString(slot) + " starter(s)";
-            errors.append(error);
-        }
+        // Empty starter slots are legal. They remain visible and contribute
+        // zero points for the week instead of blocking lineup lock or scoring.
         if (filled > required) {
             Json::Value error;
             error["managerEmail"] = managerEmail;
