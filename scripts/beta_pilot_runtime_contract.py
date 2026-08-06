@@ -521,6 +521,9 @@ def main() -> None:
     require(first_payload is not None, "first draft payload was not retained")
     require(draft.get("status") == "complete", f"eight-pick draft did not complete: {draft!r}")
     require(len(draft.get("picks", [])) == 8, f"draft pick count is not eight: {draft!r}")
+    draft_activity = draft.get("activityLog", [])
+    require(len(draft_activity) >= 9, f"draft activity log is incomplete: {draft_activity!r}")
+    require("draft" in json.dumps(draft_activity).lower(), f"draft activity is missing lifecycle events: {draft_activity!r}")
 
     rosters: dict[str, dict[str, Any]] = {}
     all_rostered: list[str] = []
@@ -695,8 +698,8 @@ def main() -> None:
         "load pilot audit trail",
     )
     audit_text = json.dumps(transactions).lower()
-    for keyword in ("draft", "trade", "waiver", "scoring"):
-        require(keyword in audit_text, f"audit trail is missing {keyword}: {transactions!r}")
+    for keyword in ("trade", "waiver", "scoring"):
+        require(keyword in audit_text, f"transaction trail is missing {keyword}: {transactions!r}")
 
     old_tokens = dict(tokens)
     for email in emails:
