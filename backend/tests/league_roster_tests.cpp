@@ -99,18 +99,17 @@ void testLineupValidationContracts() {
     const auto errors = cff::league_roster::lineupErrorsFromCounts(
         "manager@example.com", rules, counts);
 
-    expect(errors.size() == 3, "lineup error count changed");
+    expect(errors.size() == 1, "only overfilled starter slots should be invalid");
     expect(errors[0]["managerEmail"].asString() == "manager@example.com",
            "lineup error manager identity changed");
-    expect(errors[0]["slot"].asString() == "rb", "missing RB error order changed");
-    expect(errors[0]["message"].asString() == "Missing 1 RB starter(s)",
-           "missing starter message changed");
-    expect(errors[1]["slot"].asString() == "wr", "excess WR error order changed");
-    expect(errors[1]["message"].asString() == "Too many WR starter(s)",
+    expect(errors[0]["slot"].asString() == "wr", "excess WR error order changed");
+    expect(errors[0]["message"].asString() == "Too many WR starter(s)",
            "excess starter message changed");
-    expect(errors[2]["slot"].asString() == "flex", "missing FLEX error order changed");
-    expect(errors[2]["message"].asString() == "Missing 1 FLEX starter(s)",
-           "FLEX validation message changed");
+
+    const auto emptyErrors = cff::league_roster::lineupErrorsFromCounts(
+        "manager@example.com", rules, {});
+    expect(emptyErrors.empty(),
+           "empty starter slots must remain valid and score zero instead of blocking scoring");
 }
 
 void testRosterLimitContracts() {
