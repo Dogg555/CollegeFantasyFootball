@@ -134,7 +134,19 @@ bool parseRosterSlotPath(const std::string &path,
 #ifdef CFF_HAS_POSTGRES
 #include "roster_transaction_hardening_db.inc"
 #include "roster_transaction_hardening_payload.inc"
+
+bool rosterActionHasHistoricalLock(PGconn *connection,
+                                   const std::string &leagueId,
+                                   bool slotAction) {
+    // Slot actions are validated by the exact season/week game-lock advice.
+    // Add/drop actions retain the existing finalized-matchup protection.
+    return !slotAction && lineupLocked(connection, leagueId);
+}
+
+#define lineupLocked(connection, leagueId) \
+    rosterActionHasHistoricalLock((connection), (leagueId), action == RosterAction::Slot)
 #include "roster_transaction_hardening_mutations.inc"
+#undef lineupLocked
 #endif
 
 #include "roster_transaction_hardening_advice.inc"
