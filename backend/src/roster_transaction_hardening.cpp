@@ -19,6 +19,7 @@
 #include "app_config.h"
 #include "http_security.h"
 #include "league_roster.h"
+#include "lineup_game_lock.h"
 #include "roster_transaction.h"
 
 namespace {
@@ -138,14 +139,18 @@ bool parseRosterSlotPath(const std::string &path,
 bool rosterActionHasHistoricalLock(PGconn *connection,
                                    const std::string &leagueId,
                                    bool slotAction) {
-    // Slot actions are validated by the exact season/week game-lock advice.
+    // Slot actions are validated against the exact season/week below.
     // Add/drop actions retain the existing finalized-matchup protection.
     return !slotAction && lineupLocked(connection, leagueId);
 }
 
 #define lineupLocked(connection, leagueId) \
     rosterActionHasHistoricalLock((connection), (leagueId), action == RosterAction::Slot)
+#define validateRosterSlotMove(player, roster, rules, playerId, slot) \
+    validateRosterSlotMoveWithWeeklyLock( \
+        connection.get(), leagueId, email, body, (player), (roster), (rules), (playerId), (slot))
 #include "roster_transaction_hardening_mutations.inc"
+#undef validateRosterSlotMove
 #undef lineupLocked
 #endif
 
