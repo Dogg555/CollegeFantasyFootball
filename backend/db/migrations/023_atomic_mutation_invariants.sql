@@ -32,10 +32,14 @@ EXECUTE FUNCTION enforce_atomic_draft_pick_roster();
 CREATE OR REPLACE FUNCTION enforce_atomic_processed_waiver()
 RETURNS TRIGGER AS $$
 DECLARE
-  transitioned_to_processed BOOLEAN;
+  transitioned_to_processed BOOLEAN := FALSE;
 BEGIN
-  transitioned_to_processed := NEW.status = 'processed'
-    AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM NEW.status);
+  IF TG_OP = 'INSERT' THEN
+    transitioned_to_processed := NEW.status = 'processed';
+  ELSE
+    transitioned_to_processed := NEW.status = 'processed'
+      AND OLD.status IS DISTINCT FROM NEW.status;
+  END IF;
 
   IF NOT transitioned_to_processed THEN
     RETURN NEW;
@@ -82,11 +86,15 @@ EXECUTE FUNCTION enforce_atomic_processed_waiver();
 CREATE OR REPLACE FUNCTION enforce_atomic_approved_trade()
 RETURNS TRIGGER AS $$
 DECLARE
-  transitioned_to_approved BOOLEAN;
+  transitioned_to_approved BOOLEAN := FALSE;
   player TEXT;
 BEGIN
-  transitioned_to_approved := NEW.status = 'approved'
-    AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM NEW.status);
+  IF TG_OP = 'INSERT' THEN
+    transitioned_to_approved := NEW.status = 'approved';
+  ELSE
+    transitioned_to_approved := NEW.status = 'approved'
+      AND OLD.status IS DISTINCT FROM NEW.status;
+  END IF;
 
   IF NOT transitioned_to_approved THEN
     RETURN NEW;
