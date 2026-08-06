@@ -63,6 +63,13 @@ bool validateRosterSlotMove(const Json::Value &player,
     if (!playerEligibleForSlot(player, slot)) {
         return false;
     }
+    // A slot move does not change roster ownership. Always permit a starter to
+    // stage on the bench so a full roster can open a starter slot and then move
+    // its replacement into that position. Total roster size remains capped by
+    // rosterLimitFromRules during acquisitions.
+    if (slot == "bench") {
+        return true;
+    }
 
     int occupied = 0;
     for (const auto &item : roster) {
