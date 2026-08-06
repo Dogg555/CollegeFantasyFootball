@@ -1,6 +1,14 @@
 name: Exact-commit beta pilot lifecycle
 
 on:
+  push:
+    branches:
+      - Test
+    paths:
+      - "backend/**"
+      - "scripts/beta_pilot_runtime_contract.py"
+      - "backend/tests/beta_pilot_contract_tests.py"
+      - ".github/workflows/beta-pilot-lifecycle.yml"
   pull_request:
     branches:
       - Test
@@ -47,12 +55,16 @@ jobs:
       CFF_BETA_PILOT_REPORT: /tmp/beta-pilot-runtime.json
 
     steps:
-      - name: Clone exact branch commit
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact commit
         shell: bash
         run: |
           set -euo pipefail
-          ref="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git clone --depth 1 --branch "$ref" "https://github.com/$GITHUB_REPOSITORY.git" .
           actual="$(git rev-parse HEAD)"
           echo "Expected head: $EXPECTED_HEAD_SHA"
           echo "Checked-out head: $actual"
@@ -182,6 +194,19 @@ jobs:
           fi
           echo "## API logs"
           docker logs college-ff-api-beta-pilot || true
+
+      - name: Upload pilot diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-pilot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/beta-pilot-runtime.json
+            /tmp/beta-pilot-runtime.log
+            /tmp/cff-beta-pilot-mail.jsonl
+            /tmp/cff-beta-pilot-smtp.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Stop isolated services
         if: always()
