@@ -12,6 +12,16 @@
     }
   }
 
+  function authenticatedServerSessionPresent() {
+    try {
+      const auth = JSON.parse(window.sessionStorage.getItem('cff_auth') || 'null');
+      const token = String(auth?.token || '');
+      return Boolean(token && !token.startsWith('local-demo-'));
+    } catch {
+      return true;
+    }
+  }
+
   // Keep league.js usable during a rolling/static deployment where an older
   // state.js can briefly be cached alongside a newer page script.
   if (typeof window.apiCacheMeta !== 'function') {
@@ -19,11 +29,16 @@
   }
 
   if (typeof window.mutationControlsDisabled !== 'function') {
-    window.mutationControlsDisabled = () => false;
+    // Fail closed for authenticated league pages until state.js and the
+    // reliable synchronization layer have confirmed server connectivity.
+    window.mutationControlsDisabled = () => authenticatedServerSessionPresent();
   }
 
   if (typeof window.mutationErrorMessage !== 'function') {
     window.mutationErrorMessage = (error, fallback = 'Request failed. No local changes were made.') => {
+      if (error?.mutationCommitted) {
+        return 'The server saved the change, but the latest data could not be refreshed. Refresh before making another change.';
+      }
       if (error?.status === 429) {
         const retry = error.retryAfter ? ` Retry after ${error.retryAfter} seconds.` : ' Try again later.';
         return `Too many requests.${retry}`;
