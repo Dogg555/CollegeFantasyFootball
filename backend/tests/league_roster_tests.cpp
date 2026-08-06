@@ -47,12 +47,22 @@ void testEligibilityContracts() {
 
     const auto receiver = player("wr-1", "WR");
     const auto quarterback = player("qb-1", "QB");
+    const auto kicker = player("k-1", "K");
+    const auto defense = player("def-1", "DEF");
     expect(cff::league_roster::playerEligibleForSlot(receiver, "wr"),
            "natural position matching changed");
     expect(cff::league_roster::playerEligibleForSlot(receiver, "flex"),
            "receiver FLEX eligibility changed");
     expect(!cff::league_roster::playerEligibleForSlot(quarterback, "flex"),
            "quarterback must not enter FLEX");
+    expect(cff::league_roster::playerEligibleForSlot(kicker, "k"),
+           "kicker must be eligible for a configured K slot");
+    expect(cff::league_roster::playerEligibleForSlot(defense, "def"),
+           "team defense must be eligible for a configured DEF slot");
+    expect(!cff::league_roster::playerEligibleForSlot(kicker, "flex"),
+           "kicker must not enter FLEX");
+    expect(!cff::league_roster::playerEligibleForSlot(defense, "flex"),
+           "team defense must not enter FLEX");
     expect(cff::league_roster::playerEligibleForSlot(quarterback, "bench"),
            "bench must accept every player");
     expect(!cff::league_roster::playerEligibleForSlot(receiver, "WR"),
@@ -60,8 +70,12 @@ void testEligibilityContracts() {
 }
 
 void testRosterSlotMoveContracts() {
-    const auto rules = standardRules();
+    auto rules = standardRules();
+    rules["k"] = 1;
+    rules["def"] = 1;
     const auto receiver = player("wr-1", "WR");
+    const auto kicker = player("k-1", "K");
+    const auto defense = player("def-1", "DEF");
     Json::Value roster(Json::arrayValue);
     roster.append(rosterPlayer("wr-1", "wr"));
     roster.append(rosterPlayer("wr-2", "WR"));
@@ -69,6 +83,12 @@ void testRosterSlotMoveContracts() {
     expect(cff::league_roster::validateRosterSlotMove(
                receiver, roster, rules, "wr-1", "wr"),
            "the moving player must not count against its destination capacity");
+    expect(cff::league_roster::validateRosterSlotMove(
+               kicker, roster, rules, "k-1", "k"),
+           "configured kicker slot must accept a kicker");
+    expect(cff::league_roster::validateRosterSlotMove(
+               defense, roster, rules, "def-1", "def"),
+           "configured defense slot must accept a team defense");
 
     roster.append(rosterPlayer("wr-3", "wr"));
     expect(!cff::league_roster::validateRosterSlotMove(
@@ -92,9 +112,11 @@ void testLineupValidationContracts() {
     rules["wr"] = 2;
     rules["te"] = 1;
     rules["flex"] = 1;
+    rules["k"] = 1;
+    rules["def"] = 1;
 
     const std::unordered_map<std::string, int> counts{
-        {"qb", 1}, {"rb", 1}, {"wr", 3}, {"te", 1}, {"flex", 0}
+        {"qb", 1}, {"rb", 1}, {"wr", 3}, {"te", 1}, {"flex", 0}, {"k", 1}, {"def", 1}
     };
     const auto errors = cff::league_roster::lineupErrorsFromCounts(
         "manager@example.com", rules, counts);
@@ -124,15 +146,21 @@ void testRosterLimitContracts() {
     custom["wr"] = 4;
     custom["te"] = 1;
     custom["flex"] = 1;
+    custom["k"] = 1;
+    custom["def"] = 1;
     custom["bench"] = 5;
-    expect(cff::league_roster::rosterLimitFromRules(custom) == 16,
-           "custom roster limit calculation changed");
+    expect(cff::league_roster::rosterLimitFromRules(custom) == 18,
+           "custom roster limit calculation must include configured K and DEF slots");
 }
 
 void testPreferredSlotContracts() {
-    const auto rules = standardRules();
+    auto rules = standardRules();
+    rules["k"] = 1;
+    rules["def"] = 1;
     const auto receiver = player("wr-1", "WR");
     const auto quarterback = player("qb-1", "QB");
+    const auto kicker = player("k-1", "K");
+    const auto defense = player("def-1", "DEF");
 
     auto slot = cff::league_roster::preferredRosterSlot(
         receiver, rules, {{"wr", 1}, {"flex", 0}, {"bench", 0}});
@@ -153,6 +181,14 @@ void testPreferredSlotContracts() {
     slot = cff::league_roster::preferredRosterSlot(
         quarterback, rules, {{"qb", 1}, {"flex", 0}, {"bench", 0}});
     expect(slot && *slot == "bench", "QB must skip FLEX when its natural slot is full");
+
+    slot = cff::league_roster::preferredRosterSlot(
+        kicker, rules, {{"k", 0}, {"bench", 0}});
+    expect(slot && *slot == "k", "kicker must prefer an open configured K slot");
+
+    slot = cff::league_roster::preferredRosterSlot(
+        defense, rules, {{"def", 0}, {"bench", 0}});
+    expect(slot && *slot == "def", "team defense must prefer an open configured DEF slot");
 
     slot = cff::league_roster::preferredRosterSlot(
         receiver, rules, {{"wr", 1}, {"flex", 0}, {"bench", 0}}, 1);
