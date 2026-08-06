@@ -30,7 +30,7 @@ assert.match(config, /'landing-refresh\.css'/, 'shared loader must retain the la
 const state = read('frontend/state.js');
 assert.match(state, /window\.CFF_ALLOW_LOCAL_DEMO === true/, 'local demo must default fail-closed');
 assert.match(state, /localhostDemoAllowed\(\)/, 'local demo must be localhost-gated');
-assert.match(state, /lastAuthSessionResult = \{ authenticated: false, unavailable: true/s, 'validation network errors must be unavailable, not authenticated');
+assert.match(state, /lastAuthSessionResult = \{[^}]*authenticated:\s*false,[^}]*unavailable:\s*true/s, 'validation network errors must be unavailable, not authenticated');
 assert.match(state, /retryAfter = resp\.headers\.get\('Retry-After'\)/, 'API errors must preserve Retry-After');
 assert.match(state, /CFF_API_CACHE_META_KEY/, 'API cache metadata must be recorded');
 

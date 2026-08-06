@@ -1593,7 +1593,9 @@ generateSeasonBtn?.addEventListener('click', async () => {
     await loadLeagueFeedFromApi();
   } catch (error) {
     console.error(error);
-    if (scoreWeekStatus) scoreWeekStatus.textContent = 'Could not generate season schedule from the API.';
+    if (scoreWeekStatus) {
+      scoreWeekStatus.textContent = mutationErrorMessage(error, 'Could not generate season schedule from the API.');
+    }
   } finally {
     renderLeague();
   }

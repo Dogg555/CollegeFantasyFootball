@@ -173,6 +173,18 @@
     return privatePageRecovery;
   }
 
+  function waitForStateHelpers(attempts = 0) {
+    if (!isPrivatePage || typeof root.getAuthState === 'function') {
+      return Promise.resolve(true);
+    }
+    if (attempts >= 100) {
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      root.setTimeout?.(() => resolve(waitForStateHelpers(attempts + 1)), 0);
+    });
+  }
+
   if (isPrivatePage) {
     document.documentElement.classList.add('cff-private-pending');
   }
@@ -259,9 +271,14 @@
       return { authenticated: false, unavailable: false, expired: false, missing: true };
     }
 
-    if (originalValidateAuthSessionResult) {
+    const validateAuthSessionResult = originalValidateAuthSessionResult
+      || (typeof root.validateAuthSessionResult === 'function' ? root.validateAuthSessionResult : null);
+    const validateAuthSession = originalValidateAuthSession
+      || (typeof root.validateAuthSession === 'function' ? root.validateAuthSession : null);
+
+    if (validateAuthSessionResult) {
       try {
-        return await originalValidateAuthSessionResult();
+        return await validateAuthSessionResult();
       } catch (error) {
         return {
           authenticated: false,
@@ -272,9 +289,9 @@
       }
     }
 
-    if (originalValidateAuthSession) {
+    if (validateAuthSession) {
       try {
-        const authenticated = await originalValidateAuthSession();
+        const authenticated = await validateAuthSession();
         return { authenticated, unavailable: false, expired: !authenticated };
       } catch (error) {
         return {
@@ -292,6 +309,7 @@
   async function guardPrivatePage() {
     if (!isPrivatePage) return true;
 
+    await waitForStateHelpers();
     await recoverPrivatePageSession();
 
     while (true) {

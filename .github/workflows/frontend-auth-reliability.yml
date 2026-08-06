@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, Test]
     paths:
-        - "frontend/beta-ui.js"
+      - "frontend/beta-ui.js"
       - "frontend/auth.js"
       - "frontend/auth-session-sync.js"
       - "frontend/signin.html"
@@ -21,7 +21,7 @@ on:
   pull_request:
     branches: [main, Test]
     paths:
-        - "frontend/beta-ui.js"
+      - "frontend/beta-ui.js"
       - "frontend/auth.js"
       - "frontend/auth-session-sync.js"
       - "frontend/signin.html"
@@ -62,7 +62,7 @@ jobs:
 
       - name: Validate JavaScript syntax
         run: |
-            node --check frontend/beta-ui.js
+          node --check frontend/beta-ui.js
           node --check frontend/auth.js
           node --check frontend/auth-session-sync.js
           node --check frontend/logout-reliability.js

@@ -17,7 +17,7 @@ on:
       - "frontend/draft.html"
       - "frontend/draft-auth-bridge.js"
       - "frontend/auth-session-sync.js"
-        - "frontend/beta-ui.js"
+      - "frontend/beta-ui.js"
       - "frontend/league.js"
       - "frontend/league.html"
       - "frontend/league-beta-stability.js"
@@ -75,7 +75,7 @@ jobs:
           node --check frontend/draft.js
           node --check frontend/draft-auth-bridge.js
           node --check frontend/auth-session-sync.js
-            node --check frontend/beta-ui.js
+          node --check frontend/beta-ui.js
           node --check frontend/league.js
           node --check frontend/league-beta-stability.js
 
