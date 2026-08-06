@@ -1,0 +1,46 @@
+name: Reliable server sync contracts
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/reliable-sync.js'
+      - 'frontend/runtime-compat.js'
+      - 'frontend/config.js'
+      - 'frontend/tests/reliable-sync.test.js'
+      - 'frontend/tests/api-client.test.js'
+      - 'frontend/tests/authoritative-data.test.js'
+      - 'frontend/tests/mutation-consistency.test.js'
+      - 'frontend/tests/outage-feedback.test.js'
+      - 'scripts/reliable_sync_source_contract.py'
+      - '.github/workflows/reliable-sync-contracts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check frontend/reliable-sync.js
+          node --check frontend/runtime-compat.js
+          node --check frontend/config.js
+
+      - name: Run reliable synchronization contracts
+        run: node frontend/tests/reliable-sync.test.js
+
+      - name: Run adjacent transport and authority contracts
+        run: |
+          node frontend/tests/api-client.test.js
+          node frontend/tests/authoritative-data.test.js
+          node frontend/tests/mutation-consistency.test.js
+          node frontend/tests/outage-feedback.test.js
+
+      - name: Verify source integration
+        run: python3 scripts/reliable_sync_source_contract.py
