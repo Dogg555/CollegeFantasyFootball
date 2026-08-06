@@ -22,9 +22,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_atomic_draft_pick_roster ON draft_picks;
-CREATE CONSTRAINT TRIGGER trg_atomic_draft_pick_roster
-AFTER INSERT OR UPDATE OF league_id, manager_email, player_id ON draft_picks
+DROP TRIGGER IF EXISTS trg_atomic_draft_pick_roster_insert ON draft_picks;
+CREATE CONSTRAINT TRIGGER trg_atomic_draft_pick_roster_insert
+AFTER INSERT ON draft_picks
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE FUNCTION enforce_atomic_draft_pick_roster();
+
+DROP TRIGGER IF EXISTS trg_atomic_draft_pick_roster_update ON draft_picks;
+CREATE CONSTRAINT TRIGGER trg_atomic_draft_pick_roster_update
+AFTER UPDATE OF league_id, manager_email, player_id ON draft_picks
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 EXECUTE FUNCTION enforce_atomic_draft_pick_roster();
@@ -76,9 +83,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_atomic_processed_waiver ON waiver_claims;
-CREATE CONSTRAINT TRIGGER trg_atomic_processed_waiver
-AFTER INSERT OR UPDATE OF status, manager_email, add_player_id, drop_player_id ON waiver_claims
+DROP TRIGGER IF EXISTS trg_atomic_processed_waiver_insert ON waiver_claims;
+CREATE CONSTRAINT TRIGGER trg_atomic_processed_waiver_insert
+AFTER INSERT ON waiver_claims
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE FUNCTION enforce_atomic_processed_waiver();
+
+DROP TRIGGER IF EXISTS trg_atomic_processed_waiver_update ON waiver_claims;
+CREATE CONSTRAINT TRIGGER trg_atomic_processed_waiver_update
+AFTER UPDATE OF status, manager_email, add_player_id, drop_player_id ON waiver_claims
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 EXECUTE FUNCTION enforce_atomic_processed_waiver();
@@ -146,9 +160,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_atomic_approved_trade ON trade_offers;
-CREATE CONSTRAINT TRIGGER trg_atomic_approved_trade
-AFTER INSERT OR UPDATE OF status, offered_by_email, offered_to_email,
+DROP TRIGGER IF EXISTS trg_atomic_approved_trade_insert ON trade_offers;
+CREATE CONSTRAINT TRIGGER trg_atomic_approved_trade_insert
+AFTER INSERT ON trade_offers
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE FUNCTION enforce_atomic_approved_trade();
+
+DROP TRIGGER IF EXISTS trg_atomic_approved_trade_update ON trade_offers;
+CREATE CONSTRAINT TRIGGER trg_atomic_approved_trade_update
+AFTER UPDATE OF status, offered_by_email, offered_to_email,
   offered_player_ids, requested_player_ids ON trade_offers
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
