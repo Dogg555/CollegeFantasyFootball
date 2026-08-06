@@ -1,6 +1,14 @@
 name: Exact-commit beta pilot lifecycle
 
 on:
+  push:
+    branches:
+      - Test
+    paths:
+      - "backend/**"
+      - "scripts/beta_pilot_runtime_contract.py"
+      - "backend/tests/beta_pilot_contract_tests.py"
+      - ".github/workflows/beta-pilot-lifecycle.yml"
   pull_request:
     branches:
       - Test
@@ -47,12 +55,14 @@ jobs:
       CFF_BETA_PILOT_REPORT: /tmp/beta-pilot-runtime.json
 
     steps:
-      - name: Clone exact branch commit
+      - name: Fetch exact commit
         shell: bash
         run: |
           set -euo pipefail
-          ref="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git clone --depth 1 --branch "$ref" "https://github.com/$GITHUB_REPOSITORY.git" .
+          git init .
+          git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          git fetch --depth 1 origin "$EXPECTED_HEAD_SHA"
+          git checkout --detach FETCH_HEAD
           actual="$(git rev-parse HEAD)"
           echo "Expected head: $EXPECTED_HEAD_SHA"
           echo "Checked-out head: $actual"
