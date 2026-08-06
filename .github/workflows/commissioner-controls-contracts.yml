@@ -190,7 +190,7 @@ jobs:
             -e ESPN_ROSTER_AUTO_ONCE=false \
             -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
             -e CFF_REQUIRE_EMAIL_VERIFICATION=false \
-            -e CFF_EXPOSE_AUTH_TOKENS=true \
+            -e CFF_EXPOSE_AUTH_TOKENS=false \
             -e CFF_LOG_AUTH_TOKENS=false \
             -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
             -e CFF_TRUST_PROXY_HEADERS=false \
