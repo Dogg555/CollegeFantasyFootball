@@ -33,11 +33,21 @@
   }
 
   function currentWeekContext() {
+    const leagueId = String(root.getLeagueState?.()?.id || '');
+    if (lockState
+        && String(lockState.leagueId || '') === leagueId
+        && Number(lockState.season) > 0
+        && Number(lockState.week) > 0) {
+      return {
+        season: Number(lockState.season),
+        week: Number(lockState.week)
+      };
+    }
     const schedule = root.CFFScheduleLineupLifecycle?.cachedState?.() || {};
     const scoreboardWeek = Number(root.document?.getElementById?.('scoreboard-week')?.value || 0);
     return {
       season: Math.max(1, Number(schedule.season || new Date().getFullYear())),
-      week: Math.max(1, Number(scoreboardWeek || schedule.week || 1))
+      week: Math.max(1, Number(schedule.week || scoreboardWeek || 1))
     };
   }
 
@@ -168,12 +178,12 @@
 
   async function refreshLockState(force = false) {
     const league = root.getLeagueState?.();
-    const context = currentWeekContext();
+    const fallbackContext = currentWeekContext();
     if (!league?.id || !root.getAuthState?.()?.token || root.isLocalDemoSession?.()) {
       lockState = {
         leagueId: league?.id || '',
-        season: context.season,
-        week: context.week,
+        season: fallbackContext.season,
+        week: fallbackContext.week,
         weekLocked: false,
         players: []
       };
@@ -181,13 +191,11 @@
       return lockState;
     }
     const currentMatches = lockState
-      && String(lockState.leagueId || '') === String(league.id)
-      && Number(lockState.season) === context.season
-      && Number(lockState.week) === context.week;
+      && String(lockState.leagueId || '') === String(league.id);
     if (!force && currentMatches && Date.now() - lockStateAt < LOCK_CACHE_MS) return lockState;
     if (lockRequest) return lockRequest;
     lockRequest = root.apiRequest(
-      `/leagues/${encodeURIComponent(league.id)}/lineup-locks?season=${context.season}&week=${context.week}`
+      `/leagues/${encodeURIComponent(league.id)}/lineup-locks`
     ).then((state) => {
       lockState = state;
       lockStateAt = Date.now();
@@ -301,7 +309,8 @@
       <div class="lineup-summary-item"><span>Lineup status</span><strong>${errors.length ? 'Needs correction' : 'Valid'}</strong></div>
       <div class="lineup-zero-note">Empty starter positions are allowed and score 0 points for the week.</div>`;
 
-    if (!lockState || Number(lockState.season) !== context.season || Number(lockState.week) !== context.week) {
+    if (!lockState
+        || String(lockState.leagueId || '') !== String(root.getLeagueState?.()?.id || '')) {
       void refreshLockState().then(() => renderTeamPanel()).catch(() => {});
     }
   }
