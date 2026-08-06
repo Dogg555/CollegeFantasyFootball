@@ -71,7 +71,7 @@ async function testPartialRefreshAppliesSuccessfulCollections() {
   assert.deepEqual(result.failed, ['waivers']);
   assert.equal(applied.length, 1);
   assert.equal(coordinator.currentStatus().health, 'partial');
-  assert.equal(coordinator.controlsDisabled(), false, 'a partial authoritative refresh keeps server-backed writes available');
+  assert.equal(coordinator.controlsDisabled(), true, 'partial authoritative state remains read-only until every required source refreshes');
 }
 
 async function testTotalFailureBlocksWrites() {
