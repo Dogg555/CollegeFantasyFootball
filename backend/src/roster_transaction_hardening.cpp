@@ -136,16 +136,25 @@ bool parseRosterSlotPath(const std::string &path,
 #include "roster_transaction_hardening_db.inc"
 #include "roster_transaction_hardening_payload.inc"
 
-bool rosterActionHasHistoricalLock(PGconn *connection,
-                                   const std::string &leagueId,
-                                   bool slotAction) {
-    // Slot actions are validated against the exact season/week below.
-    // Add/drop actions retain the existing finalized-matchup protection.
-    return !slotAction && lineupLocked(connection, leagueId);
+bool rosterActionLocked(PGconn *connection,
+                        const std::string &leagueId,
+                        bool slotAction,
+                        const std::string &email,
+                        const Json::Value &body,
+                        const std::string &pathPlayerId) {
+    if (!slotAction) {
+        return lineupLocked(connection, leagueId);
+    }
+    const auto playerId = cff::roster_transaction::canonicalPlayerId(
+        pathPlayerId.empty() ? body.get("playerId", "").asString() : pathPlayerId);
+    if (playerId.empty()) return false;
+    return !cff::lineup_game_lock::slotMoveAllowed(
+        connection, leagueId, email, body, playerId);
 }
 
 #define lineupLocked(connection, leagueId) \
-    rosterActionHasHistoricalLock((connection), (leagueId), action == RosterAction::Slot)
+    rosterActionLocked( \
+        (connection), (leagueId), action == RosterAction::Slot, email, body, pathPlayerId)
 #define validateRosterSlotMove(player, roster, rules, playerId, slot) \
     validateRosterSlotMoveWithWeeklyLock( \
         connection.get(), leagueId, email, body, (player), (roster), (rules), (playerId), (slot))
