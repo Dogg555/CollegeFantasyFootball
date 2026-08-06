@@ -57,12 +57,23 @@ require(PILOT, 'COUNT(DISTINCT player_id)', "pilot must reject duplicate ownersh
 require(PILOT, '"status": "passed"', "pilot must emit a machine-readable passing report")
 
 require(WORKFLOW, "name: Exact-commit beta pilot lifecycle", "workflow name is missing")
+require(
+    WORKFLOW,
+    "push:\n    branches:\n      - Test",
+    "merged Test commits must run the exact-commit pilot",
+)
 require(WORKFLOW, "services:\n      postgres:", "workflow must use isolated PostgreSQL")
 require(WORKFLOW, "docker build -f backend/Dockerfile", "workflow must build the production API image")
 require(WORKFLOW, "/srv/db/migrate.sh", "workflow must apply production migrations")
 require(WORKFLOW, "python3 scripts/beta_pilot_runtime_contract.py", "workflow must execute the pilot")
 require(WORKFLOW, "python3 backend/tests/beta_pilot_contract_tests.py", "workflow must execute source contracts")
-require(WORKFLOW, "git clone --depth 1", "workflow must check out the exact branch without marketplace actions")
+require(
+    WORKFLOW,
+    'git fetch --depth 1 origin "$EXPECTED_HEAD_SHA"',
+    "workflow must fetch the immutable event SHA",
+)
+require(WORKFLOW, "git checkout --detach FETCH_HEAD", "workflow must detach at the fetched commit")
+require(WORKFLOW, 'test "$actual" = "$EXPECTED_HEAD_SHA"', "workflow must verify the checked-out SHA")
 require(WORKFLOW, "CFF_SECURITY_ENFORCE_PRODUCTION=true", "pilot API must use production security enforcement")
 require(WORKFLOW, "CFF_REQUIRE_EMAIL_VERIFICATION=false", "disposable contract accounts must not depend on external email")
 require(WORKFLOW, "CFF_EXPOSE_AUTH_TOKENS=false", "production token exposure mode must remain disabled")
