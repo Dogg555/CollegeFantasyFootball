@@ -268,7 +268,7 @@
         body: JSON.stringify(validation.payload)
       });
       const league = root.normalizeLeague?.(result) || result;
-      root.saveLeagueForAccount?.(league);
+      root.saveLeagueForAccount?.(league, { activate: true });
       clearPendingCreate(storage, operation.operationKey);
       await root.syncLeaguesFromApi?.();
       root.setActiveLeague?.(league.id);
@@ -328,7 +328,7 @@
         });
         if (payload?.joinStatus === 'pending_approval') return payload;
         const league = root.normalizeLeague?.(payload) || payload;
-        root.saveLeagueForAccount?.(league);
+        root.saveLeagueForAccount?.(league, { activate: true });
         root.setActiveLeague?.(league.id);
         clearJoinOperation(root.sessionStorage, leagueId, auth.email || '');
         await root.syncLeaguesFromApi?.();

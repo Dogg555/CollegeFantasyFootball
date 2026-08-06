@@ -103,7 +103,7 @@
       if (!tab) return;
       const group = groupDefinitions.find((definition) => definition.key === tab.dataset.navGroup);
       const prefix = group?.label || 'League';
-      option.textContent = `${prefix} — ${tab.textContent.trim()}`;
+      option.textContent = `${prefix} - ${tab.textContent.trim()}`;
     });
     return true;
   }

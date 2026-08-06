@@ -52,7 +52,7 @@ function loadStoredLeague() {
 
 function persistLeague() {
   if (!leagueState) return { ok: true };
-  return saveLeagueForAccount(leagueState);
+  return saveLeagueForAccount(leagueState, { activate: true });
 }
 
 function clearAuth() {

@@ -261,7 +261,7 @@
     });
     if (payload?.joinStatus === 'pending_approval') return payload;
     const league = window.normalizeLeague(payload);
-    window.saveLeagueForAccount(league);
+    window.saveLeagueForAccount(league, { activate: true });
     window.setActiveLeague?.(league.id);
     await window.syncActiveLeagueCollectionsFromApi?.();
     return league;

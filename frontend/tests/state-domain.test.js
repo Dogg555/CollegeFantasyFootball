@@ -11,6 +11,18 @@ const context = {
   Date,
   URLSearchParams,
   fetch: async () => ({ ok: true, json: async () => ({}) }),
+  localStorage: {
+    values: new Map(),
+    getItem(key) { return this.values.has(key) ? this.values.get(key) : null; },
+    setItem(key, value) { this.values.set(key, String(value)); },
+    removeItem(key) { this.values.delete(key); }
+  },
+  sessionStorage: {
+    values: new Map(),
+    getItem(key) { return this.values.has(key) ? this.values.get(key) : null; },
+    setItem(key, value) { this.values.set(key, String(value)); },
+    removeItem(key) { this.values.delete(key); }
+  },
   window: {
     CFF_API_BASE: '/api',
     CFF_ALLOW_LOCAL_DEMO: false,
@@ -20,6 +32,8 @@ const context = {
     setTimeout
   }
 };
+context.window.localStorage = context.localStorage;
+context.window.sessionStorage = context.sessionStorage;
 context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(
@@ -78,5 +92,21 @@ assert.match(
   /if \(!league\?\.id \|\| !managerEmail\) return \[\];/,
   'production manager roster lookup must not synthesize sample rosters when scoped data is missing'
 );
+
+context.setAuthState({ email: 'owner@example.test', token: 'server-token' });
+context.saveLeagueForAccount({ id: 'league-a', name: 'League A' }, { activate: true });
+context.saveLeagueForAccount({ id: 'league-b', name: 'League B' });
+assert.equal(
+  context.getLeagueState().id,
+  'league-a',
+  'background league saves must not change the selected league'
+);
+context.saveLeagueForAccount({ id: 'league-b', name: 'League B Updated' }, { activate: true });
+assert.equal(
+  context.getLeagueState().id,
+  'league-b',
+  'explicit activation must switch the selected league'
+);
+assert.equal(context.getLeaguesForCurrentAccount().length, 2, 'multiple active leagues must remain stored');
 
 console.log('state domain tests passed');

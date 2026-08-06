@@ -354,8 +354,9 @@ function getLeaguesForCurrentAccount() {
   return getAccountLeagueState(auth.email).leagues;
 }
 
-function saveLeagueForAccount(league) {
+function saveLeagueForAccount(league, options = {}) {
   const normalized = normalizeLeague(league);
+  const activate = options === true || options?.activate === true;
   const auth = getAuthState();
   if (!auth?.email) {
     writeJson(CFF_LEAGUE_KEY, normalized);
@@ -372,7 +373,10 @@ function saveLeagueForAccount(league) {
   } else {
     account.leagues.push(normalized);
   }
-  account.activeLeagueId = normalized.id;
+  const activeStillExists = account.leagues.some((item) => item.id === account.activeLeagueId);
+  if (activate || !activeStillExists) {
+    account.activeLeagueId = normalized.id;
+  }
   store[auth.email] = account;
   writeJson(CFF_LEAGUES_KEY, store);
   localStorage.removeItem(CFF_LEAGUE_KEY);
@@ -447,7 +451,10 @@ function migrateSingleLeague() {
   if (!account.leagues.some((league) => league.id === normalized.id)) {
     account.leagues.push(normalized);
   }
-  account.activeLeagueId = account.activeLeagueId || normalized.id;
+  const activeStillExists = account.leagues.some((league) => league.id === account.activeLeagueId);
+  if (!activeStillExists) {
+    account.activeLeagueId = normalized.id;
+  }
   store[auth.email] = account;
   writeJson(CFF_LEAGUES_KEY, store);
   localStorage.removeItem(CFF_LEAGUE_KEY);
@@ -1507,7 +1514,7 @@ async function joinLeagueApi(leagueId) {
     return payload;
   }
   const league = normalizeLeague(payload);
-  saveLeagueForAccount(league);
+  saveLeagueForAccount(league, { activate: true });
   await syncActiveLeagueCollectionsFromApi();
   return league;
 }
