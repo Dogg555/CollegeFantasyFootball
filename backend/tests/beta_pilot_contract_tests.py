@@ -53,6 +53,7 @@ require(PILOT, 'len({active[email] for email in emails}) == 4', "pilot must veri
 require(PILOT, 'call("GET", f"/api/leagues/{isolation_id}"', "pilot must test cross-league isolation")
 require(PILOT, 'INSERT INTO player_stats', "pilot must seed deterministic scoring inputs")
 require(PILOT, 'COUNT(DISTINCT player_id)', "pilot must reject duplicate ownership")
+require(PILOT, '"status": "passed"', "pilot must emit a machine-readable passing report")
 
 require(WORKFLOW, "name: Exact-commit beta pilot lifecycle", "workflow name is missing")
 require(WORKFLOW, "services:\n      postgres:", "workflow must use isolated PostgreSQL")
