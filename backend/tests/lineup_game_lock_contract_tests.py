@@ -49,7 +49,7 @@ def main() -> None:
         "Starting lineup",
         "Bench",
         "Empty starter slot",
-        "score 0 points",
+        "score zero points",
         "Move to ${slot.toUpperCase()}",
         "playerLocked",
         "CFFRosterTransactions?.mutate",

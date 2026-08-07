@@ -3,14 +3,7 @@
 const assert = require('node:assert/strict');
 const helpers = require('../lineup-management.js');
 
-const rules = {
-  qb: 1,
-  rb: 2,
-  wr: 2,
-  te: 1,
-  flex: 1,
-  bench: 4
-};
+const rules = { qb: 1, rb: 2, wr: 2, te: 1, flex: 1, k: 0, def: 0, bench: 4 };
 
 function player(id, position, rosterSlot = 'bench') {
   return { id, name: id, position, rosterSlot };
@@ -19,9 +12,7 @@ function player(id, position, rosterSlot = 'bench') {
 function testStarterSlotsRemainVisibleWhenEmpty() {
   const slots = helpers.starterSlots(rules);
   assert.equal(slots.length, 7);
-  assert.deepEqual(slots.map((slot) => slot.label), [
-    'QB', 'RB 1', 'RB 2', 'WR 1', 'WR 2', 'TE', 'FLEX'
-  ]);
+  assert.deepEqual(slots.map((slot) => slot.label), ['QB', 'RB 1', 'RB 2', 'WR 1', 'WR 2', 'TE', 'FLEX']);
   assert.equal(helpers.emptyStarterCount([], rules), 7);
 }
 
@@ -42,50 +33,39 @@ function testPositionEligibility() {
 }
 
 function testLegalDestinationsRespectCapacity() {
-  const roster = [
-    player('rb-1', 'RB', 'rb'),
-    player('rb-2', 'RB', 'rb'),
-    player('rb-bench', 'RB', 'bench')
-  ];
-  assert.deepEqual(
-    helpers.legalDestinations(roster[2], roster, rules),
-    ['flex']
-  );
-
+  const roster = [player('rb-1', 'RB', 'rb'), player('rb-2', 'RB', 'rb'), player('rb-bench', 'RB', 'bench')];
+  assert.deepEqual(helpers.legalDestinations(roster[2], roster, rules), ['flex']);
   roster.push(player('flex-1', 'WR', 'flex'));
   assert.deepEqual(helpers.legalDestinations(roster[2], roster, rules), []);
 }
 
-function testFullRosterCanOpenStarterSlot() {
+function testFullRosterCanStageThenMustFinishSwap() {
   const roster = [
-    player('rb-1', 'RB', 'rb'),
-    player('rb-2', 'RB', 'rb'),
-    player('flex-1', 'WR', 'flex'),
-    player('bench-1', 'QB', 'bench'),
-    player('bench-2', 'WR', 'bench'),
-    player('bench-3', 'TE', 'bench'),
-    player('bench-4', 'RB', 'bench')
+    player('rb-1', 'RB', 'rb'), player('rb-2', 'RB', 'rb'), player('flex-1', 'WR', 'flex'),
+    player('bench-1', 'QB', 'bench'), player('bench-2', 'WR', 'bench'),
+    player('bench-3', 'TE', 'bench'), player('bench-4', 'RB', 'bench')
   ];
-  assert.deepEqual(
-    helpers.legalDestinations(roster[0], roster, rules),
-    ['bench'],
-    'a starter must be able to move to a full bench so its slot can be refilled'
-  );
-  const staged = [...roster, player('bench-5', 'RB', 'bench')];
-  assert.deepEqual(
-    helpers.lineupErrorsAllowEmpty(staged, { rosterRules: rules }),
-    [],
-    'temporary extra bench players must not invalidate an otherwise legal lineup'
-  );
+  assert.deepEqual(helpers.legalDestinations(roster[0], roster, rules), ['bench']);
+  const staged = helpers.stageMoveInRoster(roster, 'rb-1', 'bench');
+  assert.match(helpers.lineupSaveErrors(staged, { rosterRules: rules })[0].message, /bench/i);
+  const completed = helpers.stageMoveInRoster(staged, 'bench-4', 'rb');
+  assert.deepEqual(helpers.lineupSaveErrors(completed, { rosterRules: rules }), []);
+}
+
+function testWholeLineupAssignmentsAreStable() {
+  const roster = [player('z', 'WR', 'bench'), player('a', 'QB', 'qb')];
+  assert.deepEqual(helpers.assignmentsFromRoster(roster), [
+    { playerId: 'a', slot: 'qb' },
+    { playerId: 'z', slot: 'bench' }
+  ]);
+  const signature = helpers.rosterSignature(roster);
+  assert.equal(signature, 'a:qb|z:bench');
+  assert.equal(signature, helpers.rosterSignature([...roster].reverse()));
 }
 
 function testInvalidAndOverfilledLineupsStillFail() {
-  const roster = [
-    player('qb-1', 'QB', 'qb'),
-    player('qb-2', 'QB', 'qb'),
-    player('wrong', 'WR', 'rb')
-  ];
-  const errors = helpers.lineupErrorsAllowEmpty(roster, { rosterRules: rules });
+  const roster = [player('qb-1', 'QB', 'qb'), player('qb-2', 'QB', 'qb'), player('wrong', 'WR', 'rb')];
+  const errors = helpers.lineupSaveErrors(roster, { rosterRules: rules });
   assert.equal(errors.length, 2);
   assert.match(errors[0].message, /not eligible/i);
   assert.match(errors[1].message, /too many QB/i);
@@ -93,12 +73,7 @@ function testInvalidAndOverfilledLineupsStillFail() {
 
 function testWeeklyPlayerLocks() {
   const context = { season: 2026, week: 3 };
-  const state = {
-    season: 2026,
-    week: 3,
-    weekLocked: false,
-    players: [{ playerId: 'locked', season: 2026, week: 3, locked: true }]
-  };
+  const state = { season: 2026, week: 3, weekLocked: false, players: [{ playerId: 'locked', season: 2026, week: 3, locked: true }] };
   assert.equal(helpers.playerLocked(player('locked', 'RB'), state, context), true);
   assert.equal(helpers.playerLocked(player('open', 'RB'), state, context), false);
   assert.equal(helpers.playerLocked(player('locked', 'RB'), state, { season: 2026, week: 4 }), false);
@@ -106,11 +81,7 @@ function testWeeklyPlayerLocks() {
 }
 
 function testStarterAndBenchGrouping() {
-  const roster = [
-    player('qb', 'QB', 'qb'),
-    player('bench', 'WR', 'bench'),
-    player('unknown', 'WR', 'taxi')
-  ];
+  const roster = [player('qb', 'QB', 'qb'), player('bench', 'WR', 'bench'), player('unknown', 'WR', 'taxi')];
   const grouped = helpers.groupRoster(roster, rules);
   assert.equal(grouped.startersBySlot.get('qb').length, 1);
   assert.deepEqual(grouped.bench.map((entry) => entry.id), ['bench', 'unknown']);
@@ -120,7 +91,8 @@ testStarterSlotsRemainVisibleWhenEmpty();
 testEmptyLineupsAreValid();
 testPositionEligibility();
 testLegalDestinationsRespectCapacity();
-testFullRosterCanOpenStarterSlot();
+testFullRosterCanStageThenMustFinishSwap();
+testWholeLineupAssignmentsAreStable();
 testInvalidAndOverfilledLineupsStillFail();
 testWeeklyPlayerLocks();
 testStarterAndBenchGrouping();

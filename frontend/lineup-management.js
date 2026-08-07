@@ -6,16 +6,14 @@
   let lockState = null;
   let lockStateAt = 0;
   let lockRequest = null;
+  let stagedRoster = null;
+  let stagedLeagueId = '';
+  let saving = false;
   let installAttempts = 0;
 
   function normalizedRules(league = root.getLeagueState?.()) {
     return {
-      qb: 1,
-      rb: 2,
-      wr: 2,
-      te: 1,
-      flex: 2,
-      bench: 6,
+      qb: 1, rb: 2, wr: 2, te: 1, flex: 2, k: 0, def: 0, bench: 6,
       ...(league?.rosterRules || {})
     };
   }
@@ -32,16 +30,32 @@
     });
   }
 
+  function cloneRoster(roster = []) {
+    return (Array.isArray(roster) ? roster : []).map((player) => ({ ...player }));
+  }
+
+  function assignmentsFromRoster(roster = []) {
+    return cloneRoster(roster)
+      .map((player) => ({
+        playerId: String(player?.id || player?.playerId || ''),
+        slot: String(player?.rosterSlot || 'bench').toLowerCase()
+      }))
+      .sort((left, right) => left.playerId.localeCompare(right.playerId));
+  }
+
+  function rosterSignature(roster = []) {
+    return assignmentsFromRoster(roster)
+      .map((assignment) => `${assignment.playerId}:${assignment.slot}`)
+      .join('|');
+  }
+
   function currentWeekContext() {
     const leagueId = String(root.getLeagueState?.()?.id || '');
     if (lockState
         && String(lockState.leagueId || '') === leagueId
         && Number(lockState.season) > 0
         && Number(lockState.week) > 0) {
-      return {
-        season: Number(lockState.season),
-        week: Number(lockState.week)
-      };
+      return { season: Number(lockState.season), week: Number(lockState.week) };
     }
     const schedule = root.CFFScheduleLineupLifecycle?.cachedState?.() || {};
     const scoreboardWeek = Number(root.document?.getElementById?.('scoreboard-week')?.value || 0);
@@ -63,9 +77,7 @@
     const serverLock = lockMap(state).get(String(player?.id || player?.playerId || ''));
     if (serverLock
         && Number(serverLock.season) === Number(context.season)
-        && Number(serverLock.week) === Number(context.week)) {
-      return serverLock.locked === true;
-    }
+        && Number(serverLock.week) === Number(context.week)) return serverLock.locked === true;
     return player?.locked === true || player?.gameStarted === true;
   }
 
@@ -107,9 +119,6 @@
     return [...STARTER_ORDER, 'bench'].filter((slot) => {
       if (slot === current || Number(rules?.[slot] || 0) <= 0) return false;
       if (!positionEligible(player, slot)) return false;
-      // Moving a starter to the bench never changes total roster ownership.
-      // Permit the temporary extra bench player so a full roster can open a
-      // starter slot and then move the replacement into that empty position.
       if (slot === 'bench') return true;
       return Number(occupied[slot] || 0) < Number(rules[slot] || 0);
     });
@@ -122,21 +131,39 @@
     roster.forEach((player) => {
       const slot = String(player?.rosterSlot || 'bench').toLowerCase();
       if (slot !== 'bench' && !positionEligible(player, slot)) {
-        errors.push({
-          slot,
-          playerId: String(player?.id || ''),
-          message: `${player?.name || 'Player'} is not eligible for ${slot.toUpperCase()}`
-        });
+        errors.push({ slot, playerId: String(player?.id || ''), message: `${player?.name || 'Player'} is not eligible for ${slot.toUpperCase()}` });
       }
     });
     STARTER_ORDER.forEach((slot) => {
       const limit = Number(rules?.[slot] || 0);
       const filled = Number(counts[slot] || 0);
-      if (filled > limit) {
-        errors.push({ slot, message: `Too many ${slot.toUpperCase()} starters` });
-      }
+      if (filled > limit) errors.push({ slot, message: `Too many ${slot.toUpperCase()} starters` });
     });
     return errors;
+  }
+
+  function lineupSaveErrors(roster = root.getRoster?.() || [], league = root.getLeagueState?.()) {
+    const errors = lineupErrorsAllowEmpty(roster, league);
+    const rules = normalizedRules(league);
+    const benchCount = Number(slotOccupancy(roster).bench || 0);
+    if (benchCount > Number(rules.bench || 0)) {
+      errors.push({ slot: 'bench', message: `Too many bench players (${benchCount}/${Number(rules.bench || 0)})` });
+    }
+    const ids = new Set();
+    roster.forEach((player) => {
+      const id = String(player?.id || player?.playerId || '');
+      if (!id || ids.has(id)) errors.push({ playerId: id, message: 'Every rostered player must appear exactly once.' });
+      ids.add(id);
+    });
+    return errors;
+  }
+
+  function stageMoveInRoster(roster, playerId, slot) {
+    const working = cloneRoster(roster);
+    const player = working.find((item) => String(item?.id || item?.playerId || '') === String(playerId || ''));
+    if (!player) return null;
+    player.rosterSlot = String(slot || '').toLowerCase();
+    return working;
   }
 
   function emptyStarterCount(roster = [], rules = normalizedRules()) {
@@ -146,24 +173,42 @@
     ), 0);
   }
 
+  function activeLeagueId() {
+    return String(root.getLeagueState?.()?.id || '');
+  }
+
+  function canonicalRoster() {
+    return cloneRoster(root.getRoster?.() || []);
+  }
+
+  function workingRoster() {
+    const leagueId = activeLeagueId();
+    if (stagedRoster && stagedLeagueId === leagueId) return cloneRoster(stagedRoster);
+    stagedRoster = null;
+    stagedLeagueId = '';
+    return canonicalRoster();
+  }
+
+  function hasPendingChanges(roster = workingRoster()) {
+    return rosterSignature(roster) !== rosterSignature(canonicalRoster());
+  }
+
+  function resetStagedLineup() {
+    stagedRoster = null;
+    stagedLeagueId = '';
+  }
+
   function escapeHtml(value = '') {
     if (typeof root.escapeHtml === 'function') return root.escapeHtml(value);
     return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   function formatKickoff(value = '') {
     const date = new Date(value);
     if (!value || Number.isNaN(date.getTime())) return '';
-    return date.toLocaleString([], {
-      weekday: 'short',
-      hour: 'numeric',
-      minute: '2-digit'
-    });
+    return date.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   }
 
   function activeLock(player, context = currentWeekContext()) {
@@ -180,84 +225,53 @@
     const league = root.getLeagueState?.();
     const fallbackContext = currentWeekContext();
     if (!league?.id || !root.getAuthState?.()?.token || root.isLocalDemoSession?.()) {
-      lockState = {
-        leagueId: league?.id || '',
-        season: fallbackContext.season,
-        week: fallbackContext.week,
-        weekLocked: false,
-        players: []
-      };
+      lockState = { leagueId: league?.id || '', season: fallbackContext.season, week: fallbackContext.week, weekLocked: false, players: [] };
       lockStateAt = Date.now();
       return lockState;
     }
-    const currentMatches = lockState
-      && String(lockState.leagueId || '') === String(league.id);
+    const currentMatches = lockState && String(lockState.leagueId || '') === String(league.id);
     if (!force && currentMatches && Date.now() - lockStateAt < LOCK_CACHE_MS) return lockState;
     if (lockRequest) return lockRequest;
-    lockRequest = root.apiRequest(
-      `/leagues/${encodeURIComponent(league.id)}/lineup-locks`
-    ).then((state) => {
-      lockState = state;
-      lockStateAt = Date.now();
-      return state;
-    }).finally(() => {
-      lockRequest = null;
-    });
+    lockRequest = root.apiRequest(`/leagues/${encodeURIComponent(league.id)}/lineup-locks`)
+      .then((state) => {
+        lockState = state;
+        lockStateAt = Date.now();
+        return state;
+      }).finally(() => { lockRequest = null; });
     return lockRequest;
   }
 
   function moveControl(player, roster, rules, context) {
-    const locked = playerLocked(player, lockState, context);
+    const locked = saving || playerLocked(player, lockState, context);
     const destinations = locked ? [] : legalDestinations(player, roster, rules);
-    if (locked) {
-      return '<span class="lineup-lock-icon" aria-label="Player locked">🔒</span>';
-    }
-    if (!destinations.length) {
-      return '<span class="lineup-move-placeholder" aria-hidden="true">—</span>';
-    }
-    const options = destinations.map((slot) => (
-      `<option value="${slot}">Move to ${slot.toUpperCase()}</option>`
-    )).join('');
-    return `
-      <select class="lineup-move-select" data-lineup-player="${escapeHtml(player.id)}"
-              aria-label="Move ${escapeHtml(player.name)}">
-        <option value="">Move</option>
-        ${options}
-      </select>`;
+    if (playerLocked(player, lockState, context)) return '<span class="lineup-lock-icon" aria-label="Player locked">🔒</span>';
+    if (!destinations.length) return '<span class="lineup-move-placeholder" aria-hidden="true">—</span>';
+    const options = destinations.map((slot) => `<option value="${slot}">Move to ${slot.toUpperCase()}</option>`).join('');
+    return `<select class="lineup-move-select" data-lineup-player="${escapeHtml(player.id)}" aria-label="Move ${escapeHtml(player.name)}" ${saving ? 'disabled' : ''}>
+      <option value="">Move</option>${options}</select>`;
   }
 
   function playerRow(player, slotLabel, roster, rules, context) {
     const lock = activeLock(player, context);
     const locked = playerLocked(player, lockState, context);
     const kickoff = formatKickoff(lock.gameStartTime);
-    return `
-      <div class="lineup-player-row${locked ? ' is-locked' : ''}">
-        <div class="lineup-player-row__action">${moveControl(player, roster, rules, context)}</div>
-        <div class="lineup-player-row__slot">${escapeHtml(slotLabel)}</div>
-        <div class="lineup-player-row__identity">
-          <strong>${escapeHtml(player.name)}</strong>
-          <span>${escapeHtml(player.position)} · ${escapeHtml(player.team)}</span>
-        </div>
-        <div class="lineup-player-row__status">
-          ${locked ? '<span class="pill lineup-lock-pill">Locked</span>' : ''}
-          ${kickoff ? `<span>${escapeHtml(kickoff)}</span>` : ''}
-        </div>
-        <div class="lineup-player-row__points">${Number(player.projection || 0).toFixed(1)} pts</div>
-      </div>`;
+    return `<div class="lineup-player-row${locked ? ' is-locked' : ''}">
+      <div class="lineup-player-row__action">${moveControl(player, roster, rules, context)}</div>
+      <div class="lineup-player-row__slot">${escapeHtml(slotLabel)}</div>
+      <div class="lineup-player-row__identity"><strong>${escapeHtml(player.name)}</strong><span>${escapeHtml(player.position)} · ${escapeHtml(player.team)}</span></div>
+      <div class="lineup-player-row__status">${locked ? '<span class="pill lineup-lock-pill">Locked</span>' : ''}${kickoff ? `<span>${escapeHtml(kickoff)}</span>` : ''}</div>
+      <div class="lineup-player-row__points">${Number(player.projection || 0).toFixed(1)} pts</div>
+    </div>`;
   }
 
   function emptyRow(slotLabel) {
-    return `
-      <div class="lineup-player-row lineup-player-row--empty">
-        <div class="lineup-player-row__action"><span class="lineup-move-placeholder" aria-hidden="true">—</span></div>
-        <div class="lineup-player-row__slot">${escapeHtml(slotLabel)}</div>
-        <div class="lineup-player-row__identity">
-          <strong>Empty starter slot</strong>
-          <span>This position will score zero points.</span>
-        </div>
-        <div class="lineup-player-row__status"><span class="pill pill--muted">Empty</span></div>
-        <div class="lineup-player-row__points">0.0 pts</div>
-      </div>`;
+    return `<div class="lineup-player-row lineup-player-row--empty">
+      <div class="lineup-player-row__action"><span class="lineup-move-placeholder" aria-hidden="true">—</span></div>
+      <div class="lineup-player-row__slot">${escapeHtml(slotLabel)}</div>
+      <div class="lineup-player-row__identity"><strong>Empty starter slot</strong><span>This position will score zero points.</span></div>
+      <div class="lineup-player-row__status"><span class="pill pill--muted">Empty</span></div>
+      <div class="lineup-player-row__points">0.0 pts</div>
+    </div>`;
   }
 
   function renderTeamPanel() {
@@ -265,7 +279,7 @@
     const slotsHost = root.document?.getElementById?.('team-slots');
     if (!rosterHost || !slotsHost) return;
 
-    const roster = root.getRoster?.() || [];
+    const roster = workingRoster();
     const rules = normalizedRules();
     const context = currentWeekContext();
     const grouped = groupRoster(roster, rules);
@@ -274,73 +288,87 @@
       const used = assigned.get(definition.slot) || 0;
       const player = grouped.startersBySlot.get(definition.slot)?.[used];
       assigned.set(definition.slot, used + 1);
-      return player
-        ? playerRow(player, definition.label, roster, rules, context)
-        : emptyRow(definition.label);
+      return player ? playerRow(player, definition.label, roster, rules, context) : emptyRow(definition.label);
     }).join('');
     const benchHtml = grouped.bench.length
       ? grouped.bench.map((player, index) => playerRow(player, `BN ${index + 1}`, roster, rules, context)).join('')
       : '<div class="lineup-empty-bench">No bench players.</div>';
+    const dirty = hasPendingChanges(roster);
+    const errors = lineupSaveErrors(roster, root.getLeagueState?.());
+    const status = saving ? 'Saving lineup…'
+      : errors.length ? errors[0].message
+        : dirty ? 'Unsaved lineup changes' : 'Lineup matches the server';
 
-    rosterHost.innerHTML = `
-      <div class="lineup-week-heading">
-        <div>
-          <strong>Week ${context.week} lineup</strong>
-          <span>Players lock individually when their college game begins.</span>
-        </div>
-        <button class="button button--ghost lineup-refresh-locks" type="button">Refresh locks</button>
+    rosterHost.innerHTML = `<div class="lineup-week-heading">
+      <div><strong>Week ${context.week} lineup</strong><span>${escapeHtml(status)}</span></div>
+      <div class="lineup-editor-actions">
+        <button class="button button--ghost lineup-refresh-locks" type="button" ${saving ? 'disabled' : ''}>Refresh locks</button>
+        <button class="button button--ghost lineup-discard" type="button" ${!dirty || saving ? 'disabled' : ''}>Discard</button>
+        <button class="button button--primary lineup-save" type="button" ${!dirty || saving || errors.length ? 'disabled' : ''}>${saving ? 'Saving…' : 'Save lineup'}</button>
       </div>
-      <section class="lineup-section" aria-labelledby="lineup-starters-title">
-        <h3 id="lineup-starters-title">Starting lineup</h3>
-        <div class="lineup-table">${starterHtml || '<div class="lineup-empty-bench">No starter slots configured.</div>'}</div>
-      </section>
-      <section class="lineup-section" aria-labelledby="lineup-bench-title">
-        <h3 id="lineup-bench-title">Bench</h3>
-        <div class="lineup-table">${benchHtml}</div>
-      </section>`;
+    </div>
+    <section class="lineup-section" aria-labelledby="lineup-starters-title"><h3 id="lineup-starters-title">Starting lineup</h3><div class="lineup-table">${starterHtml || '<div class="lineup-empty-bench">No starter slots configured.</div>'}</div></section>
+    <section class="lineup-section" aria-labelledby="lineup-bench-title"><h3 id="lineup-bench-title">Bench</h3><div class="lineup-table">${benchHtml}</div></section>`;
 
     const empty = emptyStarterCount(roster, rules);
     const lockedPlayers = roster.filter((player) => playerLocked(player, lockState, context)).length;
-    const errors = lineupErrorsAllowEmpty(roster, root.getLeagueState?.());
-    slotsHost.innerHTML = `
-      <div class="lineup-summary-item"><span>Starter slots</span><strong>${starterSlots(rules).length}</strong></div>
+    slotsHost.innerHTML = `<div class="lineup-summary-item"><span>Starter slots</span><strong>${starterSlots(rules).length}</strong></div>
       <div class="lineup-summary-item"><span>Empty starters</span><strong>${empty}</strong></div>
       <div class="lineup-summary-item"><span>Locked players</span><strong>${lockedPlayers}</strong></div>
-      <div class="lineup-summary-item"><span>Lineup status</span><strong>${errors.length ? 'Needs correction' : 'Valid'}</strong></div>
-      <div class="lineup-zero-note">Empty starter positions are allowed and score 0 points for the week.</div>`;
+      <div class="lineup-summary-item"><span>Save status</span><strong>${errors.length ? 'Fix lineup' : dirty ? 'Pending' : 'Saved'}</strong></div>
+      <div class="lineup-zero-note">Moves are staged locally. Save commits the complete lineup once; invalid or locked saves leave the server roster unchanged.</div>`;
 
-    if (!lockState
-        || String(lockState.leagueId || '') !== String(root.getLeagueState?.()?.id || '')) {
+    if (!lockState || String(lockState.leagueId || '') !== activeLeagueId()) {
       void refreshLockState().then(() => renderTeamPanel()).catch(() => {});
     }
   }
 
-  async function movePlayer(playerId, slot) {
-    const roster = root.getRoster?.() || [];
+  function stagePlayerMove(playerId, slot) {
+    const roster = workingRoster();
     const player = roster.find((item) => String(item.id) === String(playerId));
     if (!player || !slot) return false;
     const context = currentWeekContext();
-    if (playerLocked(player, lockState, context)) {
-      throw new Error("This player's game has started, so the player is locked for the week.");
-    }
-    if (!legalDestinations(player, roster, normalizedRules()).includes(slot)) {
-      throw new Error('That player cannot move to the selected lineup slot.');
-    }
-
-    if (root.isLocalDemoSession?.() || !root.getAuthState?.()?.token) {
-      if (!root.setRosterSlot?.(playerId, slot)) throw new Error('The lineup move could not be saved.');
-    } else if (root.CFFRosterTransactions?.mutate) {
-      await root.CFFRosterTransactions.mutate(
-        'slot',
-        { playerId: String(playerId), slot, season: context.season, week: context.week },
-        `${playerId}:${slot}:${context.season}:${context.week}`
-      );
-    } else {
-      await root.updateRosterSlotApi?.(playerId, slot);
-    }
-    await refreshLockState(true).catch(() => null);
-    root.renderLeague?.();
+    if (playerLocked(player, lockState, context)) throw new Error("This player's game has started, so the player is locked for the week.");
+    if (!legalDestinations(player, roster, normalizedRules()).includes(slot)) throw new Error('That player cannot move to the selected lineup slot.');
+    stagedRoster = stageMoveInRoster(roster, playerId, slot);
+    stagedLeagueId = activeLeagueId();
+    renderTeamPanel();
     return true;
+  }
+
+  async function saveLineup() {
+    if (saving) return false;
+    const roster = workingRoster();
+    const errors = lineupSaveErrors(roster, root.getLeagueState?.());
+    if (errors.length) throw new Error(errors[0].message);
+    if (!hasPendingChanges(roster)) return false;
+    const context = currentWeekContext();
+    const assignments = assignmentsFromRoster(roster);
+    saving = true;
+    renderTeamPanel();
+    try {
+      if (root.isLocalDemoSession?.() || !root.getAuthState?.()?.token) {
+        if (typeof root.setRoster === 'function') root.setRoster(roster);
+        else assignments.forEach((assignment) => root.setRosterSlot?.(assignment.playerId, assignment.slot));
+      } else if (root.CFFRosterTransactions?.mutate) {
+        const fingerprint = `${context.season}:${context.week}:${assignments.map((item) => `${item.playerId}:${item.slot}`).join('|')}`;
+        await root.CFFRosterTransactions.mutate('lineup', { assignments, season: context.season, week: context.week }, fingerprint);
+      } else {
+        throw new Error('The server-authoritative lineup service is unavailable.');
+      }
+      resetStagedLineup();
+      await refreshLockState(true).catch(() => null);
+      await root.refreshLeagueDashboard?.({ allowCached: false });
+      root.CFF_UI?.notify?.('Lineup saved.', 'success');
+      return true;
+    } catch (error) {
+      resetStagedLineup();
+      throw error;
+    } finally {
+      saving = false;
+      root.renderLeague?.();
+      renderTeamPanel();
+    }
   }
 
   function install() {
@@ -356,9 +384,7 @@
     if (root.renderTeamPanel?.__cffWeeklyLineup) return true;
 
     root.lineupErrors = lineupErrorsAllowEmpty;
-    root.lineupValid = (roster = root.getRoster?.() || [], league = root.getLeagueState?.()) => (
-      lineupErrorsAllowEmpty(roster, league).length === 0
-    );
+    root.lineupValid = (roster = root.getRoster?.() || [], league = root.getLeagueState?.()) => lineupErrorsAllowEmpty(roster, league).length === 0;
     renderTeamPanel.__cffWeeklyLineup = true;
     root.renderTeamPanel = renderTeamPanel;
 
@@ -366,36 +392,57 @@
     rosterHost.addEventListener('change', (event) => {
       const select = event.target.closest?.('[data-lineup-player]');
       if (!select || !select.value) return;
-      const playerId = select.dataset.lineupPlayer;
-      const destination = select.value;
-      select.disabled = true;
-      void movePlayer(playerId, destination).catch((error) => {
-        root.CFF_UI?.notify?.(error?.userMessage || error?.data?.error || error?.message || 'Lineup move failed.', 'error');
+      try { stagePlayerMove(select.dataset.lineupPlayer, select.value); }
+      catch (error) {
+        root.CFF_UI?.notify?.(error?.message || 'Lineup move failed.', 'error');
         renderTeamPanel();
-      });
+      }
     });
     rosterHost.addEventListener('click', (event) => {
-      if (!event.target.closest?.('.lineup-refresh-locks')) return;
-      void refreshLockState(true).then(() => renderTeamPanel()).catch((error) => {
-        root.CFF_UI?.notify?.(error?.message || 'Could not refresh lineup locks.', 'error');
-      });
+      if (event.target.closest?.('.lineup-save')) {
+        void saveLineup().catch((error) => {
+          root.CFF_UI?.notify?.(error?.userMessage || error?.data?.error || error?.message || 'Lineup save failed.', 'error');
+        });
+        return;
+      }
+      if (event.target.closest?.('.lineup-discard')) {
+        resetStagedLineup();
+        renderTeamPanel();
+        return;
+      }
+      if (event.target.closest?.('.lineup-refresh-locks')) {
+        void refreshLockState(true).then(() => renderTeamPanel()).catch((error) => {
+          root.CFF_UI?.notify?.(error?.message || 'Could not refresh lineup locks.', 'error');
+        });
+      }
     });
     root.document.getElementById('scoreboard-week')?.addEventListener('change', () => {
+      resetStagedLineup();
       lockStateAt = 0;
       void refreshLockState(true).then(() => renderTeamPanel()).catch(() => renderTeamPanel());
     });
     root.addEventListener?.('cff:roster-transaction', () => {
+      if (!saving) resetStagedLineup();
       void refreshLockState(true).then(() => renderTeamPanel()).catch(() => renderTeamPanel());
     });
-    root.addEventListener?.('online', () => {
-      void refreshLockState(true).then(() => renderTeamPanel()).catch(() => {});
+    root.addEventListener?.('cff:active-league-changed', () => {
+      resetStagedLineup();
+      lockState = null;
+      lockStateAt = 0;
+      renderTeamPanel();
     });
+    root.addEventListener?.('online', () => { void refreshLockState(true).then(() => renderTeamPanel()).catch(() => {}); });
     root.document.addEventListener?.('visibilitychange', () => {
-      if (root.document.visibilityState === 'visible') {
-        void refreshLockState(true).then(() => renderTeamPanel()).catch(() => {});
-      }
+      if (root.document.visibilityState === 'visible') void refreshLockState(true).then(() => renderTeamPanel()).catch(() => {});
     });
 
+    root.CFFLineupManagement = Object.freeze({
+      stage: stagePlayerMove,
+      save: saveLineup,
+      discard() { resetStagedLineup(); renderTeamPanel(); },
+      pending: () => hasPendingChanges(),
+      assignments: () => assignmentsFromRoster(workingRoster())
+    });
     void refreshLockState(true).then(() => renderTeamPanel()).catch(() => renderTeamPanel());
     root.renderLeague();
     root.document.documentElement.dataset.cffLineupManagement = 'true';
@@ -405,11 +452,16 @@
   const helpers = {
     normalizedRules,
     starterSlots,
+    cloneRoster,
+    assignmentsFromRoster,
+    rosterSignature,
     playerLocked,
     groupRoster,
     positionEligible,
     legalDestinations,
     lineupErrorsAllowEmpty,
+    lineupSaveErrors,
+    stageMoveInRoster,
     emptyStarterCount
   };
 

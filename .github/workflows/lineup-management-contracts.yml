@@ -1,35 +1,49 @@
-name: Weekly lineup management contracts
+name: Server-authoritative lineup contracts
 
 on:
   push:
     branches: [main, Test]
     paths:
+      - "backend/db/migrations/025_server_authoritative_lineup.sql"
       - "backend/src/app_composition.cpp"
       - "backend/src/league_roster.cpp"
+      - "backend/src/league_roster.h"
       - "backend/src/lineup_game_lock.h"
       - "backend/src/roster_transaction_hardening.cpp"
+      - "backend/src/roster_transaction_hardening_advice.inc"
+      - "backend/src/roster_transaction_hardening_lineup.inc"
       - "backend/tests/league_roster_boundary_tests.py"
       - "backend/tests/league_roster_tests.cpp"
+      - "backend/tests/lineup_assignment_tests.cpp"
       - "backend/tests/lineup_game_lock_contract_tests.py"
+      - "backend/tests/server_authoritative_lineup_contract_tests.py"
       - "frontend/config.js"
       - "frontend/lineup-management.css"
       - "frontend/lineup-management.js"
       - "frontend/tests/lineup-management.test.js"
+      - "scripts/server_authoritative_lineup_runtime_contract.py"
       - ".github/workflows/lineup-management-contracts.yml"
   pull_request:
     branches: [main, Test]
     paths:
+      - "backend/db/migrations/025_server_authoritative_lineup.sql"
       - "backend/src/app_composition.cpp"
       - "backend/src/league_roster.cpp"
+      - "backend/src/league_roster.h"
       - "backend/src/lineup_game_lock.h"
       - "backend/src/roster_transaction_hardening.cpp"
+      - "backend/src/roster_transaction_hardening_advice.inc"
+      - "backend/src/roster_transaction_hardening_lineup.inc"
       - "backend/tests/league_roster_boundary_tests.py"
       - "backend/tests/league_roster_tests.cpp"
+      - "backend/tests/lineup_assignment_tests.cpp"
       - "backend/tests/lineup_game_lock_contract_tests.py"
+      - "backend/tests/server_authoritative_lineup_contract_tests.py"
       - "frontend/config.js"
       - "frontend/lineup-management.css"
       - "frontend/lineup-management.js"
       - "frontend/tests/lineup-management.test.js"
+      - "scripts/server_authoritative_lineup_runtime_contract.py"
       - ".github/workflows/lineup-management-contracts.yml"
   workflow_dispatch:
 
@@ -42,9 +56,9 @@ concurrency:
 
 jobs:
   focused-contracts:
-    name: Starter bench and weekly lock rules
+    name: Whole-lineup validation and staged editor
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,14 +68,116 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install focused C++ dependency
+        run: sudo apt-get update && sudo apt-get install -y libjsoncpp-dev
+
       - name: Validate focused source syntax
         run: |
+          node --check frontend/config.js
           node --check frontend/lineup-management.js
           node --check frontend/tests/lineup-management.test.js
+          python -m py_compile backend/tests/league_roster_boundary_tests.py
           python -m py_compile backend/tests/lineup_game_lock_contract_tests.py
+          python -m py_compile backend/tests/server_authoritative_lineup_contract_tests.py
+          python -m py_compile scripts/server_authoritative_lineup_runtime_contract.py
 
-      - name: Run lineup browser policy tests
+      - name: Run staged lineup browser contracts
         run: node frontend/tests/lineup-management.test.js
 
       - name: Run lineup source contracts
-        run: python backend/tests/lineup_game_lock_contract_tests.py
+        run: |
+          python backend/tests/league_roster_boundary_tests.py
+          python backend/tests/lineup_game_lock_contract_tests.py
+          python backend/tests/server_authoritative_lineup_contract_tests.py
+
+      - name: Compile and run lineup policy contracts
+        run: |
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            -Ibackend/src -I/usr/include/jsoncpp \
+            backend/tests/league_roster_tests.cpp \
+            backend/src/league_roster.cpp backend/src/json_utils.cpp \
+            -ljsoncpp -o /tmp/league_roster_tests
+          /tmp/league_roster_tests
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            -Ibackend/src -I/usr/include/jsoncpp \
+            backend/tests/lineup_assignment_tests.cpp \
+            backend/src/league_roster.cpp backend/src/json_utils.cpp \
+            -ljsoncpp -o /tmp/lineup_assignment_tests
+          /tmp/lineup_assignment_tests
+
+      - name: Verify production composition
+        run: |
+          grep -F 'roster_transaction_hardening_lineup.inc' backend/src/roster_transaction_hardening.cpp
+          grep -F 'requestedAction == "lineup"' backend/src/roster_transaction_hardening_advice.inc
+          grep -F "'schedule-lineup-lifecycle.js', 'lineup-management.js'" frontend/config.js
+          grep -F "CHECK (roster_slot IN ('qb', 'rb', 'wr', 'te', 'flex', 'k', 'def', 'bench'))" backend/db/migrations/025_server_authoritative_lineup.sql
+
+  postgres-runtime:
+    name: PostgreSQL atomic lineup save
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cff
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cff"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+      CFF_API_BASE_URL: http://127.0.0.1:8080
+      CFF_LINEUP_RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime dependency
+        run: python -m pip install --disable-pip-version-check "psycopg[binary]>=3.2,<4"
+      - name: Build production API image
+        run: docker build -f backend/Dockerfile -t college-ff-api-lineup .
+      - name: Apply production migrations
+        run: |
+          docker run --rm --network host --entrypoint sh \
+            -e DB_URL="$DB_URL" college-ff-api-lineup /srv/db/migrate.sh
+      - name: Generate isolated credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          jwt_secret="$(openssl rand -hex 32)"
+          admin_token="$(openssl rand -hex 32)"
+          password="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' 'Dd')-L7!"
+          for value in "$jwt_secret" "$admin_token" "$password"; do echo "::add-mask::$value"; done
+          echo "CFF_LINEUP_JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          echo "CFF_LINEUP_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
+          echo "CFF_CONTRACT_PASSWORD=$password" >> "$GITHUB_ENV"
+      - name: Start production API
+        run: |
+          docker run -d --name college-ff-api-lineup --network host \
+            -e PORT=8080 -e DB_URL="$DB_URL" \
+            -e JWT_SECRET="$CFF_LINEUP_JWT_SECRET" \
+            -e ALLOWED_ORIGINS=https://frontend.example.test \
+            -e CFF_ADMIN_API_TOKEN="$CFF_LINEUP_ADMIN_TOKEN" \
+            -e CFF_REQUIRE_DB=true -e CFF_RUN_MIGRATIONS_ON_STARTUP=false \
+            -e ESPN_ROSTER_AUTO_ONCE=false -e CFF_ALLOW_SHARED_SECRET_AUTH=false \
+            -e CFF_REQUIRE_EMAIL_VERIFICATION=false -e CFF_EXPOSE_AUTH_TOKENS=false \
+            -e CFF_LOG_AUTH_TOKENS=false -e CFF_SECURITY_ENFORCE_PRODUCTION=true \
+            -e CFF_TRUST_PROXY_HEADERS=false -e CFF_FRONTEND_BASE_URL=https://frontend.example.test \
+            -e CFF_MIN_PASSWORD_LENGTH=12 -e CFF_AUTH_BURST_CLIENT_LIMIT=500 \
+            -e CFF_SIGNUP_CLIENT_LIMIT=500 -e CFF_SIGNUP_ACCOUNT_LIMIT=100 \
+            college-ff-api-lineup
+      - name: Run production lineup contract
+        run: python scripts/server_authoritative_lineup_runtime_contract.py
+      - name: Print API logs
+        if: always()
+        run: docker logs college-ff-api-lineup || true
+      - name: Stop API
+        if: always()
+        run: docker rm -f college-ff-api-lineup || true

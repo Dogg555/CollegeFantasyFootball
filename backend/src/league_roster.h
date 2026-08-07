@@ -20,6 +20,10 @@ bool validateRosterSlotMove(const Json::Value &player,
                             const std::string &playerId,
                             const std::string &slot);
 
+Json::Value lineupAssignmentErrors(const Json::Value &roster,
+                                   const Json::Value &rules,
+                                   const Json::Value &assignments);
+
 Json::Value lineupErrorsFromCounts(
     const std::string &managerEmail,
     const Json::Value &rules,
