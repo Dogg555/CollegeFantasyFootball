@@ -88,13 +88,17 @@
       waiver_claim_required: 'This player must be acquired through waivers.',
       waivers_not_active: 'This league currently uses open free agency.',
       waiver_deadline_pending: 'The waiver deadline has not passed yet.',
+      waiver_deadline_passed: 'This waiver period is closed for new, cancelled, or reordered claims.',
       waiver_claim_limit: 'Too many waiver claims are pending for this manager.',
       waiver_reorder_conflict: 'Claim order changed. Reorder the complete latest pending list.',
       player_unavailable: 'That player was acquired by another manager.',
+      player_inactive: 'That player is no longer active in the authoritative player pool.',
+      player_ineligible: 'That player is not eligible for this league roster.',
+      player_locked: 'That player cannot be awarded because the active-week game has started.',
       drop_player_not_rostered: 'The selected drop player is no longer on your roster.',
+      drop_player_locked: 'The selected drop player is locked and can no longer be removed.',
       roster_full: 'Your roster is full. Include a valid player to drop.',
-      commissioner_required: 'Only the league commissioner can process waivers.',
-      waivers_locked: 'Waivers are locked after a finalized matchup.'
+      commissioner_required: 'Only the league commissioner can process waivers.'
     };
     if (messages[code]) return messages[code];
     if (uncertainFailure(error)) {
@@ -105,6 +109,127 @@
       || error?.data?.error
       || error?.message
       || fallback;
+  }
+
+  function claimFailureMessage(claim, fallback = 'This waiver claim was not awarded.') {
+    if (claim?.failureReason) return String(claim.failureReason);
+    if (claim?.failureCode) return waiverErrorMessage({ code: claim.failureCode }, fallback);
+    return fallback;
+  }
+
+  function claimShowsFailureDetails(claim) {
+    const status = String(claim?.status || '');
+    return (status === 'Failed' || status === 'Expired')
+      && Boolean(claim?.failureReason || claim?.failureCode);
+  }
+
+  function waiverPanelModel(state = latestState) {
+    const claims = Array.isArray(state?.claims) ? state.claims : [];
+    const claimsMutable = state?.claimsMutable !== false;
+    const periodProcessed = state?.periodProcessed === true;
+    return {
+      claims,
+      claimsMutable,
+      periodProcessed,
+      canProcess: state?.canProcess === true && !periodProcessed,
+      processingPeriod: String(state?.processingPeriod || ''),
+      claimDeadline: String(state?.waiverRules?.claimDeadline || ''),
+      pendingCount: Number(state?.pendingCount || claims.filter((claim) => claim?.status === 'Pending').length || 0)
+    };
+  }
+
+  function orderedClaimsForPanel(claims = []) {
+    return claims.slice().sort((a, b) => (
+      Number(a?.priority || 999) - Number(b?.priority || 999)
+      || Number(a?.claimOrder || 999) - Number(b?.claimOrder || 999)
+      || new Date(a?.createdAt || a?.submittedAt || 0).getTime() - new Date(b?.createdAt || b?.submittedAt || 0).getTime()
+      || String(a?.id || '').localeCompare(String(b?.id || ''))
+    ));
+  }
+
+  function applyWaiverPanelState(state = latestState) {
+    const documentObject = root.document;
+    if (!documentObject || !state || typeof state !== 'object') return waiverPanelModel(state);
+    const model = waiverPanelModel(state);
+    const addSelect = documentObject.getElementById?.('waiver-add-player');
+    const dropSelect = documentObject.getElementById?.('waiver-drop-player');
+    const form = documentObject.getElementById?.('waiver-form');
+    const submitButton = form?.querySelector?.('button[type="submit"]');
+    const status = documentObject.getElementById?.('waiver-status');
+    const list = documentObject.getElementById?.('waiver-list');
+    const hasAddOptions = Number(addSelect?.options?.length || 0) > 0;
+
+    if (addSelect) addSelect.disabled = !model.claimsMutable || !hasAddOptions;
+    if (dropSelect) dropSelect.disabled = !model.claimsMutable;
+    if (submitButton) submitButton.disabled = !model.claimsMutable || !hasAddOptions;
+
+    if (list) {
+      list.querySelectorAll?.('[data-cancel-waiver]').forEach((button) => {
+        button.disabled = !model.claimsMutable;
+      });
+      if (!model.claimsMutable) {
+        list.querySelectorAll?.('[data-waiver-up], [data-waiver-down]').forEach((button) => {
+          button.disabled = true;
+        });
+      }
+      list.querySelectorAll?.('[data-process-all-waivers], [data-process-waiver]').forEach((button) => {
+        button.disabled = !model.canProcess;
+      });
+
+      const processButton = list.querySelector?.('[data-process-all-waivers]');
+      const processRow = processButton?.closest?.('.row');
+      const processCopy = processRow?.querySelector?.('.muted');
+      if (processCopy) {
+        if (model.periodProcessed) {
+          processCopy.textContent = 'This waiver processing period has already been completed.';
+        } else if (model.claimsMutable) {
+          const deadline = model.claimDeadline ? new Date(model.claimDeadline) : null;
+          processCopy.textContent = deadline && !Number.isNaN(deadline.getTime())
+            ? `Claims can be changed until ${deadline.toLocaleString()}.`
+            : 'Claims remain editable until the configured waiver deadline.';
+        } else {
+          processCopy.textContent = 'Ready to process by priority, claim order, then submitted time.';
+        }
+      }
+
+      const claimRows = Array.from(list.querySelectorAll?.('.row') || [])
+        .filter((row) => !row.querySelector?.('[data-process-all-waivers]'));
+      const orderedClaims = orderedClaimsForPanel(model.claims);
+      claimRows.forEach((row, index) => {
+        const claim = orderedClaims[index];
+        if (!claim) return;
+        const badge = row.querySelector?.('.badge');
+        if (badge && claim.status) badge.textContent = String(claim.status);
+        row.querySelector?.('[data-waiver-failure]')?.remove?.();
+        if (claimShowsFailureDetails(claim)) {
+          const details = row.querySelector?.('div');
+          if (details && typeof documentObject.createElement === 'function') {
+            const reason = documentObject.createElement('div');
+            reason.className = 'muted small';
+            reason.dataset.waiverFailure = 'true';
+            reason.setAttribute?.('data-waiver-failure', 'true');
+            reason.textContent = claimFailureMessage(claim);
+            details.appendChild?.(reason);
+          }
+        }
+      });
+    }
+
+    if (status && /waivers are locked after finalized matchups/i.test(String(status.textContent || ''))) {
+      if (model.periodProcessed) {
+        status.textContent = 'This waiver processing period is complete.';
+      } else if (!model.claimsMutable && model.pendingCount > 0) {
+        status.textContent = 'Claim window closed. Pending claims are awaiting processing.';
+      } else {
+        status.textContent = '';
+      }
+    }
+    return model;
+  }
+
+  function queueWaiverPanelRefresh() {
+    if (typeof root.setTimeout === 'function') root.setTimeout(() => applyWaiverPanelState(), 0);
+    else applyWaiverPanelState();
   }
 
   function currentLeague() {
@@ -134,6 +259,7 @@
     if (Array.isArray(state?.roster)) root.setRoster?.(state.roster.map((player) => root.normalizePlayer?.(player) || player));
     root.writeApiCacheMeta?.('league', state?.leagueId || currentLeague()?.id || '');
     publishState(state);
+    queueWaiverPanelRefresh();
     return state;
   }
 
@@ -177,11 +303,12 @@
         // The confirmed state remains authoritative if a broader refresh fails.
       }
       root.renderLeague?.();
+      applyWaiverPanelState();
       return state;
     } catch (error) {
       if (!uncertainFailure(error)) clearOperation(action, league.id, operation.operationKey);
       const code = String(error?.data?.code || error?.code || '');
-      if (error?.status === 409 || code.startsWith('waiver_') || code === 'player_unavailable') {
+      if (error?.status === 409 || code.startsWith('waiver_') || code.startsWith('player_') || code.startsWith('drop_player_')) {
         const conflictState = error?.data?.state;
         if (conflictState && typeof conflictState === 'object') applyState(conflictState);
         else {
@@ -195,6 +322,76 @@
       error.userMessage = waiverErrorMessage(error);
       throw error;
     }
+  }
+
+  async function submitAuthoritativeWaiverForm(event, stateOverride = null) {
+    if (root.isLocalDemoSession?.() || !root.getAuthState?.()?.token) return false;
+    event?.preventDefault?.();
+    event?.stopImmediatePropagation?.();
+
+    const documentObject = root.document;
+    const status = documentObject?.getElementById?.('waiver-status');
+    let state = stateOverride;
+    const league = currentLeague();
+    if (!state || String(state?.leagueId || '') !== String(league?.id || '')) {
+      try {
+        state = await syncState();
+      } catch (error) {
+        if (status) status.textContent = waiverErrorMessage(error, 'Could not load the current waiver state.');
+        return true;
+      }
+    }
+    if (!state) {
+      if (status) status.textContent = 'Could not load the current waiver state.';
+      return true;
+    }
+
+    const model = waiverPanelModel(state);
+    if (!model.claimsMutable) {
+      if (status) status.textContent = 'This waiver period is closed for new claims.';
+      applyWaiverPanelState(state);
+      return true;
+    }
+
+    const addSelect = documentObject?.getElementById?.('waiver-add-player');
+    const dropSelect = documentObject?.getElementById?.('waiver-drop-player');
+    const playerId = String(addSelect?.value || '');
+    if (!playerId) {
+      if (status) status.textContent = 'No player selected.';
+      return true;
+    }
+
+    try {
+      await root.submitWaiverClaimApi?.({ id: playerId, playerId }, String(dropSelect?.value || ''));
+      root.renderLeague?.();
+      applyWaiverPanelState();
+      if (status) status.textContent = 'Waiver claim submitted.';
+    } catch (error) {
+      if (status) status.textContent = waiverErrorMessage(error, 'Could not submit waiver claim. No local changes were made.');
+    }
+    return true;
+  }
+
+  function installWaiverSubmitOverlay() {
+    const form = root.document?.getElementById?.('waiver-form');
+    if (!form || form.__cffWaiverPhase5Submit) return;
+    form.__cffWaiverPhase5Submit = true;
+    form.addEventListener?.('submit', (event) => {
+      if (root.isLocalDemoSession?.() || !root.getAuthState?.()?.token) return;
+      void submitAuthoritativeWaiverForm(event);
+    }, true);
+  }
+
+  function installRenderOverlay() {
+    const originalRenderLeague = root.renderLeague;
+    if (typeof originalRenderLeague !== 'function' || originalRenderLeague.__cffWaiverPhase5) return;
+    const wrappedRenderLeague = function phase5WaiverAwareRender(...args) {
+      const result = originalRenderLeague.apply(this, args);
+      applyWaiverPanelState();
+      return result;
+    };
+    wrappedRenderLeague.__cffWaiverPhase5 = true;
+    root.renderLeague = wrappedRenderLeague;
   }
 
   function install() {
@@ -219,8 +416,9 @@
     root.submitWaiverClaimApi = async function resilientWaiverCreate(addPlayer, dropPlayerId = '') {
       if (root.isLocalDemoSession?.()) return originals.submitWaiverClaimApi.call(this, addPlayer, dropPlayerId);
       const player = root.normalizePlayer?.(addPlayer) || addPlayer;
-      return requestMutation('create', { addPlayer: player, dropPlayerId },
-        `${String(player?.id || '')}:${String(dropPlayerId || '')}`);
+      const playerId = String(player?.id || player?.playerId || '');
+      return requestMutation('create', { addPlayerId: playerId, dropPlayerId },
+        `${playerId}:${String(dropPlayerId || '')}`);
     };
 
     root.cancelWaiverClaimApi = async function resilientWaiverCancel(claimId) {
@@ -240,7 +438,7 @@
 
     root.processWaiversApi = async function resilientWaiverProcessAll() {
       if (root.isLocalDemoSession?.()) return originals.processWaiversApi.call(this);
-      return requestMutation('process', {}, `process:${stateVersion()}`);
+      return requestMutation('process', {}, `process:${String(latestState?.processingPeriod || '')}:${stateVersion()}`);
     };
 
     root.resetWaiverPriorityApi = async function resilientPriorityReset() {
@@ -257,16 +455,18 @@
       root.resetWaiverPriorityApi
     ].forEach((fn) => { fn.__cffWaiverLifecycle = true; });
 
+    installWaiverSubmitOverlay();
+    installRenderOverlay();
     root.addEventListener?.('online', () => {
-      void syncState().then(() => root.renderLeague?.()).catch(() => {});
+      void syncState().then(() => { root.renderLeague?.(); applyWaiverPanelState(); }).catch(() => {});
     });
     root.addEventListener?.('storage', (event) => {
       if (event.key !== REVISION_STORAGE_KEY) return;
-      void syncState().then(() => root.renderLeague?.()).catch(() => {});
+      void syncState().then(() => { root.renderLeague?.(); applyWaiverPanelState(); }).catch(() => {});
     });
     root.document?.addEventListener?.('visibilitychange', () => {
       if (root.document.visibilityState === 'visible') {
-        void syncState().then(() => root.renderLeague?.()).catch(() => {});
+        void syncState().then(() => { root.renderLeague?.(); applyWaiverPanelState(); }).catch(() => {});
       }
     });
 
@@ -275,10 +475,14 @@
       sync: syncState,
       latest: () => latestState,
       currentVersion: () => stateVersion(),
-      errorMessage: waiverErrorMessage
+      errorMessage: waiverErrorMessage,
+      claimFailureMessage,
+      panelModel: waiverPanelModel,
+      applyPanelState: applyWaiverPanelState,
+      submitForm: submitAuthoritativeWaiverForm
     });
     root.document?.documentElement?.setAttribute?.('data-cff-waiver-lifecycle', 'true');
-    void syncState().then(() => root.renderLeague?.()).catch(() => {});
+    void syncState().then(() => { root.renderLeague?.(); applyWaiverPanelState(); }).catch(() => {});
   }
 
   const helpers = {
@@ -291,7 +495,13 @@
     operationFor,
     clearOperation,
     uncertainFailure,
-    waiverErrorMessage
+    waiverErrorMessage,
+    claimFailureMessage,
+    claimShowsFailureDetails,
+    waiverPanelModel,
+    orderedClaimsForPanel,
+    applyWaiverPanelState,
+    submitAuthoritativeWaiverForm
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = helpers;
