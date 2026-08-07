@@ -18,7 +18,12 @@ on:
       - "scripts/test_smtp_server.py"
       - "frontend/config.js"
       - "frontend/roster-transactions.js"
+      - "frontend/free-agent-directory.js"
+      - "frontend/players.html"
+      - "frontend/players.js"
+      - "frontend/player-catalog.css"
       - "frontend/tests/roster-transactions.test.js"
+      - "frontend/tests/free-agent-directory.test.js"
       - ".github/workflows/roster-transaction-contracts.yml"
   pull_request:
     branches: [main, Test, agent/draft-lifecycle-reliability]
@@ -37,7 +42,12 @@ on:
       - "scripts/test_smtp_server.py"
       - "frontend/config.js"
       - "frontend/roster-transactions.js"
+      - "frontend/free-agent-directory.js"
+      - "frontend/players.html"
+      - "frontend/players.js"
+      - "frontend/player-catalog.css"
       - "frontend/tests/roster-transactions.test.js"
+      - "frontend/tests/free-agent-directory.test.js"
       - ".github/workflows/roster-transaction-contracts.yml"
   workflow_dispatch:
 
@@ -50,6 +60,7 @@ concurrency:
 
 jobs:
   contracts:
+    name: Free-agent browser and source contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 12
 
@@ -72,7 +83,10 @@ jobs:
       - name: Validate transaction sources
         run: |
           node --check frontend/roster-transactions.js
+          node --check frontend/free-agent-directory.js
+          node --check frontend/players.js
           node --check frontend/tests/roster-transactions.test.js
+          node --check frontend/tests/free-agent-directory.test.js
           python -m py_compile \
             backend/tests/roster_transaction_contract_tests.py \
             scripts/roster_transaction_runtime_contract.py
@@ -80,6 +94,7 @@ jobs:
       - name: Run browser and source contracts
         run: |
           node frontend/tests/roster-transactions.test.js
+          node frontend/tests/free-agent-directory.test.js
           python backend/tests/roster_transaction_contract_tests.py
 
       - name: Compile and run roster transaction rules
@@ -95,7 +110,7 @@ jobs:
           /tmp/roster_transaction_tests
 
   postgres-race:
-    name: PostgreSQL ownership and swap race
+    name: PostgreSQL authoritative add/drop race
     needs: contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -215,7 +230,7 @@ jobs:
             -e CFF_SIGNUP_RATE_WINDOW_MINUTES=60 \
             college-ff-api-roster-contracts
 
-      - name: Run ownership, rollback, swap, and waiver contracts
+      - name: Run canonical availability, rollback, swap, lock, and race contracts
         shell: bash
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
