@@ -21,6 +21,7 @@
 #include "http_security.h"
 #include "league_roster.h"
 #include "league_waiver.h"
+#include "lineup_game_lock.h"
 #include "roster_transaction.h"
 #include "waiver_lifecycle.h"
 
@@ -48,6 +49,11 @@ std::string lower(std::string value) {
 
 std::string canonicalEmail(std::string value) {
     return cff::waiver_lifecycle::canonicalEmail(std::move(value));
+}
+
+std::string jsonStringMember(const Json::Value &value, const char *key) {
+    if (!value.isObject() || !value.isMember(key) || !value[key].isString()) return "";
+    return value[key].asString();
 }
 
 std::string jsonToString(const Json::Value &value) {
@@ -135,9 +141,26 @@ bool parseWaiverClaimPath(const std::string &path,
 
 #ifdef CFF_HAS_POSTGRES
 #include "roster_transaction_hardening_db.inc"
+#include "roster_transaction_hardening_directory.inc"
 #include "waiver_lifecycle_hardening_db.inc"
+#include "waiver_lifecycle_hardening_phase5_db.inc"
 #include "waiver_lifecycle_hardening_payload.inc"
+
+#define createWaiverClaim legacyCreateWaiverClaim
+#define cancelWaiverClaim legacyCancelWaiverClaim
+#define reorderWaiverClaims legacyReorderWaiverClaims
+#define processWaiverClaims legacyProcessWaiverClaims
+#define dispatchWaiverTransaction legacyDispatchWaiverTransaction
 #include "waiver_lifecycle_hardening_mutations.inc"
+#undef dispatchWaiverTransaction
+#undef processWaiverClaims
+#undef reorderWaiverClaims
+#undef cancelWaiverClaim
+#undef createWaiverClaim
+
+#define waiverProcessingPeriod(rules) effectiveWaiverProcessingPeriod(context->connection.get(), leagueId, rules)
+#include "waiver_lifecycle_hardening_phase5_mutations.inc"
+#undef waiverProcessingPeriod
 #endif
 
 #include "waiver_lifecycle_hardening_advice.inc"

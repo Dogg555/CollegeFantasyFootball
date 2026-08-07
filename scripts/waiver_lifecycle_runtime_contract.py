@@ -17,6 +17,9 @@ DB_URL = os.environ["DB_URL"]
 ORIGIN = os.getenv("CFF_CONTRACT_ORIGIN", "https://frontend.example.test")
 PASSWORD = os.getenv("CFF_CONTRACT_PASSWORD", "Waiver-Contract-Password-2026!")
 RUN_KEY = os.getenv("CFF_WAIVER_RUN_KEY", str(time.time_ns()))
+PROCESSING_PERIOD = f"waiver-period-{RUN_KEY}"
+OPEN_DEADLINE = "2999-01-01T00:00"
+CLOSED_DEADLINE = "2000-01-01T00:00"
 
 
 class ContractFailure(RuntimeError):
@@ -119,15 +122,24 @@ def transaction(
     )
 
 
-def player(player_id: str, name: str, position: str = "WR") -> dict[str, Any]:
+def spoofed_player(player_id: str, name: str, position: str = "WR") -> dict[str, Any]:
     return {
         "id": player_id,
         "playerId": player_id,
         "name": name,
         "position": position,
-        "team": "Contract U",
-        "projection": 10.0,
+        "team": "Spoofed U",
+        "projection": 999.0,
     }
+
+
+def canonical_players() -> list[tuple[str, str, str]]:
+    return [
+        (f"player-x-{RUN_KEY}", "Player X", "Contract X"),
+        (f"player-y-{RUN_KEY}", "Player Y", "Contract Y"),
+        (f"player-z-{RUN_KEY}", "Player Z", "Contract Z"),
+        (f"player-cancel-{RUN_KEY}", "Cancel Player", "Contract Cancel"),
+    ]
 
 
 def configure_league(league_id: str, emails: list[str]) -> None:
@@ -140,7 +152,17 @@ def configure_league(league_id: str, emails: list[str]) -> None:
             )
             cursor.execute(
                 "UPDATE leagues SET waiver_rules = %s::jsonb, updated_at = NOW() WHERE id = %s",
-                (json.dumps({"mode": "waivers", "claimDeadline": "2000-01-01T00:00", "freeAgencyLocked": True}), league_id),
+                (
+                    json.dumps(
+                        {
+                            "mode": "waivers",
+                            "claimDeadline": OPEN_DEADLINE,
+                            "processingPeriod": PROCESSING_PERIOD,
+                            "freeAgencyLocked": True,
+                        }
+                    ),
+                    league_id,
+                ),
             )
             cursor.execute("DELETE FROM waiver_priorities WHERE league_id = %s", (league_id,))
             for priority, email in enumerate(emails, start=1):
@@ -149,6 +171,16 @@ def configure_league(league_id: str, emails: list[str]) -> None:
                     "VALUES (%s, %s, %s, NOW())",
                     (league_id, email, priority),
                 )
+            for player_id, name, team in canonical_players():
+                cursor.execute(
+                    "INSERT INTO players "
+                    "(id, full_name, position, team, conference, year, active, season, updated_at) "
+                    "VALUES (%s, %s, 'WR', %s, 'Contract Conference', 'JR', TRUE, 2026, NOW()) "
+                    "ON CONFLICT (id) DO UPDATE SET full_name = EXCLUDED.full_name, "
+                    "position = EXCLUDED.position, team = EXCLUDED.team, conference = EXCLUDED.conference, "
+                    "year = EXCLUDED.year, active = TRUE, season = 2026, updated_at = NOW()",
+                    (player_id, name, team),
+                )
             cursor.execute(
                 "INSERT INTO roster_states (league_id, manager_email, version, updated_at) "
                 "SELECT %s, email, 0, NOW() FROM league_members WHERE league_id = %s "
@@ -156,8 +188,10 @@ def configure_league(league_id: str, emails: list[str]) -> None:
                 (league_id, league_id),
             )
             cursor.execute(
-                "INSERT INTO waiver_states (league_id, version, updated_at) VALUES (%s, 0, NOW()) "
-                "ON CONFLICT (league_id) DO UPDATE SET version = 0, updated_at = NOW()",
+                "INSERT INTO waiver_states (league_id, version, last_processing_period, updated_at) "
+                "VALUES (%s, 0, '', NOW()) "
+                "ON CONFLICT (league_id) DO UPDATE SET version = 0, last_processing_period = '', "
+                "last_processed_at = NULL, last_processing_run_id = NULL, updated_at = NOW()",
                 (league_id,),
             )
             cursor.execute(
@@ -165,6 +199,17 @@ def configure_league(league_id: str, emails: list[str]) -> None:
                 (league_id,),
             )
             require(int(cursor.fetchone()[0]) == len(emails), "not all invited managers became active")
+        connection.commit()
+
+
+def close_processing_period(league_id: str) -> None:
+    with psycopg.connect(DB_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE leagues SET waiver_rules = jsonb_set(waiver_rules, '{claimDeadline}', to_jsonb(%s::text)), "
+                "updated_at = NOW() WHERE id = %s",
+                (CLOSED_DEADLINE, league_id),
+            )
         connection.commit()
 
 
@@ -178,6 +223,18 @@ def db_player_owner(league_id: str, player_id: str) -> str:
             rows = cursor.fetchall()
             require(len(rows) <= 1, f"player {player_id} has duplicate owners: {rows!r}")
             return str(rows[0][0]) if rows else ""
+
+
+def db_roster_snapshot_name(league_id: str, player_id: str) -> str:
+    with psycopg.connect(DB_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COALESCE(player_snapshot->>'name', '') FROM rosters "
+                "WHERE league_id = %s AND player_id = %s",
+                (league_id, player_id),
+            )
+            row = cursor.fetchone()
+            return str(row[0]) if row else ""
 
 
 def main() -> None:
@@ -219,9 +276,25 @@ def main() -> None:
     )
     require(state.get("version") == 0, f"initial waiver version wrong: {state!r}")
     require(state.get("waiverModeActive") is True, f"waiver mode not active: {state!r}")
-    require(state.get("deadlinePassed") is True, f"past deadline not recognized: {state!r}")
+    require(state.get("deadlinePassed") is False, f"open deadline not recognized: {state!r}")
+    require(state.get("claimsMutable") is True, f"open-period claim controls are disabled: {state!r}")
+    require(state.get("processingPeriod") == PROCESSING_PERIOD, f"processing period missing: {state!r}")
 
     version = int(state["version"])
+    unknown = expect(
+        transaction(
+            league_id,
+            tokens[emails[0]],
+            f"unknown-player-{RUN_KEY}",
+            "create",
+            version,
+            addPlayerId=f"unknown-{RUN_KEY}",
+        ),
+        409,
+        "unknown player claim",
+    )
+    require(unknown.get("code") == "player_inactive", f"unknown player was not rejected authoritatively: {unknown!r}")
+
     owner_y = expect(
         transaction(
             league_id,
@@ -229,12 +302,17 @@ def main() -> None:
             f"owner-y-{RUN_KEY}",
             "create",
             version,
-            addPlayer=player(f"player-y-{RUN_KEY}", "Player Y"),
+            addPlayer=spoofed_player(f"player-y-{RUN_KEY}", "Spoofed Player Y"),
         ),
         200,
         "owner claim Y",
     )
     owner_y_id = str(owner_y["claimId"])
+    owner_y_claim = next(claim for claim in owner_y["claims"] if claim["id"] == owner_y_id)
+    require(owner_y_claim["addPlayer"]["name"] == "Player Y",
+            f"claim stored spoofed player metadata: {owner_y_claim!r}")
+    require(owner_y_claim["processingPeriod"] == PROCESSING_PERIOD,
+            f"claim did not persist processing period: {owner_y_claim!r}")
     version = int(owner_y["version"])
 
     owner_x = expect(
@@ -244,7 +322,7 @@ def main() -> None:
             f"owner-x-{RUN_KEY}",
             "create",
             version,
-            addPlayer=player(f"player-x-{RUN_KEY}", "Player X"),
+            addPlayerId=f"player-x-{RUN_KEY}",
         ),
         200,
         "owner claim X",
@@ -279,7 +357,7 @@ def main() -> None:
             f"member-x-{RUN_KEY}",
             "create",
             version,
-            addPlayer=player(f"player-x-{RUN_KEY}", "Player X"),
+            addPlayerId=f"player-x-{RUN_KEY}",
         ),
         200,
         "member competing X claim",
@@ -294,7 +372,7 @@ def main() -> None:
             f"member-z-{RUN_KEY}",
             "create",
             version,
-            addPlayer=player(f"player-z-{RUN_KEY}", "Player Z"),
+            addPlayerId=f"player-z-{RUN_KEY}",
         ),
         200,
         "member claim Z",
@@ -309,7 +387,7 @@ def main() -> None:
             f"member2-create-{RUN_KEY}",
             "create",
             version,
-            addPlayer=player(f"player-cancel-{RUN_KEY}", "Cancel Player"),
+            addPlayerId=f"player-cancel-{RUN_KEY}",
         ),
         200,
         "member2 cancellable claim",
@@ -354,7 +432,7 @@ def main() -> None:
             f"stale-create-{RUN_KEY}",
             "create",
             version - 1,
-            addPlayer=player(f"stale-player-{RUN_KEY}", "Stale Player"),
+            addPlayerId=f"player-z-{RUN_KEY}",
         ),
         409,
         "stale claim creation",
@@ -362,6 +440,32 @@ def main() -> None:
     require(stale.get("code") == "waiver_state_conflict", f"wrong stale code: {stale!r}")
     require(int(stale.get("state", {}).get("version", -1)) == version,
             f"stale conflict omitted authoritative state: {stale!r}")
+
+    close_processing_period(league_id)
+    closed_state = expect(
+        call("GET", f"/api/leagues/{league_id}/waivers/state", token=tokens[emails[0]]),
+        200,
+        "closed waiver state",
+    )
+    require(closed_state.get("deadlinePassed") is True and closed_state.get("claimsMutable") is False,
+            f"closed period still allows claim management: {closed_state!r}")
+    require(closed_state.get("processingPeriod") == PROCESSING_PERIOD,
+            f"deadline transition changed processing period identity: {closed_state!r}")
+
+    late_reorder = expect(
+        transaction(
+            league_id,
+            tokens[emails[0]],
+            f"late-reorder-{RUN_KEY}",
+            "reorder",
+            version,
+            claimIds=[owner_x_id, owner_y_id],
+        ),
+        409,
+        "post-deadline reorder",
+    )
+    require(late_reorder.get("code") == "waiver_deadline_passed",
+            f"post-deadline reorder was not blocked: {late_reorder!r}")
 
     out_of_order = expect(
         transaction(
@@ -398,6 +502,8 @@ def main() -> None:
     require(processed.get("failed") == [member_x_id],
             f"competing losing claim was not the sole failure: {processed.get('failed')!r}")
     require(processed.get("pendingCount") == 0, f"waiver run left pending claims: {processed!r}")
+    require(processed.get("lastProcessingPeriod") == PROCESSING_PERIOD,
+            f"completed processing period was not persisted: {processed!r}")
 
     require(db_player_owner(league_id, f"player-x-{RUN_KEY}") == emails[0],
             "owner did not win top-priority player X")
@@ -405,16 +511,23 @@ def main() -> None:
             "owner did not receive second claim after dynamic rotation")
     require(db_player_owner(league_id, f"player-z-{RUN_KEY}") == emails[1],
             "member did not win player Z")
+    require(db_roster_snapshot_name(league_id, f"player-y-{RUN_KEY}") == "Player Y",
+            "processed roster stored spoofed claim metadata instead of canonical player state")
 
+    successful_claim = next(claim for claim in processed["claims"] if claim["id"] == owner_x_id)
+    require(successful_claim["status"] == "Successful",
+            f"successful claim did not expose successful status: {successful_claim!r}")
     failed_claim = next(claim for claim in processed["claims"] if claim["id"] == member_x_id)
     require(failed_claim["status"] == "Failed" and failed_claim["failureCode"] == "player_unavailable",
             f"losing same-player claim failure state wrong: {failed_claim!r}")
+    require(bool(failed_claim.get("failureReason")),
+            f"losing claim omitted readable failure reason: {failed_claim!r}")
 
     priority_emails = [entry["managerEmail"] for entry in processed["priority"]]
     require(priority_emails == [emails[2], emails[3], emails[1], emails[0]],
             f"dynamic priority rotation wrong: {priority_emails!r}")
 
-    roster_versions = {entry["manager_email"]: int(entry["version"]) for entry in []}
+    roster_versions: dict[str, int] = {}
     with psycopg.connect(DB_URL) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -455,9 +568,28 @@ def main() -> None:
     require(replay.get("processed") == processed.get("processed"),
             f"processing replay changed results: {replay!r}")
 
+    period_retry = expect(
+        transaction(
+            league_id,
+            tokens[emails[0]],
+            f"process-period-retry-{RUN_KEY}",
+            "process",
+            version,
+        ),
+        200,
+        "same-period semantic retry",
+    )
+    require(period_retry.get("periodAlreadyProcessed") is True,
+            f"same processing period was not recognized as complete: {period_retry!r}")
+    require(int(period_retry["version"]) == final_version,
+            f"same-period retry changed waiver version: {period_retry!r}")
+    require(db_player_owner(league_id, f"player-x-{RUN_KEY}") == emails[0],
+            "same-period retry changed player ownership")
+
     print(json.dumps({
         "status": "ok",
         "leagueId": league_id,
+        "processingPeriod": PROCESSING_PERIOD,
         "processed": processed["processed"],
         "failed": processed["failed"],
         "finalVersion": final_version,
