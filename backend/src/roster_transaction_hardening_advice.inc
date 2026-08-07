@@ -6,9 +6,11 @@ drogon::HttpResponsePtr rosterTransactionAdvice(const drogon::HttpRequestPtr &re
 
     std::string leagueId;
     std::string playerId;
-    enum class Action { None, State, Transaction, LegacyAdd, LegacyDrop, LegacySlot } action = Action::None;
+    enum class Action { None, Directory, State, Transaction, LegacyAdd, LegacyDrop, LegacySlot } action = Action::None;
 
-    if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/roster/state")).empty()) {
+    if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/players")).empty()) {
+        action = Action::Directory;
+    } else if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/roster/state")).empty()) {
         action = Action::State;
     } else if (method == drogon::Post
                && !(leagueId = pathLeagueId(path, "/roster/transactions")).empty()) {
@@ -36,12 +38,14 @@ drogon::HttpResponsePtr rosterTransactionAdvice(const drogon::HttpRequestPtr &re
     }
 
     switch (action) {
+        case Action::Directory:
+            return respond(getFreeAgentDirectory(request, leagueId, *email));
         case Action::State:
             return respond(getRosterState(leagueId, *email));
         case Action::Transaction: {
             const auto body = request->getJsonObject();
             const auto requestedAction = body && body->isObject()
-                ? lower(trim(body->get("action", "").asString()))
+                ? lower(trim(jsonStringMember(*body, "action")))
                 : std::string{};
             return respond(requestedAction == "lineup"
                 ? mutateLineup(request, leagueId, *email)

@@ -13,8 +13,9 @@ std::string rosterActionName(RosterAction action) {
 std::string playerNameFromRoster(const Json::Value &roster,
                                  const std::string &playerId) {
     for (const auto &player : roster) {
-        if (cff::roster_transaction::canonicalPlayerId(player.get("id", "").asString()) == playerId) {
-            return player.get("name", playerId).asString();
+        if (cff::roster_transaction::canonicalPlayerId(jsonStringMember(player, "id")) == playerId) {
+            const auto name = jsonStringMember(player, "name");
+            return name.empty() ? playerId : name;
         }
     }
     return playerId;
@@ -145,7 +146,7 @@ drogon::HttpResponsePtr mutateRoster(const drogon::HttpRequestPtr &request,
     if (lineupLocked(connection.get(), leagueId)) {
         rollback(connection.get());
         return errorResponse(drogon::k409Conflict,
-                             "Roster changes are locked after a matchup is finalized.",
+                             "That roster or lineup move is currently locked.",
                              "lineup_locked");
     }
 
@@ -164,30 +165,33 @@ drogon::HttpResponsePtr mutateRoster(const drogon::HttpRequestPtr &request,
     }
 
     const auto roster = rosterPayload(connection.get(), leagueId, email);
-    Json::Value addPlayer(Json::objectValue);
-    if (body.isMember("addPlayer") && body["addPlayer"].isObject()) addPlayer = body["addPlayer"];
-    else if (body.isMember("player") && body["player"].isObject()) addPlayer = body["player"];
+    Json::Value requestedAddPlayer(Json::objectValue);
+    if (body.isMember("addPlayer") && body["addPlayer"].isObject()) requestedAddPlayer = body["addPlayer"];
+    else if (body.isMember("player") && body["player"].isObject()) requestedAddPlayer = body["player"];
+    else if (action == RosterAction::Add || action == RosterAction::Swap) requestedAddPlayer = body;
 
-    auto addPlayerId = cff::roster_transaction::canonicalPlayerId(addPlayer.get("id", "").asString());
+    auto addPlayerId = cff::roster_transaction::canonicalPlayerId(jsonStringMember(requestedAddPlayer, "id"));
     if (addPlayerId.empty()) {
-        addPlayerId = cff::roster_transaction::canonicalPlayerId(addPlayer.get("playerId", "").asString());
+        addPlayerId = cff::roster_transaction::canonicalPlayerId(jsonStringMember(requestedAddPlayer, "playerId"));
     }
-    auto dropPlayerId = cff::roster_transaction::canonicalPlayerId(
-        body.get("dropPlayerId", body.get("playerId", "")).asString());
-    auto slotPlayerId = cff::roster_transaction::canonicalPlayerId(
-        pathPlayerId.empty() ? body.get("playerId", "").asString() : pathPlayerId);
-    const auto requestedSlot = lower(trim(body.get("slot", "").asString()));
+    auto dropPlayerId = cff::roster_transaction::canonicalPlayerId(jsonStringMember(body, "dropPlayerId"));
+    if (dropPlayerId.empty()) {
+        dropPlayerId = cff::roster_transaction::canonicalPlayerId(jsonStringMember(body, "playerId"));
+    }
+    const auto slotPlayerId = cff::roster_transaction::canonicalPlayerId(
+        pathPlayerId.empty() ? jsonStringMember(body, "playerId") : pathPlayerId);
+    const auto requestedSlot = lower(trim(jsonStringMember(body, "slot")));
 
     if ((action == RosterAction::Add || action == RosterAction::Swap) && addPlayerId.empty()) {
         rollback(connection.get());
         return errorResponse(drogon::k400BadRequest,
-                             "The player being added must include an ID.",
+                             "The player being added must include a string ID.",
                              "player_id_required");
     }
     if ((action == RosterAction::Drop || action == RosterAction::Swap) && dropPlayerId.empty()) {
         rollback(connection.get());
         return errorResponse(drogon::k400BadRequest,
-                             "The player being dropped must include an ID.",
+                             "The player being dropped must include a string ID.",
                              "drop_player_required");
     }
     if (action == RosterAction::Slot && (slotPlayerId.empty() || requestedSlot.empty())) {
@@ -203,6 +207,30 @@ drogon::HttpResponsePtr mutateRoster(const drogon::HttpRequestPtr &request,
                              "invalid_roster_swap");
     }
 
+    Json::Value addPlayer(Json::objectValue);
+    if (action == RosterAction::Add || action == RosterAction::Swap) {
+        const auto authoritativePlayer = authoritativePlayerSnapshot(connection.get(), addPlayerId);
+        if (!authoritativePlayer) {
+            rollback(connection.get());
+            return errorResponse(drogon::k409Conflict,
+                                 "That player is not in the active fantasy player pool.",
+                                 "player_ineligible");
+        }
+        addPlayer = *authoritativePlayer;
+        if (!freeAgentPlayerPoolEligible(addPlayer, access.rosterRules)) {
+            rollback(connection.get());
+            return errorResponse(drogon::k409Conflict,
+                                 "That player's position is not eligible in this league's roster configuration.",
+                                 "player_ineligible");
+        }
+        if (freeAgentPlayerLocked(connection.get(), leagueId, jsonStringMember(addPlayer, "team"))) {
+            rollback(connection.get());
+            return errorResponse(drogon::k409Conflict,
+                                 "That player's game has already started for the active fantasy week.",
+                                 "player_locked");
+        }
+    }
+
     if (action == RosterAction::Drop || action == RosterAction::Swap) {
         if (!cff::roster_transaction::rosterContainsPlayer(roster, dropPlayerId)) {
             rollback(connection.get());
@@ -210,12 +238,19 @@ drogon::HttpResponsePtr mutateRoster(const drogon::HttpRequestPtr &request,
                                  "The selected drop player is no longer on your roster.",
                                  "drop_player_not_rostered");
         }
+        if (!cff::lineup_game_lock::slotMoveAllowed(
+                connection.get(), leagueId, email, body, dropPlayerId)) {
+            rollback(connection.get());
+            return errorResponse(drogon::k409Conflict,
+                                 "The selected drop player is locked for the active fantasy week.",
+                                 "drop_player_locked");
+        }
     }
 
     if (action == RosterAction::Slot) {
         Json::Value selectedPlayer(Json::objectValue);
         for (const auto &player : roster) {
-            if (cff::roster_transaction::canonicalPlayerId(player.get("id", "").asString()) == slotPlayerId) {
+            if (cff::roster_transaction::canonicalPlayerId(jsonStringMember(player, "id")) == slotPlayerId) {
                 selectedPlayer = player;
                 break;
             }
@@ -266,7 +301,8 @@ drogon::HttpResponsePtr mutateRoster(const drogon::HttpRequestPtr &request,
     const auto droppedName = dropPlayerId.empty()
         ? std::string{}
         : playerNameFromRoster(roster, dropPlayerId);
-    const auto addedName = addPlayer.get("name", addPlayerId).asString();
+    const auto authoritativeAddedName = jsonStringMember(addPlayer, "name");
+    const auto addedName = authoritativeAddedName.empty() ? addPlayerId : authoritativeAddedName;
 
     if (action == RosterAction::Drop || action == RosterAction::Swap) {
         auto removed = execute(connection.get(),
@@ -282,8 +318,6 @@ drogon::HttpResponsePtr mutateRoster(const drogon::HttpRequestPtr &request,
     }
 
     if (action == RosterAction::Add || action == RosterAction::Swap) {
-        addPlayer["id"] = addPlayerId;
-        addPlayer["playerId"] = addPlayerId;
         auto inserted = execute(connection.get(),
             "INSERT INTO rosters "
             "(league_id, manager_email, player_id, player_snapshot, roster_slot, acquired_via, acquired_at) "
@@ -387,7 +421,7 @@ drogon::HttpResponsePtr dispatchRosterTransaction(const drogon::HttpRequestPtr &
                              "Roster transaction details are required.",
                              "roster_payload_required");
     }
-    const auto action = lower(trim(body->get("action", "").asString()));
+    const auto action = lower(trim(jsonStringMember(*body, "action")));
     if (action == "add") return mutateRoster(request, leagueId, email, RosterAction::Add);
     if (action == "drop") return mutateRoster(request, leagueId, email, RosterAction::Drop);
     if (action == "swap") return mutateRoster(request, leagueId, email, RosterAction::Swap);

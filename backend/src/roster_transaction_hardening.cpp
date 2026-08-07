@@ -48,6 +48,11 @@ std::string canonicalEmail(std::string value) {
     return lower(trim(std::move(value)));
 }
 
+std::string jsonStringMember(const Json::Value &value, const char *key) {
+    if (!value.isObject() || !value.isMember(key) || !value[key].isString()) return "";
+    return value[key].asString();
+}
+
 std::string jsonToString(const Json::Value &value) {
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";
@@ -136,6 +141,7 @@ bool parseRosterSlotPath(const std::string &path,
 #ifdef CFF_HAS_POSTGRES
 #include "roster_transaction_hardening_db.inc"
 #include "roster_transaction_hardening_payload.inc"
+#include "roster_transaction_hardening_directory.inc"
 #include "roster_transaction_hardening_lineup.inc"
 
 bool rosterActionLocked(PGconn *connection,
@@ -144,9 +150,13 @@ bool rosterActionLocked(PGconn *connection,
                         const std::string &email,
                         const Json::Value &body,
                         const std::string &pathPlayerId) {
-    if (!slotAction) return lineupLocked(connection, leagueId);
+    // Immediate free-agent transactions are checked against the specific added
+    // and dropped players below. A historical finalized week must not globally
+    // freeze future add/drop activity.
+    if (!slotAction) return false;
+    const auto bodyPlayerId = jsonStringMember(body, "playerId");
     const auto playerId = cff::roster_transaction::canonicalPlayerId(
-        pathPlayerId.empty() ? body.get("playerId", "").asString() : pathPlayerId);
+        pathPlayerId.empty() ? bodyPlayerId : pathPlayerId);
     if (playerId.empty()) return false;
     return !cff::lineup_game_lock::slotMoveAllowed(
         connection, leagueId, email, body, playerId);

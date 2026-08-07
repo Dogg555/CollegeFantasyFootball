@@ -32,10 +32,9 @@
     <div class="hero__content">
       <div class="hero__copy">
         <p class="pill pill--muted">Players</p>
-        <h1>Search the current player pool</h1>
+        <h1>Find and add free agents</h1>
         <p class="subtitle">
-          Browse active FBS rosters or search by player, team, position, and conference. The weekly roster
-          refresh keeps draft and waiver results aligned with the current season.
+          Search the current player pool, see league-aware availability and game status, then review the roster impact before an add or add/drop is committed.
         </p>
       </div>
     </div>
@@ -43,12 +42,13 @@
 
   <main class="layout layout--narrow">
     <section class="card">
-      <div class="card__header">
+      <div class="card__header player-directory-header">
         <div>
-          <h2>Player Search</h2>
+          <h2>Player Directory</h2>
           <div id="player-data-status" class="muted small">Loading active FBS rosters...</div>
+          <div id="player-league-context" class="muted small" aria-live="polite">Checking league context...</div>
         </div>
-        <span class="pill">Current rosters</span>
+        <span class="pill" id="player-directory-mode">Current rosters</span>
       </div>
       <div id="player-catalog-meta" class="catalog-meta" aria-live="polite">
         <div class="catalog-stat"><strong id="player-meta-count">-</strong><span class="muted small">Active players</span></div>
@@ -56,12 +56,13 @@
         <div class="catalog-stat"><strong id="player-meta-season">-</strong><span class="muted small">Season</span></div>
         <div class="catalog-stat"><strong id="player-meta-updated">-</strong><span class="muted small">Last sync</span></div>
       </div>
+
       <form id="search-form" class="search player-search-form">
         <label class="player-search-field player-search-field--query" for="search-input">
           <span>Player, team, or conference</span>
           <input id="search-input" type="search" placeholder="Search players, teams, or conferences" autocomplete="off" />
         </label>
-        <label class="player-search-field player-search-field--position" for="position-filter">
+        <label class="player-search-field" for="position-filter">
           <span>Position</span>
           <select id="position-filter">
             <option value="">All positions</option>
@@ -72,21 +73,89 @@
             <option value="K">K</option>
           </select>
         </label>
+        <label class="player-search-field" for="conference-filter">
+          <span>Conference</span>
+          <input id="conference-filter" type="search" placeholder="SEC, Big Ten..." autocomplete="off" />
+        </label>
+        <label class="player-search-field" for="team-filter">
+          <span>Team</span>
+          <input id="team-filter" type="search" placeholder="Ohio State..." autocomplete="off" />
+        </label>
+        <label class="player-search-field" for="availability-filter">
+          <span>Availability</span>
+          <select id="availability-filter">
+            <option value="">All states</option>
+            <option value="available">Available now</option>
+            <option value="rostered">On my roster</option>
+            <option value="owned">Rostered elsewhere</option>
+            <option value="waivers">Waivers</option>
+            <option value="locked">Game locked</option>
+            <option value="ineligible">Ineligible</option>
+          </select>
+        </label>
+        <label class="player-search-field" for="opponent-filter">
+          <span>Opponent</span>
+          <input id="opponent-filter" type="search" placeholder="Alabama..." autocomplete="off" />
+        </label>
+        <label class="player-search-field" for="game-status-filter">
+          <span>Game status</span>
+          <select id="game-status-filter">
+            <option value="">Any status</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="started">Started</option>
+            <option value="bye">Bye / no game</option>
+          </select>
+        </label>
+        <label class="player-search-field" for="points-filter">
+          <span>Fantasy points</span>
+          <input id="points-filter" type="number" placeholder="Not available" disabled />
+        </label>
+        <label class="player-search-field" for="projection-filter">
+          <span>Projection</span>
+          <input id="projection-filter" type="number" placeholder="Not available" disabled />
+        </label>
         <button class="button player-search-submit" type="submit">Search players</button>
       </form>
+      <p id="player-capability-note" class="muted small player-capability-note" hidden></p>
+
       <div id="search-results" class="list">Loading current-season players...</div>
       <div class="player-results-footer">
         <span class="muted small" id="player-result-count">0 players shown</span>
         <button class="button button--ghost" id="load-more-players" type="button" hidden>Load more players</button>
       </div>
       <p class="muted small section-actions">
-        Leave search blank to browse the active pool, then narrow it by position or keywords such as "SEC" or "Ohio State".
+        Availability is rechecked by the server when you confirm. If another manager adds the same player first, your roster is left unchanged.
       </p>
+    </section>
+
+    <section class="card free-agent-preview" id="free-agent-preview" hidden aria-live="polite">
+      <div class="card__header">
+        <div>
+          <p class="pill pill--muted">Roster transaction</p>
+          <h2>Review add/drop</h2>
+        </div>
+        <button class="button button--ghost" id="free-agent-cancel" type="button">Cancel</button>
+      </div>
+      <div id="free-agent-preview-player" class="free-agent-preview__player"></div>
+      <div class="free-agent-preview__impact">
+        <div><span class="muted small">Current roster</span><strong id="free-agent-roster-count">-</strong></div>
+        <div><span class="muted small">After transaction</span><strong id="free-agent-roster-after">-</strong></div>
+        <div><span class="muted small">New player slot</span><strong id="free-agent-destination">-</strong></div>
+      </div>
+      <label id="free-agent-drop-field" for="free-agent-drop-select" hidden>
+        <span>Player to drop</span>
+        <select id="free-agent-drop-select"></select>
+      </label>
+      <div id="free-agent-preview-roster" class="free-agent-preview__roster"></div>
+      <div id="free-agent-preview-message" class="muted small"></div>
+      <div class="cta-row section-actions">
+        <button class="button button--primary" id="free-agent-confirm" type="button">Confirm add</button>
+      </div>
     </section>
 
     <section class="card">
       <div class="card__header">
-        <h2>Queued Targets</h2>
+        <h2>Draft Queue</h2>
         <span class="pill pill--muted" id="queue-count">0</span>
       </div>
       <div id="queue-list" class="list">No queued players yet.</div>
@@ -110,6 +179,7 @@
   </footer>
   <script src="config.js"></script>
   <script src="state.js"></script>
+  <script src="free-agent-directory.js"></script>
   <script src="players.js"></script>
 </body>
 </html>
