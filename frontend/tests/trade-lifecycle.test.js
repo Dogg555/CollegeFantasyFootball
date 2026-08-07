@@ -62,6 +62,11 @@ const duplicateOffer = {
 assert.deepEqual(packageHelpers.offerPlayers(duplicateOffer).map(packageHelpers.playerId), ['a', 'b']);
 assert.deepEqual(packageHelpers.requestPlayers(duplicateOffer).map(packageHelpers.playerId), ['c']);
 assert.equal(packageHelpers.packageNames(packageHelpers.offerPlayers(duplicateOffer)), 'Alpha, Beta');
+
+// Phase 6 acceptance matrix: uneven packages are valid in every required direction.
+assert.equal(packageHelpers.packageValid(['a'], ['b', 'c']), true, '1-for-2 must be a legal package shape');
+assert.equal(packageHelpers.packageValid(['a', 'b'], ['c', 'd', 'e']), true, '2-for-3 must be a legal package shape');
+assert.equal(packageHelpers.packageValid(['a', 'b', 'c'], ['d']), true, '3-for-1 must be a legal package shape');
 assert.equal(packageHelpers.packageValid(['a'], ['b']), true);
 assert.equal(packageHelpers.packageValid(['a', 'b'], ['c']), true);
 assert.equal(packageHelpers.packageValid([], ['b']), false);
@@ -70,5 +75,35 @@ assert.equal(packageHelpers.packageValid(['a', 'a'], ['b']), false);
 assert.equal(packageHelpers.packageValid(Array.from({ length: 21 }, (_, index) => `a-${index}`), ['b']), false);
 assert.equal(packageHelpers.uncertainFailure({ status: 409 }), false);
 assert.equal(packageHelpers.uncertainFailure({ status: 503 }), true);
+
+// Restoring source players for a counter must override legacy "no unlocked players"
+// disabling, but never bypass a real lineup/trade lock or an incomplete package.
+assert.equal(packageHelpers.counterPackageReady(false, ['locked-source'], ['locked-target']), true);
+assert.equal(packageHelpers.counterPackageReady(true, ['locked-source'], ['locked-target']), false);
+assert.equal(packageHelpers.counterPackageReady(false, [], ['locked-target']), false);
+assert.equal(packageHelpers.counterPackageReady(false, ['locked-source'], []), false);
+
+// Package idempotency uses the shared trade-lifecycle operation store and survives a retry click.
+const packageStorage = memoryStorage();
+const fingerprint = packageHelpers.packageFingerprint(
+  'create', '', 'manager-b@example.test', ['a', 'b'], ['c', 'd'], 'same package'
+);
+const reorderedFingerprint = packageHelpers.packageFingerprint(
+  'create', '', 'MANAGER-B@example.test', ['b', 'a'], ['d', 'c'], 'same package'
+);
+assert.equal(fingerprint, reorderedFingerprint, 'package fingerprint must be stable across selection order/case');
+const packageFirst = packageHelpers.operationFor(
+  'create', 'league-2', fingerprint, packageStorage, () => 'package-operation-1'
+);
+const packageRetry = packageHelpers.operationFor(
+  'create', 'league-2', reorderedFingerprint, packageStorage, () => 'package-operation-2'
+);
+assert.equal(packageFirst.operationKey, 'package-operation-1');
+assert.equal(packageRetry.operationKey, 'package-operation-1', 'uncertain retry must reuse the same operation key');
+packageHelpers.clearOperation('create', 'league-2', 'package-operation-1', packageStorage);
+const packageAfterConfirmation = packageHelpers.operationFor(
+  'create', 'league-2', fingerprint, packageStorage, () => 'package-operation-3'
+);
+assert.equal(packageAfterConfirmation.operationKey, 'package-operation-3');
 
 console.log('trade lifecycle browser tests passed');

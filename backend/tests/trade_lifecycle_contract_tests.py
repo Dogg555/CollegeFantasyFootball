@@ -65,6 +65,9 @@ def main() -> None:
         "jsonb_array_elements_text",
         "advanceRosterVersion",
         "tradeStatePayloadPackage",
+        "trade_ownership_changed",
+        "trade_roster_invalid",
+        "trade_state_conflict",
     )
     require(
         "backend/db/migrations/016_trade_lifecycle_reliability.sql",
@@ -95,11 +98,33 @@ def main() -> None:
         "Idempotency-Key",
         "stopImmediatePropagation",
         "playerLockedInTrade",
+        "cff_trade_lifecycle_operations",
+        "packageFingerprint",
+        "operationFor",
+        "clearOperation",
+        "ensurePlayerOptions",
+        "reversedOffered",
+        "counterSource",
     )
     require(
         "frontend/config.js",
         "trade-lifecycle.js",
         "multi-player-trades.js",
+    )
+    require(
+        "scripts/multi_player_trade_runtime_contract.py",
+        "phase6-1-for-2",
+        "phase6-2-for-3",
+        "phase6-3-for-1",
+        "staleProposalRejected",
+        "ownershipChangeRejected",
+        "atomicCapacityRollback",
+        "trade_state_conflict",
+        "trade_access_required",
+        "trade_recipient_required",
+        "trade_counter_not_allowed",
+        "trade_ownership_changed",
+        "trade_roster_invalid",
     )
     require(
         "backend/CMakeLists.txt",

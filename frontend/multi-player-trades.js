@@ -2,6 +2,8 @@
   'use strict';
 
   const MAX_PLAYERS_PER_SIDE = 20;
+  const OPERATION_STORAGE_KEY = 'cff_trade_lifecycle_operations';
+  const MAX_OPERATION_AGE_MS = 15 * 60 * 1000;
   let installAttempts = 0;
   let installed = false;
 
@@ -54,20 +56,74 @@
     return all.every(Boolean) && new Set(all).size === all.length;
   }
 
+  function counterPackageReady(lineupIsLocked, offeredIds, requestedIds) {
+    return !lineupIsLocked && packageValid(offeredIds, requestedIds);
+  }
+
   function uncertainFailure(error) {
     const status = Number(error?.status || 0);
     return Boolean(error?.timedOut || error?.unavailable || error?.retryable || !status || status >= 500);
   }
 
-  function operationKey() {
+  function createOperationId() {
     if (root.crypto?.randomUUID) return root.crypto.randomUUID();
     return `trade-package-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   }
 
-  function currentVersion() {
-    const value = root.CFFTradeLifecycle?.currentVersion?.() ?? root.__cffTradeLifecycleVersion ?? 0;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  function readOperations(storage = root.sessionStorage) {
+    try {
+      return JSON.parse(storage?.getItem?.(OPERATION_STORAGE_KEY) || '{}') || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writeOperations(operations, storage = root.sessionStorage) {
+    try {
+      storage?.setItem?.(OPERATION_STORAGE_KEY, JSON.stringify(operations));
+    } catch {
+      // Session persistence is best-effort, matching the core trade lifecycle.
+    }
+  }
+
+  function packageFingerprint(action, tradeId, targetManager, offeredIds, requestedIds, note = '') {
+    return JSON.stringify({
+      action: String(action || ''),
+      tradeId: String(tradeId || ''),
+      targetManager: String(targetManager || '').trim().toLowerCase(),
+      offeredIds: [...(offeredIds || [])].map(String).sort(),
+      requestedIds: [...(requestedIds || [])].map(String).sort(),
+      note: String(note || '').trim()
+    });
+  }
+
+  function operationFor(action, leagueId, fingerprint, storage = root.sessionStorage, createId = createOperationId) {
+    const operations = readOperations(storage);
+    const key = `${String(leagueId || '')}:${String(action || '')}`;
+    const existing = operations[key];
+    const age = Date.now() - Number(existing?.createdAt || 0);
+    if (existing?.operationKey && existing.fingerprint === fingerprint && age >= 0 && age < MAX_OPERATION_AGE_MS) {
+      return existing;
+    }
+    const operation = {
+      action: String(action || ''),
+      leagueId: String(leagueId || ''),
+      fingerprint,
+      operationKey: createId(),
+      createdAt: Date.now()
+    };
+    operations[key] = operation;
+    writeOperations(operations, storage);
+    return operation;
+  }
+
+  function clearOperation(action, leagueId, operationKey = '', storage = root.sessionStorage) {
+    const operations = readOperations(storage);
+    const key = `${String(leagueId || '')}:${String(action || '')}`;
+    if (!operations[key]) return;
+    if (operationKey && operations[key].operationKey !== operationKey) return;
+    delete operations[key];
+    writeOperations(operations, storage);
   }
 
   function errorMessage(error) {
@@ -100,6 +156,23 @@
     if (title) title.textContent = labelText;
   }
 
+  function ensurePlayerOptions(select, players) {
+    if (!select) return;
+    const existing = new Set(Array.from(select.options || [], (option) => String(option.value || '')));
+    normalizePackage(players).forEach((player) => {
+      const id = playerId(player);
+      if (!id || existing.has(id)) return;
+      const option = root.document?.createElement?.('option');
+      if (!option) return;
+      option.value = id;
+      const position = String(player.position || '').trim();
+      option.textContent = `${player.name || id}${position ? ` (${position})` : ''}`;
+      option.dataset.counterSource = 'true';
+      select.appendChild(option);
+      existing.add(id);
+    });
+  }
+
   function setStatus(message, error = false) {
     const status = root.document?.getElementById('trade-status');
     if (!status) return;
@@ -115,6 +188,11 @@
     const submit = form.querySelector('button[type="submit"]');
     if (submit) submit.textContent = 'Send offer';
     form.querySelector('[data-cancel-trade-counter]')?.remove();
+    // Counter-only source options represent players locked in the source offer;
+    // remove them when counter mode ends so they cannot leak into a new offer.
+    const offerSelect = root.document?.getElementById('trade-offer-player');
+    Array.from(offerSelect?.querySelectorAll?.('option[data-counter-source="true"]') || [])
+      .forEach((option) => option.remove());
   }
 
   function ensureCounterCancelButton() {
@@ -198,37 +276,40 @@
     const target = root.document?.getElementById('trade-target-manager');
     const offerSelect = root.document?.getElementById('trade-offer-player');
     const note = root.document?.getElementById('trade-note');
+    const submit = form?.querySelector('button[type="submit"]');
     if (!form || !target || !offerSelect) return;
     const counterTarget = String(offer.offeredByEmail || '');
+    const reversedOffered = requestPlayers(offer);
     target.value = counterTarget;
     form.dataset.counterTradeId = String(offer.id || '');
     form.dataset.counterTarget = counterTarget;
     enhanceForm();
-    selectIds(offerSelect, requestPlayers(offer).map(playerId));
+    // Source players are intentionally locked by the pending trade and therefore
+    // absent from the normal selectable roster. Put those owned players back into
+    // this counter form so the default reversed package is actually selectable.
+    ensurePlayerOptions(offerSelect, reversedOffered);
+    selectIds(offerSelect, reversedOffered.map(playerId));
+    const lineupIsLocked = Boolean(root.lineupLocked?.());
+    offerSelect.disabled = lineupIsLocked || !reversedOffered.length;
     try {
       await loadRequestedRoster(counterTarget, offerPlayers(offer).map(playerId));
+      const requestSelect = root.document?.getElementById('trade-request-player-id');
+      const ready = counterPackageReady(
+        lineupIsLocked,
+        selectedIds(offerSelect),
+        selectedIds(requestSelect)
+      );
+      if (submit) submit.disabled = !ready;
       if (note && !note.value.trim()) note.value = `Counteroffer to ${offer.id}`;
       ensureCounterCancelButton();
-      setStatus('Counteroffer loaded. Adjust either package, then send the counter.');
+      setStatus(ready
+        ? 'Counteroffer loaded. Adjust either package, then send the counter.'
+        : 'The counteroffer cannot be submitted with the current trade package.', !ready);
       form.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     } catch (error) {
       clearCounter();
       setStatus(errorMessage(error), true);
     }
-  }
-
-  async function applyConfirmedState(state) {
-    if (Array.isArray(state?.offers)) root.saveTradeOffers?.(state.offers);
-    if (Array.isArray(state?.roster)) {
-      root.setRoster?.(state.roster.map((player) => root.normalizePlayer?.(player) || player));
-    }
-    if (Number.isFinite(Number(state?.version))) root.__cffTradeLifecycleVersion = Number(state.version);
-    try {
-      await root.CFFTradeLifecycle?.sync?.();
-    } catch {
-      // The mutation response is already confirmed and authoritative.
-    }
-    root.renderLeague?.();
   }
 
   async function sendPackageTrade(event) {
@@ -244,7 +325,7 @@
     const targetSelect = root.document?.getElementById('trade-target-manager');
     const note = root.document?.getElementById('trade-note');
     const submit = form?.querySelector('button[type="submit"]');
-    if (!league?.id || !form || !offerSelect || !requestSelect || !targetSelect) return;
+    if (!league?.id || !form || !offerSelect || !requestSelect || !targetSelect || !submit) return;
 
     const offeredIds = selectedIds(offerSelect);
     const requestedIds = selectedIds(requestSelect);
@@ -256,6 +337,8 @@
 
     submit.disabled = true;
     setStatus('Saving trade package...');
+    let action = form.dataset.counterTradeId ? 'counter' : 'create';
+    let operation = null;
     try {
       try {
         await root.CFFTradeLifecycle?.sync?.();
@@ -270,23 +353,29 @@
         throw Object.assign(new Error('A selected roster changed.'), { code: 'trade_ownership_changed' });
       }
 
-      const action = form.dataset.counterTradeId ? 'counter' : 'create';
-      const key = operationKey();
+      action = form.dataset.counterTradeId ? 'counter' : 'create';
+      const counterTradeId = action === 'counter' ? String(form.dataset.counterTradeId || '') : '';
+      const noteValue = String(note?.value || '').trim();
+      const fingerprint = packageFingerprint(
+        action, counterTradeId, targetManager, offeredIds, requestedIds, noteValue
+      );
+      operation = operationFor(action, league.id, fingerprint);
       const body = {
         action,
-        expectedVersion: currentVersion(),
+        expectedVersion: Number(root.CFFTradeLifecycle?.currentVersion?.() ?? root.__cffTradeLifecycleVersion ?? 0),
         targetManager,
         offerPlayers: offeredPlayers,
         requestPlayers: requestedPlayers,
-        note: String(note?.value || '').trim()
+        note: noteValue
       };
-      if (action === 'counter') body.tradeId = form.dataset.counterTradeId;
+      if (counterTradeId) body.tradeId = counterTradeId;
       const request = () => root.apiRequest(`/leagues/${encodeURIComponent(league.id)}/trades/transactions`, {
         method: 'POST',
-        headers: { 'Idempotency-Key': key },
+        headers: { 'Idempotency-Key': operation.operationKey },
         body: JSON.stringify(body),
         cffSkipMutationRefresh: true
       });
+
       let state;
       try {
         state = await request();
@@ -294,11 +383,27 @@
         if (!uncertainFailure(firstError)) throw firstError;
         state = await request();
       }
+      clearOperation(action, league.id, operation.operationKey);
       clearCounter();
       if (note) note.value = '';
-      await applyConfirmedState(state);
+      if (Array.isArray(state?.offers)) root.saveTradeOffers?.(state.offers);
+      if (Array.isArray(state?.roster)) {
+        root.setRoster?.(state.roster.map((player) => root.normalizePlayer?.(player) || player));
+      }
+      if (Number.isFinite(Number(state?.version))) root.__cffTradeLifecycleVersion = Number(state.version);
+      try {
+        await root.CFFTradeLifecycle?.sync?.();
+      } catch {
+        // The confirmed mutation response remains authoritative.
+      }
+      root.renderLeague?.();
       setStatus(action === 'counter' ? 'Counteroffer sent.' : 'Trade offer sent.');
     } catch (error) {
+      // Keep the same persisted operation after an uncertain response so the next
+      // submit replays the exact server operation instead of creating a duplicate.
+      if (operation && !uncertainFailure(error)) {
+        clearOperation(action, league.id, operation.operationKey);
+      }
       if (String(error?.data?.code || error?.code || '') === 'trade_state_conflict') {
         try {
           await root.CFFTradeLifecycle?.sync?.();
@@ -367,6 +472,7 @@
 
   const helpers = {
     MAX_PLAYERS_PER_SIDE,
+    OPERATION_STORAGE_KEY,
     playerId,
     normalizePackage,
     offerPlayers,
@@ -374,7 +480,11 @@
     packageNames,
     selectedIds,
     packageValid,
-    uncertainFailure
+    counterPackageReady,
+    uncertainFailure,
+    packageFingerprint,
+    operationFor,
+    clearOperation
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = helpers;
   if (typeof document === 'undefined') return;
