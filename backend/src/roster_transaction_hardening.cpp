@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -135,6 +136,7 @@ bool parseRosterSlotPath(const std::string &path,
 #ifdef CFF_HAS_POSTGRES
 #include "roster_transaction_hardening_db.inc"
 #include "roster_transaction_hardening_payload.inc"
+#include "roster_transaction_hardening_lineup.inc"
 
 bool rosterActionLocked(PGconn *connection,
                         const std::string &leagueId,
@@ -142,9 +144,7 @@ bool rosterActionLocked(PGconn *connection,
                         const std::string &email,
                         const Json::Value &body,
                         const std::string &pathPlayerId) {
-    if (!slotAction) {
-        return lineupLocked(connection, leagueId);
-    }
+    if (!slotAction) return lineupLocked(connection, leagueId);
     const auto playerId = cff::roster_transaction::canonicalPlayerId(
         pathPlayerId.empty() ? body.get("playerId", "").asString() : pathPlayerId);
     if (playerId.empty()) return false;

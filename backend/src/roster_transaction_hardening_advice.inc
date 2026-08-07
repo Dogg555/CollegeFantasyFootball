@@ -38,8 +38,15 @@ drogon::HttpResponsePtr rosterTransactionAdvice(const drogon::HttpRequestPtr &re
     switch (action) {
         case Action::State:
             return respond(getRosterState(leagueId, *email));
-        case Action::Transaction:
-            return respond(dispatchRosterTransaction(request, leagueId, *email));
+        case Action::Transaction: {
+            const auto body = request->getJsonObject();
+            const auto requestedAction = body && body->isObject()
+                ? lower(trim(body->get("action", "").asString()))
+                : std::string{};
+            return respond(requestedAction == "lineup"
+                ? mutateLineup(request, leagueId, *email)
+                : dispatchRosterTransaction(request, leagueId, *email));
+        }
         case Action::LegacyAdd:
             return respond(mutateRoster(request, leagueId, *email, RosterAction::Add, "", true));
         case Action::LegacyDrop:
