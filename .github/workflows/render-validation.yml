@@ -37,7 +37,7 @@ jobs:
       CFF_SMOKE_TEST_EMAIL_VERIFICATION: ${{ inputs.test_email_verification }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit_sha || github.sha }}
       - uses: actions/setup-python@v7

@@ -97,7 +97,7 @@ jobs:
       CFF_BACKUP_AWS_SECRET_ACCESS_KEY: ${{ secrets.CFF_BACKUP_AWS_SECRET_ACCESS_KEY }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.deployed_commit_sha }}
 
