@@ -115,7 +115,7 @@ jobs:
           [[ "$CFF_FINALIZER_BACKUP_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]
 
       - name: Download Alpha evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: alpha-readiness-${{ inputs.alpha_readiness_run_id }}
           path: alpha-source
@@ -123,7 +123,7 @@ jobs:
           run-id: ${{ inputs.alpha_readiness_run_id }}
 
       - name: Download Render browser evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: render-browser-screenshots-${{ inputs.render_validation_run_id }}
           path: render-source
@@ -131,7 +131,7 @@ jobs:
           run-id: ${{ inputs.render_validation_run_id }}
 
       - name: Download backup restore evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: backup-restore-evidence-${{ inputs.backup_restore_run_id }}
           path: backup-source

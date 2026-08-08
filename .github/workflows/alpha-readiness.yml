@@ -115,7 +115,7 @@ jobs:
           exit "$missing"
 
       - name: Download backup restore evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: backup-restore-evidence-${{ inputs.backup_restore_run_id }}
           path: backup-restore-source
