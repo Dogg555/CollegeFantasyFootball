@@ -36,7 +36,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
@@ -142,7 +142,7 @@ jobs:
       BACKUP_FILE: ${{ github.workspace }}/recovery-test.dump
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install PostgreSQL client
         run: |
