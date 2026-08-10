@@ -53,7 +53,7 @@ drogon::HttpResponsePtr saveOrder(const drogon::HttpRequestPtr &request,
     if (cell(state.get(), 0, 0) != "not_started" || cellInt(state.get(), 0, 2, 0) > 0) {
         rollback(connection.get());
         return errorResponse(drogon::k409Conflict,
-                             "Draft order is locked after the draft starts.",
+                             "Draft order is locked after the draft starts or is cancelled.",
                              "draft_order_locked");
     }
     auto updated = execute(connection.get(),
@@ -138,7 +138,7 @@ drogon::HttpResponsePtr startDraft(const drogon::HttpRequestPtr &request,
         return response;
     }
     if (currentStatus == "open") {
-        if (!recordOperation(connection.get(), leagueId, key, "start", cellInt64(state.get(), 0, 3, 0))
+        if (!recordOperation(connection.get(), leagueId, key, "start", currentVersion)
             || !commit(connection.get())) {
             rollback(connection.get());
             return unavailable();
@@ -146,6 +146,18 @@ drogon::HttpResponsePtr startDraft(const drogon::HttpRequestPtr &request,
         auto payload = draftPayload(connection.get(), leagueId, email);
         payload["idempotentReplay"] = true;
         return jsonResponse(payload);
+    }
+    if (currentStatus == "paused") {
+        rollback(connection.get());
+        return errorResponse(drogon::k409Conflict,
+                             "Resume the paused draft instead of starting it again.",
+                             "draft_resume_required");
+    }
+    if (currentStatus == "cancelled") {
+        rollback(connection.get());
+        return errorResponse(drogon::k409Conflict,
+                             "Reset the cancelled draft before starting another draft.",
+                             "draft_reset_required");
     }
     if (currentStatus == "complete" || cellInt(state.get(), 0, 4, 0) > 0) {
         rollback(connection.get());
@@ -161,7 +173,8 @@ drogon::HttpResponsePtr startDraft(const drogon::HttpRequestPtr &request,
         "UPDATE draft_states SET status = 'open', current_pick = 1, "
         "draft_order = ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), "
         "pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), "
-        "started_at = NOW(), completed_at = NULL, version = version + 1, updated_at = NOW() "
+        "paused_remaining_seconds = NULL, started_at = NOW(), completed_at = NULL, "
+        "version = version + 1, updated_at = NOW() "
         "WHERE league_id = $1 RETURNING version",
         {leagueId, jsonToString(order)});
     if (!tuplesOk(updated) || PQntuples(updated.get()) == 0) {

@@ -9,16 +9,16 @@ drogon::HttpResponsePtr makePick(const drogon::HttpRequestPtr &request,
         return response;
     }
     const auto body = request->getJsonObject();
-    if (!body || !body->isObject() || !body->isMember("player") || !(*body)["player"].isObject()) {
+    if (!body || !body->isObject()) {
         rollback(connection.get());
         return errorResponse(drogon::k400BadRequest, "Player data is required.", "draft_player_required");
     }
-    const auto player = (*body)["player"];
-    const auto playerId = trim(player.get("id", "").asString());
+    const auto playerId = requestedDraftPlayerId(*body);
     if (playerId.empty()) {
         rollback(connection.get());
         return errorResponse(drogon::k400BadRequest, "Player ID is required.", "draft_player_id_required");
     }
+
     const auto key = operationKey(request);
     if (const auto replay = operationReplay(connection.get(), leagueId, key)) {
         if (*replay != "pick") {
@@ -30,6 +30,16 @@ drogon::HttpResponsePtr makePick(const drogon::HttpRequestPtr &request,
         payload["idempotentReplay"] = true;
         return jsonResponse(payload);
     }
+
+    const auto canonicalPlayer = canonicalDraftPlayer(connection.get(), playerId);
+    if (!canonicalPlayer) {
+        rollback(connection.get());
+        return errorResponse(drogon::k409Conflict,
+                             "That player is not active in the authoritative draft pool.",
+                             "draft_player_ineligible");
+    }
+    const auto player = *canonicalPlayer;
+
     const auto managers = activeManagers(connection.get(), leagueId);
     (void)ensureDraftState(connection.get(), leagueId, managers);
     auto state = execute(connection.get(),
@@ -52,7 +62,9 @@ drogon::HttpResponsePtr makePick(const drogon::HttpRequestPtr &request,
 
     if (status != "open") {
         rollback(connection.get());
-        return errorResponse(drogon::k409Conflict, "The draft is not currently open.", "draft_not_open");
+        return errorResponse(drogon::k409Conflict,
+                             status == "paused" ? "The draft is paused." : "The draft is not currently open.",
+                             status == "paused" ? "draft_paused" : "draft_not_open");
     }
     const auto currentManager = cff::draft_lifecycle::managerForPick(order, currentPick, draftType);
     if (!body->isMember("expectedPick") || !(*body)["expectedPick"].isInt()) {
@@ -105,8 +117,8 @@ drogon::HttpResponsePtr makePick(const drogon::HttpRequestPtr &request,
     if (!slot) {
         rollback(connection.get());
         return errorResponse(drogon::k409Conflict,
-                             "This manager's roster is full.",
-                             "draft_roster_full");
+                             "That player cannot fit the manager's remaining legal roster slots.",
+                             "draft_player_ineligible");
     }
     AutoDraftCandidate candidate;
     candidate.player = player;

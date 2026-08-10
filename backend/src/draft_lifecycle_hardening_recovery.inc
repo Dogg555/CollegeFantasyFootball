@@ -68,7 +68,7 @@ drogon::HttpResponsePtr undoPick(const drogon::HttpRequestPtr &request,
     }
     auto updated = execute(connection.get(),
         "UPDATE draft_states SET status = 'open', current_pick = $2::integer, completed_at = NULL, "
-        "pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), "
+        "pick_deadline = NOW() + (pick_clock_seconds * INTERVAL '1 second'), paused_remaining_seconds = NULL, "
         "version = version + 1, updated_at = NOW() WHERE league_id = $1 RETURNING version",
         {leagueId, std::to_string(pickNumber)});
     if (!tuplesOk(updated) || PQntuples(updated.get()) == 0) {
@@ -146,7 +146,7 @@ drogon::HttpResponsePtr resetDraft(const drogon::HttpRequestPtr &request,
         "DELETE FROM draft_picks WHERE league_id = $1",
         {leagueId}))
         || !commandOk(execute(connection.get(),
-        "UPDATE draft_readiness SET ready = FALSE, updated_at = NOW() WHERE league_id = $1",
+        "UPDATE draft_readiness SET ready = FALSE, consecutive_missed_picks = 0, updated_at = NOW() WHERE league_id = $1",
         {leagueId}))) {
         rollback(connection.get());
         return unavailable();
@@ -155,7 +155,7 @@ drogon::HttpResponsePtr resetDraft(const drogon::HttpRequestPtr &request,
     auto updated = execute(connection.get(),
         "UPDATE draft_states SET status = 'not_started', current_pick = 1, "
         "draft_order = ARRAY(SELECT jsonb_array_elements_text($2::jsonb)), "
-        "pick_deadline = NULL, started_at = NULL, completed_at = NULL, "
+        "pick_deadline = NULL, paused_remaining_seconds = NULL, started_at = NULL, completed_at = NULL, "
         "version = version + 1, updated_at = NOW() WHERE league_id = $1 RETURNING version",
         {leagueId, jsonToString(order)});
     if (!tuplesOk(updated) || PQntuples(updated.get()) == 0) {

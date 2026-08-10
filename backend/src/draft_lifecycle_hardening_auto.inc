@@ -43,10 +43,12 @@ Json::Value playerSnapshotFromCatalog(PGresult *result, int row, int rank) {
     Json::Value player(Json::objectValue);
     player["id"] = cell(result, row, 0);
     player["name"] = cell(result, row, 1);
+    player["fullName"] = cell(result, row, 1);
     player["team"] = cell(result, row, 2);
     player["position"] = cell(result, row, 3);
     player["conference"] = cell(result, row, 4);
     player["class"] = cell(result, row, 5);
+    player["year"] = cell(result, row, 5);
     player["rank"] = rank;
     return player;
 }
@@ -84,7 +86,10 @@ std::optional<AutoDraftCandidate> queuedAutoDraftCandidate(
     if (!queue.isArray()) return std::nullopt;
     for (const auto &entry : queue) {
         if (!entry.isObject()) continue;
-        if (const auto candidate = eligibleCandidateFromPlayer(entry, "personal_queue", rules, counts, drafted)) {
+        const auto playerId = trim(entry.get("id", "").asString());
+        const auto canonical = canonicalDraftPlayer(connection, playerId);
+        if (!canonical) continue;
+        if (const auto candidate = eligibleCandidateFromPlayer(*canonical, "personal_queue", rules, counts, drafted)) {
             return candidate;
         }
     }
@@ -100,10 +105,12 @@ std::optional<AutoDraftCandidate> systemAutoDraftCandidate(
     auto result = execute(connection,
         "SELECT p.id, p.full_name, COALESCE(p.team, ''), COALESCE(p.position, ''), "
         "COALESCE(p.conference, ''), COALESCE(p.year, '') "
-        "FROM players p WHERE UPPER(COALESCE(p.position, '')) IN ('QB', 'RB', 'WR', 'TE', 'K') "
+        "FROM players p WHERE COALESCE(p.active, TRUE) = TRUE "
+        "AND UPPER(COALESCE(p.position, '')) IN ('QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'DST') "
         "AND NOT EXISTS (SELECT 1 FROM draft_picks dp WHERE dp.league_id = $1 AND dp.player_id = p.id) "
         "ORDER BY CASE UPPER(COALESCE(p.position, '')) "
-        "WHEN 'QB' THEN 1 WHEN 'RB' THEN 2 WHEN 'WR' THEN 3 WHEN 'TE' THEN 4 WHEN 'K' THEN 5 ELSE 9 END, "
+        "WHEN 'QB' THEN 1 WHEN 'RB' THEN 2 WHEN 'WR' THEN 3 WHEN 'TE' THEN 4 WHEN 'K' THEN 5 "
+        "WHEN 'DEF' THEN 6 WHEN 'DST' THEN 6 ELSE 9 END, "
         "LOWER(p.full_name), p.id LIMIT 250",
         {leagueId});
     if (!tuplesOk(result)) return std::nullopt;
@@ -185,6 +192,7 @@ std::optional<long long> persistDraftSelection(PGconn *connection,
         "UPDATE draft_states SET status = $2, current_pick = $3::integer, "
         "pick_deadline = CASE WHEN $2 = 'complete' THEN NULL "
         "ELSE NOW() + ($4::integer * INTERVAL '1 second') END, "
+        "paused_remaining_seconds = NULL, "
         "completed_at = CASE WHEN $2 = 'complete' THEN NOW() ELSE NULL END, "
         "version = version + 1, updated_at = NOW() WHERE league_id = $1 RETURNING version",
         {leagueId,

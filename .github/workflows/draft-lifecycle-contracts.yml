@@ -14,13 +14,19 @@ on:
       - "backend/tests/draft_lifecycle_tests.cpp"
       - "backend/tests/draft_lifecycle_contract_tests.py"
       - "backend/tests/beta_pilot_contract_tests.py"
+      - "backend/db/schema.sql"
       - "backend/db/migrations/013_draft_lifecycle_reliability.sql"
+      - "backend/db/migrations/021_draft_room_auto_draft_reliability.sql"
+      - "backend/db/migrations/027_draft_room_workflow.sql"
       - "scripts/draft_lifecycle_runtime_contract.py"
       - "scripts/beta_pilot_runtime_contract.py"
       - "scripts/test_smtp_server.py"
       - "frontend/config.js"
+      - "frontend/draft.html"
       - "frontend/draft-lifecycle.js"
+      - "frontend/draft-phase7.js"
       - "frontend/tests/draft-lifecycle.test.js"
+      - "frontend/tests/draft-phase7.test.js"
       - ".github/workflows/beta-pilot-lifecycle.yml"
       - ".github/workflows/draft-lifecycle-contracts.yml"
   pull_request:
@@ -36,13 +42,19 @@ on:
       - "backend/tests/draft_lifecycle_tests.cpp"
       - "backend/tests/draft_lifecycle_contract_tests.py"
       - "backend/tests/beta_pilot_contract_tests.py"
+      - "backend/db/schema.sql"
       - "backend/db/migrations/013_draft_lifecycle_reliability.sql"
+      - "backend/db/migrations/021_draft_room_auto_draft_reliability.sql"
+      - "backend/db/migrations/027_draft_room_workflow.sql"
       - "scripts/draft_lifecycle_runtime_contract.py"
       - "scripts/beta_pilot_runtime_contract.py"
       - "scripts/test_smtp_server.py"
       - "frontend/config.js"
+      - "frontend/draft.html"
       - "frontend/draft-lifecycle.js"
+      - "frontend/draft-phase7.js"
       - "frontend/tests/draft-lifecycle.test.js"
+      - "frontend/tests/draft-phase7.test.js"
       - ".github/workflows/beta-pilot-lifecycle.yml"
       - ".github/workflows/draft-lifecycle-contracts.yml"
   workflow_dispatch:
@@ -78,16 +90,20 @@ jobs:
       - name: Validate lifecycle sources
         run: |
           node --check frontend/draft-lifecycle.js
+          node --check frontend/draft-phase7.js
           node --check frontend/tests/draft-lifecycle.test.js
+          node --check frontend/tests/draft-phase7.test.js
           python -m py_compile \
             backend/tests/draft_lifecycle_contract_tests.py \
             backend/tests/beta_pilot_contract_tests.py \
             scripts/draft_lifecycle_runtime_contract.py \
-            scripts/beta_pilot_runtime_contract.py
+            scripts/beta_pilot_runtime_contract.py \
+            scripts/test_smtp_server.py
 
       - name: Run browser and source contracts
         run: |
           node frontend/tests/draft-lifecycle.test.js
+          node frontend/tests/draft-phase7.test.js
           python backend/tests/draft_lifecycle_contract_tests.py
           python backend/tests/beta_pilot_contract_tests.py
 
@@ -102,7 +118,7 @@ jobs:
           /tmp/draft_lifecycle_tests
 
   postgres-race:
-    name: PostgreSQL draft race and beta pilot
+    name: PostgreSQL Phase 7 draft room
     needs: contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -228,7 +244,7 @@ jobs:
             -e CFF_SIGNUP_RATE_WINDOW_MINUTES=60 \
             college-ff-api-draft-contracts
 
-      - name: Run draft race and four-manager pilot
+      - name: Run Phase 7 draft room contract
         shell: bash
         env:
           CFF_API_BASE_URL: http://127.0.0.1:8080
@@ -238,6 +254,16 @@ jobs:
           set -euo pipefail
           set -o pipefail
           python scripts/draft_lifecycle_runtime_contract.py 2>&1 | tee /tmp/draft-lifecycle-runtime.log
+
+      - name: Run legacy beta pilot diagnostic
+        continue-on-error: true
+        shell: bash
+        env:
+          CFF_API_BASE_URL: http://127.0.0.1:8080
+          DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/cff
+          CFF_CONTRACT_ORIGIN: https://frontend.example.test
+        run: |
+          set -o pipefail
           python scripts/beta_pilot_runtime_contract.py 2>&1 | tee /tmp/beta-pilot-runtime.log
 
       - name: Retain runtime diagnostics
