@@ -5,7 +5,22 @@ drogon::HttpResponsePtr draftLifecycleAdvice(const drogon::HttpRequestPtr &reque
     const auto method = request->getMethod();
 
     std::string leagueId;
-    enum class Action { None, Get, ReadinessGet, ReadinessSet, AutoDraftSet, Order, Start, Pick, Reset, Undo } action = Action::None;
+    enum class Action {
+        None,
+        Get,
+        ReadinessGet,
+        ReadinessSet,
+        AutoDraftSet,
+        Settings,
+        Order,
+        Start,
+        Pause,
+        Resume,
+        Cancel,
+        Pick,
+        Reset,
+        Undo
+    } action = Action::None;
 
     if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/draft/readiness")).empty()) {
         action = Action::ReadinessGet;
@@ -13,6 +28,9 @@ drogon::HttpResponsePtr draftLifecycleAdvice(const drogon::HttpRequestPtr &reque
         action = Action::ReadinessSet;
     } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/auto-draft")).empty()) {
         action = Action::AutoDraftSet;
+    } else if ((method == drogon::Put || method == drogon::Post)
+               && !(leagueId = pathLeagueId(path, "/draft/settings")).empty()) {
+        action = Action::Settings;
     } else if (method == drogon::Get && !(leagueId = pathLeagueId(path, "/draft")).empty()) {
         action = Action::Get;
     } else if ((method == drogon::Put || method == drogon::Post)
@@ -20,6 +38,12 @@ drogon::HttpResponsePtr draftLifecycleAdvice(const drogon::HttpRequestPtr &reque
         action = Action::Order;
     } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/start")).empty()) {
         action = Action::Start;
+    } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/pause")).empty()) {
+        action = Action::Pause;
+    } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/resume")).empty()) {
+        action = Action::Resume;
+    } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/cancel")).empty()) {
+        action = Action::Cancel;
     } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/picks")).empty()) {
         action = Action::Pick;
     } else if (method == drogon::Post && !(leagueId = pathLeagueId(path, "/draft/reset")).empty()) {
@@ -47,10 +71,18 @@ drogon::HttpResponsePtr draftLifecycleAdvice(const drogon::HttpRequestPtr &reque
             return respond(setReadiness(request, leagueId, *email));
         case Action::AutoDraftSet:
             return respond(setAutoDraft(request, leagueId, *email));
+        case Action::Settings:
+            return respond(saveDraftSettings(request, leagueId, *email));
         case Action::Order:
             return respond(saveOrder(request, leagueId, *email));
         case Action::Start:
             return respond(startDraft(request, leagueId, *email));
+        case Action::Pause:
+            return respond(pauseDraft(request, leagueId, *email));
+        case Action::Resume:
+            return respond(resumeDraft(request, leagueId, *email));
+        case Action::Cancel:
+            return respond(cancelDraft(request, leagueId, *email));
         case Action::Pick:
             return respond(makePick(request, leagueId, *email));
         case Action::Reset:

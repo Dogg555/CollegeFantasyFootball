@@ -105,11 +105,13 @@ std::string pathLeagueId(const std::string &path, const std::string &suffix) {
 
 #ifdef CFF_HAS_POSTGRES
 #include "draft_lifecycle_hardening_db.inc"
+#include "draft_lifecycle_hardening_player.inc"
 std::unordered_map<std::string, int> rosterCounts(PGconn *connection,
                                                    const std::string &leagueId,
                                                    const std::string &email);
 #include "draft_lifecycle_hardening_auto.inc"
 #include "draft_lifecycle_hardening_payload.inc"
+#include "draft_lifecycle_hardening_controls.inc"
 #include "draft_lifecycle_hardening_commissioner.inc"
 #include "draft_lifecycle_hardening_pick.inc"
 #include "draft_lifecycle_hardening_recovery.inc"

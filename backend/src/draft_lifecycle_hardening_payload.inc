@@ -17,7 +17,9 @@ Json::Value draftPayload(PGconn *connection,
         "COALESCE(to_char(ds.completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
         "l.draft_type, "
         "(l.draft_lobby_open OR (l.draft_date IS NOT NULL AND l.draft_date <= NOW() + INTERVAL '30 minutes')), "
-        "l.roster_rules::text "
+        "l.roster_rules::text, "
+        "COALESCE(to_char(l.draft_date AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
+        "COALESCE(l.draft_timezone, 'UTC'), COALESCE(ds.paused_remaining_seconds, 0) "
         "FROM draft_states ds JOIN leagues l ON l.id = ds.league_id WHERE ds.league_id = $1",
         {leagueId});
     if (!tuplesOk(state) || PQntuples(state.get()) == 0) return payload;
@@ -28,26 +30,42 @@ Json::Value draftPayload(PGconn *connection,
     const auto draftType = cell(state.get(), 0, 8).empty() ? "snake" : cell(state.get(), 0, 8);
     const auto rules = jsonFromString(cell(state.get(), 0, 10));
     const long long version = cellInt64(state.get(), 0, 6, 0);
+    const bool lobbyOpen = cell(state.get(), 0, 9) == "t";
+    const auto draftDate = cell(state.get(), 0, 11);
+
+    std::string lifecycleState = "NOT_SCHEDULED";
+    if (status == "complete") lifecycleState = "COMPLETED";
+    else if (status == "cancelled") lifecycleState = "CANCELLED";
+    else if (status == "paused") lifecycleState = "PAUSED";
+    else if (status == "open") lifecycleState = "IN_PROGRESS";
+    else if (lobbyOpen) lifecycleState = "LOBBY_OPEN";
+    else if (!draftDate.empty()) lifecycleState = "SCHEDULED";
 
     payload["status"] = status;
+    payload["lifecycleState"] = lifecycleState;
     payload["currentPick"] = currentPick;
     payload["draftOrder"] = order;
     payload["pickClockSeconds"] = cellInt(state.get(), 0, 3, 90);
     payload["pickDeadline"] = cell(state.get(), 0, 4);
+    payload["pausedRemainingSeconds"] = cellInt(state.get(), 0, 13, 0);
     payload["startedAt"] = cell(state.get(), 0, 5);
     payload["version"] = Json::Int64(version);
     payload["revision"] = Json::Int64(version);
     payload["completedAt"] = cell(state.get(), 0, 7);
     payload["draftType"] = draftType;
-    payload["lobbyOpen"] = cell(state.get(), 0, 9) == "t";
+    payload["draftDate"] = draftDate;
+    payload["draftTimezone"] = cell(state.get(), 0, 12).empty() ? "UTC" : cell(state.get(), 0, 12);
+    payload["lobbyOpen"] = lobbyOpen;
     payload["activeManagerCount"] = static_cast<int>(managers.size());
     payload["rosterSlotsPerManager"] = cff::draft_lifecycle::rosterSlotsPerManager(rules);
     payload["totalPicks"] = cff::draft_lifecycle::totalDraftPicks(static_cast<int>(managers.size()), rules);
-    payload["currentManager"] = status == "open"
+    payload["currentManager"] = (status == "open" || status == "paused")
         ? cff::draft_lifecycle::managerForPick(order, currentPick, draftType)
         : "";
+    payload["draftFinalized"] = status == "complete";
 
     Json::Value picks(Json::arrayValue);
+    std::unordered_map<std::string, int> picksByManager;
     auto pickResult = execute(connection,
         "SELECT pick_number, lower(manager_email), player_id, player_snapshot::text, "
         "COALESCE(to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), ''), "
@@ -64,6 +82,7 @@ Json::Value draftPayload(PGconn *connection,
             pick["createdAt"] = cell(pickResult.get(), row, 4);
             pick["selectionSource"] = cell(pickResult.get(), row, 5);
             pick["automatic"] = cell(pickResult.get(), row, 5) != "manual";
+            ++picksByManager[pick["managerEmail"].asString()];
             picks.append(pick);
         }
     }
@@ -89,6 +108,7 @@ Json::Value draftPayload(PGconn *connection,
     payload["readyCount"] = readyCount;
     payload["connectedCount"] = connectedCount;
     payload["allReady"] = cff::draft_lifecycle::allManagersReady(managers, readiness);
+
     Json::Value activity(Json::arrayValue);
     auto activityResult = execute(connection,
         "SELECT event_type, COALESCE(manager_email, ''), message, COALESCE(pick_number, 0), "
@@ -110,6 +130,22 @@ Json::Value draftPayload(PGconn *connection,
         }
     }
     payload["activity"] = activity;
+
+    Json::Value recap(Json::objectValue);
+    recap["available"] = status == "complete";
+    recap["totalSelections"] = static_cast<int>(picks.size());
+    recap["completedAt"] = payload["completedAt"];
+    Json::Value managerSummaries(Json::arrayValue);
+    for (const auto &manager : managers) {
+        Json::Value summary(Json::objectValue);
+        const auto managerEmail = manager.asString();
+        summary["managerEmail"] = managerEmail;
+        summary["totalSelections"] = picksByManager[managerEmail];
+        managerSummaries.append(summary);
+    }
+    recap["managers"] = managerSummaries;
+    payload["recap"] = recap;
+
     auto serverTime = execute(connection,
         "SELECT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
         {});
